@@ -25,12 +25,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey), identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
-            if self.isPanelVisible {
-                (self.switchPanelWindow?.contentView?.subviews.first as? NSHostingView<SwitchPanelView>)
-                // 通过 ViewModel 切换到下一个
-                NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
-            } else {
-                self.showSwitchPanel()
+            DispatchQueue.main.async {
+                if self.isPanelVisible {
+                    NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
+                } else {
+                    Task { @MainActor in self.showSwitchPanel() }
+                }
             }
         }
 
@@ -39,17 +39,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey | shiftKey), identifier: "reverseSwitch")
         ) { [weak self] in
             guard let self else { return }
-            if self.isPanelVisible {
-                NotificationCenter.default.post(name: .reverseSwitchHotKeyPressed, object: nil)
-            } else {
-                self.showSwitchPanel(reversed: true)
+            DispatchQueue.main.async {
+                if self.isPanelVisible {
+                    NotificationCenter.default.post(name: .reverseSwitchHotKeyPressed, object: nil)
+                } else {
+                    Task { @MainActor in self.showSwitchPanel(reversed: true) }
+                }
             }
         }
 
         // Cmd+`: 应用内切换
         hotKeyManager.register(
             HotKey(keyCode: UInt32(kVK_ANSI_Grave), modifiers: UInt32(cmdKey), identifier: "appSwitch")
-        ) { [weak self] in
+        ) {
             NotificationCenter.default.post(name: .appSwitchHotKeyPressed, object: nil)
         }
     }
@@ -79,6 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - 切换面板
+    @MainActor
     func showSwitchPanel(reversed: Bool = false) {
         guard !isPanelVisible else { return }
         isPanelVisible = true

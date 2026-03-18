@@ -25,11 +25,10 @@ struct SwitchPanelView: View {
         }
         .frame(width: 800, height: 480)
         .shadow(color: .black.opacity(0.3), radius: 24, x: 0, y: 8)
-        .onKeyPress(keys: [.tab]) { _ in
-            viewModel.selectNext(); return .handled
-        }
-        .onKeyPress(.escape) { onDismiss(); return .handled }
-        .onKeyPress(.return) { viewModel.activateSelected(); onDismiss(); return .handled }
+        .background(KeyEventHandler(onNext: { viewModel.selectNext() },
+                                    onPrev: { viewModel.selectPrevious() },
+                                    onConfirm: { viewModel.activateSelected(); onDismiss() },
+                                    onDismiss: onDismiss))
     }
 
     // MARK: - 大预览区
@@ -170,6 +169,57 @@ struct WindowThumbnailItem: View {
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2) { onActivate() }
         .onTapGesture(count: 1) { onSelect() }
+    }
+}
+
+// MARK: - 键盘事件处理（兼容 macOS 13）
+struct KeyEventHandler: NSViewRepresentable {
+    let onNext: () -> Void
+    let onPrev: () -> Void
+    let onConfirm: () -> Void
+    let onDismiss: () -> Void
+
+    func makeNSView(context: Context) -> KeyCatchView {
+        let view = KeyCatchView()
+        view.onNext = onNext
+        view.onPrev = onPrev
+        view.onConfirm = onConfirm
+        view.onDismiss = onDismiss
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyCatchView, context: Context) {
+        nsView.onNext = onNext
+        nsView.onPrev = onPrev
+        nsView.onConfirm = onConfirm
+        nsView.onDismiss = onDismiss
+    }
+}
+
+class KeyCatchView: NSView {
+    var onNext: (() -> Void)?
+    var onPrev: (() -> Void)?
+    var onConfirm: (() -> Void)?
+    var onDismiss: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 48: // Tab
+            if event.modifierFlags.contains(.shift) { onPrev?() }
+            else { onNext?() }
+        case 36, 76: // Return / Enter
+            onConfirm?()
+        case 53: // Escape
+            onDismiss?()
+        case 123, 125: // Left / Down
+            onPrev?()
+        case 124, 126: // Right / Up
+            onNext?()
+        default:
+            super.keyDown(with: event)
+        }
     }
 }
 

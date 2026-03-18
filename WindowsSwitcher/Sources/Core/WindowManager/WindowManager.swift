@@ -117,7 +117,7 @@ class WindowManager: WindowManagerProtocol {
         let windowTitle = info[kCGWindowName as String] as? String ?? ""
         let isOnScreen = info[kCGWindowIsOnscreen as String] as? Bool ?? false
 
-        var boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+        let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
         let frame = CGRect(
             x: boundsDict["X"] ?? 0,
             y: boundsDict["Y"] ?? 0,

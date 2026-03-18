@@ -1,0 +1,51 @@
+{
+  "identity": "swift-packages-mirrors",
+  "name": "Swift Packages Mirrors",
+  "overview": "国内Swift包镜像源",
+  "keywords": ["swift", "package", "mirror"],
+  "packages": [
+    {
+      "identity": "Alamofire",
+      "name": "Alamofire",
+      "url": "https://mirror.ghproxy.com/https://github.com/Alamofire/Alamofire.git",
+      "version": "5.8.1"
+    },
+    {
+      "identity": "RealmSwift",
+      "name": "RealmSwift",
+      "url": "https://mirror.ghproxy.com/https://github.com/realm/realm-swift.git",
+      "version": "10.45.0"
+    },
+    {
+      "identity": "SwiftyBeaver",
+      "name": "SwiftyBeaver",
+      "url": "https://mirror.ghproxy.com/https://github.com/SwiftyBeaver/SwiftyBeaver.git",
+      "version": "2.0.0"
+    },
+    {
+      "identity": "SwiftyJSON",
+      "name": "SwiftyJSON",
+      "url": "https://mirror.ghproxy.com/https://github.com/SwiftyJSON/SwiftyJSON.git",
+      "version": "5.0.1"
+    },
+    {
+      "identity": "SnapKit",
+      "name": "SnapKit",
+      "url": "https://mirror.ghproxy.com/https://github.com/SnapKit/SnapKit.git",
+      "version": "5.6.0"
+    },
+    {
+      "identity": "SwifterSwift",
+      "name": "SwifterSwift",
+      "url": "https://mirror.ghproxy.com/https://github.com/SwifterSwift/SwifterSwift.git",
+      "version": "6.2.0"
+    },
+    {
+      "identity": "HotKey",
+      "name": "HotKey",
+      "url": "https://mirror.ghproxy.com/https://github.com/soffes/HotKey.git",
+      "version": "0.2.0"
+    }
+  ],
+  "version": 1
+}
