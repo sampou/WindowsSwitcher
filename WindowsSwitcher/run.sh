@@ -16,7 +16,11 @@ cp Sources/Info.plist WindowsSwitcher.app/Contents/
 
 echo "🚀 启动..."
 pkill -f "WindowsSwitcher.app/Contents/MacOS/WindowsSwitcher" 2>/dev/null || true
-sleep 0.5
-open WindowsSwitcher.app
+sleep 0.3
 
-echo "✅ 完成！菜单栏应查看右上角图标 (⊞)"
+# 直接运行可执行文件（绕过 Gatekeeper 未签名限制）
+./WindowsSwitcher.app/Contents/MacOS/WindowsSwitcher &
+
+echo "✅ 完成！查看右上角菜单栏图标 (⊞)"
+echo "   左键点击 → 显示切换面板"
+echo "   右键点击 → 设置/退出菜单"
