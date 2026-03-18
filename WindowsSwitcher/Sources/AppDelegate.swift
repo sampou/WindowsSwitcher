@@ -61,12 +61,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "Window Switcher")
+            // 左键单击直接显示切换面板
+            button.action = #selector(statusBarButtonClicked)
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            button.target = self
         }
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ","))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem?.menu = menu
+    }
+
+    @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseUp {
+            // 右键显示菜单
+            let menu = NSMenu()
+            menu.addItem(NSMenuItem(title: "显示切换器", action: #selector(showSwitcherFromMenu), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ","))
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            statusItem?.menu = menu
+            statusItem?.button?.performClick(nil)
+            statusItem?.menu = nil
+        } else {
+            // 左键直接显示切换面板
+            Task { @MainActor in self.showSwitchPanel() }
+        }
+    }
+
+    @objc private func showSwitcherFromMenu() {
+        Task { @MainActor in self.showSwitchPanel() }
     }
 
     private func requestPermissions() {
