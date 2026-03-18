@@ -70,10 +70,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
+    @MainActor @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp {
-            // 右键显示菜单
             let menu = NSMenu()
             menu.addItem(NSMenuItem(title: "显示切换器", action: #selector(showSwitcherFromMenu), keyEquivalent: ""))
             menu.addItem(NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ","))
@@ -83,8 +82,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem?.button?.performClick(nil)
             statusItem?.menu = nil
         } else {
-            // 左键直接显示切换面板
-            Task { @MainActor in self.showSwitchPanel() }
+            showSwitchPanel()
         }
     }
 
