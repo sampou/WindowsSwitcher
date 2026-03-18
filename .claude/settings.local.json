@@ -9,7 +9,8 @@
       "Bash(swift package:*)",
       "Bash(swift build:*)",
       "Bash(git commit -m \"fix: 修复编译错误，构建通过:*)",
-      "Bash(git commit -m \"feat\\(Sprint5-6\\): 筛选增强/UI组件/主题/动画全部实现:*)"
+      "Bash(git commit -m \"feat\\(Sprint5-6\\): 筛选增强/UI组件/主题/动画全部实现:*)",
+      "Bash(git commit -m \"feat\\(测试工程师\\): Sprint7测试用例实现:*)"
     ]
   }
 }
