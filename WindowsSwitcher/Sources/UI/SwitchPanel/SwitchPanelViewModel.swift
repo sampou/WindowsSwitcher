@@ -15,6 +15,7 @@ class SwitchPanelViewModel: ObservableObject {
     private let previewGenerator: PreviewGenerator
     private let filterEngine: FilterEngine
     private let config = ConfigManager.shared
+    private var cancellables = Set<AnyCancellable>()
 
     init(windows: [WindowModel],
          windowManager: WindowManagerProtocol,
@@ -25,6 +26,20 @@ class SwitchPanelViewModel: ObservableObject {
         self.filterEngine = filterEngine
         self.windows = windows
         applyFilter()
+        setupNotifications()
+    }
+
+    // MARK: - 通知监听（响应全局快捷键）
+    private func setupNotifications() {
+        NotificationCenter.default.publisher(for: .switchHotKeyPressed)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.selectNext() }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .reverseSwitchHotKeyPressed)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.selectPrevious() }
+            .store(in: &cancellables)
     }
 
     func applyFilter() {
@@ -58,6 +73,18 @@ class SwitchPanelViewModel: ObservableObject {
 
     func closeWindow(_ window: WindowModel) {
         windowManager.closeWindow(window)
+        windows.removeAll { $0.id == window.id }
+        applyFilter()
+    }
+
+    func minimizeWindow(_ window: WindowModel) {
+        windowManager.minimizeWindow(window)
+        windows.removeAll { $0.id == window.id }
+        applyFilter()
+    }
+
+    func hideWindow(_ window: WindowModel) {
+        windowManager.hideWindow(window)
         windows.removeAll { $0.id == window.id }
         applyFilter()
     }

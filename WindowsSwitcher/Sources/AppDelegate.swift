@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Carbon
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -8,12 +9,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let previewGenerator = PreviewGenerator()
     private let filterEngine = FilterEngine()
     private let configManager = ConfigManager.shared
+    private let hotKeyManager = HotKeyManager()
+    private var isPanelVisible = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
         requestPermissions()
+        setupHotKeys()
     }
 
+    // MARK: - 快捷键注册
+    private func setupHotKeys() {
+        // Cmd+Tab: 显示/下一个
+        hotKeyManager.register(
+            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey), identifier: "switch")
+        ) { [weak self] in
+            guard let self else { return }
+            if self.isPanelVisible {
+                (self.switchPanelWindow?.contentView?.subviews.first as? NSHostingView<SwitchPanelView>)
+                // 通过 ViewModel 切换到下一个
+                NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
+            } else {
+                self.showSwitchPanel()
+            }
+        }
+
+        // Cmd+Shift+Tab: 反向切换
+        hotKeyManager.register(
+            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey | shiftKey), identifier: "reverseSwitch")
+        ) { [weak self] in
+            guard let self else { return }
+            if self.isPanelVisible {
+                NotificationCenter.default.post(name: .reverseSwitchHotKeyPressed, object: nil)
+            } else {
+                self.showSwitchPanel(reversed: true)
+            }
+        }
+
+        // Cmd+`: 应用内切换
+        hotKeyManager.register(
+            HotKey(keyCode: UInt32(kVK_ANSI_Grave), modifiers: UInt32(cmdKey), identifier: "appSwitch")
+        ) { [weak self] in
+            NotificationCenter.default.post(name: .appSwitchHotKeyPressed, object: nil)
+        }
+    }
+
+    // MARK: - 菜单栏
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
@@ -37,7 +78,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    func showSwitchPanel() {
+    // MARK: - 切换面板
+    func showSwitchPanel(reversed: Bool = false) {
+        guard !isPanelVisible else { return }
+        isPanelVisible = true
+
         let windows = windowManager.getAllWindows()
         let vm = SwitchPanelViewModel(
             windows: windows,
@@ -45,6 +90,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             previewGenerator: previewGenerator,
             filterEngine: filterEngine
         )
+        if reversed { vm.selectPrevious() }
+
         let view = SwitchPanelView(viewModel: vm) { [weak self] in
             self?.hideSwitchPanel()
         }
@@ -63,10 +110,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.center()
         panel.makeKeyAndOrderFront(nil)
         switchPanelWindow = panel
+
+        Logger.info("Switch panel shown, \(windows.count) windows")
     }
 
     func hideSwitchPanel() {
         switchPanelWindow?.orderOut(nil)
         switchPanelWindow = nil
+        isPanelVisible = false
+        Logger.info("Switch panel hidden")
     }
 }

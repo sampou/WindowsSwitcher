@@ -3,7 +3,8 @@
     "allow": [
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"feat\\(软件架构师\\): 搭建项目骨架:*)"
+      "Bash(git commit -m \"feat\\(软件架构师\\): 搭建项目骨架:*)",
+      "Bash(git commit -m \"feat\\(移动应用开发者\\): 完善Sprint2-4核心功能实现:*)"
     ]
   }
 }
