@@ -89,21 +89,34 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func closeWindow(_ window: WindowModel) {
+        // BUG-006: 先乐观移除，200ms 后从系统重新获取确认
         windowManager.closeWindow(window)
         windows.removeAll { $0.id == window.id }
         applyFilter()
+        refreshWindowsAfterDelay()
     }
 
     func minimizeWindow(_ window: WindowModel) {
         windowManager.minimizeWindow(window)
         windows.removeAll { $0.id == window.id }
         applyFilter()
+        refreshWindowsAfterDelay()
     }
 
     func hideWindow(_ window: WindowModel) {
         windowManager.hideWindow(window)
         windows.removeAll { $0.id == window.id }
         applyFilter()
+        refreshWindowsAfterDelay()
+    }
+
+    private func refreshWindowsAfterDelay() {
+        Task {
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+            let fresh = windowManager.getAllWindows()
+            windows = fresh
+            applyFilter()
+        }
     }
 
     var selectedWindow: WindowModel? {
