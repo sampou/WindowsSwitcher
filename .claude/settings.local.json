@@ -22,7 +22,9 @@
       "Bash(bash run.sh)",
       "Bash(git commit:*)",
       "Bash(xcodegen generate:*)",
-      "Bash(xcodebuild -project WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug build)"
+      "Bash(xcodebuild -project WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug build)",
+      "Bash(osascript:*)",
+      "Bash(APP=\"/Users/sampou/Library/Developer/Xcode/DerivedData/WindowsSwitcher-exdskpucyfblzrfqwfbsdlwupoah/Build/Products/Debug/WindowsSwitcher.app\" cat \"$APP/Contents/Info.plist\")"
     ]
   }
 }

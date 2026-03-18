@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// T-042 独立窗口项组件：应用图标 + 标题 + 预览缩略图 + 操作按钮
+/// T-042 窗口项组件 - 新设计：预览图 + 应用图标 + 标题，网格布局
 struct WindowItemView: View {
     let window: WindowModel
     let isSelected: Bool
@@ -15,70 +15,109 @@ struct WindowItemView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(spacing: DesignTokens.Spacing.xs) {
-                thumbnailArea
-                appLabel
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                previewArea
+                appInfo
             }
+            .padding(DesignTokens.Spacing.xs)
+            .frame(width: DesignTokens.WindowItem.width, height: DesignTokens.WindowItem.height)
+            .background(itemBackground)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md)
+                    .stroke(isSelected ? DesignTokens.Colors.accent : Color.clear, lineWidth: 2)
+            )
 
-            if isHovered {
-                actionButtons
-            }
+            if isHovered { actionButtons }
         }
-        .scaleEffect(isHovered ? 1.05 : 1.0)
+        .scaleEffect(isHovered ? 1.03 : 1.0)
         .animation(DesignTokens.Animation.itemHover, value: isHovered)
         .onHover { isHovered = $0 }
         .onTapGesture(count: 2) { onActivate() }
         .onTapGesture(count: 1) { onSelect() }
     }
 
-    // MARK: - 缩略图区域
-    private var thumbnailArea: some View {
+    // MARK: - 预览图
+    private var previewArea: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.sm)
-                .fill(isSelected ? DesignTokens.Colors.accentLight : Color.secondary.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.sm)
-                        .stroke(isSelected ? DesignTokens.Colors.accent : Color.clear, lineWidth: 2)
-                )
+            RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
+                .fill(DesignTokens.Colors.secondaryBackground)
 
             if let image = previewImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.sm))
+                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
                     .transition(.opacity.animation(DesignTokens.Animation.previewLoad))
             } else {
                 Image(nsImage: window.appIcon)
                     .resizable()
-                    .frame(width: 32, height: 32)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+                    .opacity(0.4)
             }
 
-            // 最小化/隐藏状态标记
             if window.isMinimized || window.isHidden {
                 VStack {
                     Spacer()
                     HStack {
-                        Image(systemName: window.isMinimized ? "minus.circle.fill" : "eye.slash.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.white)
-                            .padding(DesignTokens.Spacing.xs)
+                        Label(
+                            window.isMinimized ? "已最小化" : "已隐藏",
+                            systemImage: window.isMinimized ? "minus.circle.fill" : "eye.slash.fill"
+                        )
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.5))
+                        .clipShape(Capsule())
+                        .padding(4)
                         Spacer()
                     }
                 }
             }
         }
-        .frame(width: 96, height: 72)
+        .frame(width: DesignTokens.WindowItem.previewWidth, height: DesignTokens.WindowItem.previewHeight)
     }
 
-    // MARK: - 应用名标签
-    private var appLabel: some View {
-        Text(window.appName)
-            .font(.system(size: 11))
-            .lineLimit(1)
-            .foregroundStyle(isSelected ? DesignTokens.Colors.accent : .primary)
+    // MARK: - 应用信息
+    private var appInfo: some View {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(nsImage: window.appIcon)
+                .resizable()
+                .frame(width: DesignTokens.WindowItem.iconSize, height: DesignTokens.WindowItem.iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.iconCornerRadius))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(window.appName)
+                    .font(.system(size: DesignTokens.WindowItem.titleFontSize, weight: .semibold))
+                    .foregroundStyle(DesignTokens.Colors.label)
+                    .lineLimit(1)
+
+                if !window.windowTitle.isEmpty && window.windowTitle != window.appName {
+                    Text(window.windowTitle)
+                        .font(.system(size: DesignTokens.WindowItem.subtitleFontSize))
+                        .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.horizontal, DesignTokens.Spacing.xs)
     }
 
-    // MARK: - 操作按钮（悬停时显示）
+    // MARK: - 背景
+    @ViewBuilder
+    private var itemBackground: some View {
+        if isSelected {
+            DesignTokens.Colors.selectedControl.opacity(0.3)
+        } else if isHovered {
+            DesignTokens.Colors.secondaryBackground.opacity(0.6)
+        } else {
+            Color.clear
+        }
+    }
+
+    // MARK: - 操作按钮
     private var actionButtons: some View {
         HStack(spacing: 2) {
             Button(action: onMinimize) {
@@ -95,7 +134,10 @@ struct WindowItemView: View {
             }
             .buttonStyle(.plain)
         }
-        .offset(x: 4, y: -4)
-        .transition(.opacity)
+        .padding(4)
+        .background(.black.opacity(0.4))
+        .clipShape(Capsule())
+        .offset(x: -4, y: 4)
+        .transition(.opacity.animation(DesignTokens.Animation.itemHover))
     }
 }

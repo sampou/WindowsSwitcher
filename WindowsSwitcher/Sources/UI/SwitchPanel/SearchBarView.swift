@@ -32,11 +32,11 @@ struct SearchBarView: View {
         }
         .padding(.horizontal, DesignTokens.Spacing.md)
         .padding(.vertical, DesignTokens.Spacing.sm)
-        .background(.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md))
+        .background(DesignTokens.Colors.secondaryBackground.opacity(0.8))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.button))
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md)
-                .stroke(isFocused ? DesignTokens.Colors.accent.opacity(0.6) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.button)
+                .stroke(isFocused ? DesignTokens.Colors.accent.opacity(0.6) : DesignTokens.Colors.separator, lineWidth: 1)
         )
         .animation(DesignTokens.Animation.itemHover, value: isFocused)
     }

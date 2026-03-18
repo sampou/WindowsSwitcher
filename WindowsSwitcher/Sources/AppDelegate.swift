@@ -120,7 +120,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.hideSwitchPanel()
         }
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: DesignTokens.Panel.width, height: DesignTokens.Panel.height),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
