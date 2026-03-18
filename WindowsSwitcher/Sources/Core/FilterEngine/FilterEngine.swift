@@ -45,6 +45,7 @@ private func fuzzyMatch(_ query: String, in text: String) -> Bool {
     // character-subsequence fuzzy
     var qi = q.startIndex
     for ch in t {
+        guard qi < q.endIndex else { return true }
         if ch == q[qi] {
             qi = q.index(after: qi)
             if qi == q.endIndex { return true }

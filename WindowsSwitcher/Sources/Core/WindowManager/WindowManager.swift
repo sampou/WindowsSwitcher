@@ -20,6 +20,12 @@ protocol WindowManagerProtocol {
 class WindowManager: WindowManagerProtocol {
     private var eventHandler: ((WindowEvent) -> Void)?
     private var windowCache: [CGWindowID: WindowModel] = [:]
+    private var observers: [NSObjectProtocol] = []
+
+    deinit {
+        observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        observers.removeAll()
+    }
 
     func getAllWindows() -> [WindowModel] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
@@ -97,12 +103,16 @@ class WindowManager: WindowManagerProtocol {
 
     func observeWindowChanges(_ handler: @escaping (WindowEvent) -> Void) {
         self.eventHandler = handler
-        NSWorkspace.shared.notificationCenter.addObserver(
+        // BUG-003: 先移除旧 observer，防止重复注册
+        observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        observers.removeAll()
+        let token = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             self?.getAllWindows().forEach { handler(.windowStateChanged($0)) }
         }
+        observers.append(token)
     }
 
     private func buildWindowModel(from info: [String: Any]) -> WindowModel? {
@@ -129,6 +139,10 @@ class WindowManager: WindowManagerProtocol {
         let bundleID = app?.bundleIdentifier ?? ""
         let icon = app?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
 
+        // BUG-001: 通过 AX API 读取最小化状态，降级方案：isOnScreen=false && layer==0
+        let isMinimized = Self.axIsMinimized(pid: ownerPID, windowTitle: windowTitle)
+            ?? (!isOnScreen && layer == 0)
+
         return WindowModel(
             id: windowID,
             appName: appName,
@@ -136,12 +150,30 @@ class WindowManager: WindowManagerProtocol {
             windowTitle: windowTitle,
             appIcon: icon,
             frame: frame,
-            isMinimized: false,
+            isMinimized: isMinimized,
             isHidden: app?.isHidden ?? false,
             isOnScreen: isOnScreen,
             lastActiveTime: Date(),
             windowLayer: layer,
             ownerPID: ownerPID
         )
+    }
+
+    /// 通过 AX API 查询指定窗口的最小化状态。需要辅助功能权限，失败时返回 nil。
+    private static func axIsMinimized(pid: pid_t, windowTitle: String) -> Bool? {
+        let axApp = AXUIElementCreateApplication(pid)
+        var windowList: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+              let wins = windowList as? [AXUIElement] else { return nil }
+        for win in wins {
+            var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+            guard let title = titleRef as? String, title == windowTitle else { continue }
+            var minimizedRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minimizedRef) == .success,
+                  let minimized = minimizedRef as? Bool else { return nil }
+            return minimized
+        }
+        return nil
     }
 }

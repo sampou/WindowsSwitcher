@@ -40,6 +40,23 @@ class SwitchPanelViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.selectPrevious() }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .appSwitchHotKeyPressed)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.switchWithinCurrentApp() }
+            .store(in: &cancellables)
+    }
+
+    func switchWithinCurrentApp() {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName else { return }
+        let appWindows = windows.filter { $0.appName == frontApp }
+        guard appWindows.count > 1 else { return }
+        if let currentIdx = appWindows.firstIndex(where: { $0.id == selectedWindow?.id }) {
+            let nextIdx = (currentIdx + 1) % appWindows.count
+            if let globalIdx = filteredWindows.firstIndex(where: { $0.id == appWindows[nextIdx].id }) {
+                selectedIndex = globalIdx
+            }
+        }
     }
 
     func applyFilter() {
@@ -105,7 +122,20 @@ class SwitchPanelViewModel: ObservableObject {
                 width: config.config.appearance.previewWidth,
                 height: config.config.appearance.previewHeight
             )
-            if let image = await previewGenerator.generatePreview(for: window, size: size) {
+            // BUG-020: 3 秒超时，防止 PreviewGenerator 卡住导致 UI 无响应
+            let image = await withTaskGroup(of: NSImage?.self) { group in
+                group.addTask {
+                    await self.previewGenerator.generatePreview(for: window, size: size)
+                }
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    return nil
+                }
+                let result = await group.next() ?? nil
+                group.cancelAll()
+                return result
+            }
+            if let image {
                 previewImages[window.id] = image
             }
         }

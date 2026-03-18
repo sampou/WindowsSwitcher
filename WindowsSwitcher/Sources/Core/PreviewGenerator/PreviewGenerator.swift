@@ -38,9 +38,10 @@ class PreviewGenerator {
         return await withCheckedContinuation { continuation in
             queue.async {
                 let image = self.captureWindow(window.id, size: size)
-                Task {
-                    if let image { await self.cache.set(image, for: window.id) }
-                    continuation.resume(returning: image)
+                // BUG-008: 先 resume，再异步写缓存，确保 continuation 在所有路径都被调用
+                continuation.resume(returning: image)
+                if let image {
+                    Task { await self.cache.set(image, for: window.id) }
                 }
             }
         }

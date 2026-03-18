@@ -11,6 +11,10 @@ final class ThemeManager: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    deinit {
+        DistributedNotificationCenter.default().removeObserver(self)
+    }
+
     private init() {
         // React to config changes
         ConfigManager.shared.$config

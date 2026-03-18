@@ -24,7 +24,8 @@
       "Bash(xcodegen generate:*)",
       "Bash(xcodebuild -project WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug build)",
       "Bash(osascript:*)",
-      "Bash(APP=\"/Users/sampou/Library/Developer/Xcode/DerivedData/WindowsSwitcher-exdskpucyfblzrfqwfbsdlwupoah/Build/Products/Debug/WindowsSwitcher.app\" cat \"$APP/Contents/Info.plist\")"
+      "Bash(APP=\"/Users/sampou/Library/Developer/Xcode/DerivedData/WindowsSwitcher-exdskpucyfblzrfqwfbsdlwupoah/Build/Products/Debug/WindowsSwitcher.app\" cat \"$APP/Contents/Info.plist\")",
+      "Bash(xcodebuild -project /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug build)"
     ]
   }
 }

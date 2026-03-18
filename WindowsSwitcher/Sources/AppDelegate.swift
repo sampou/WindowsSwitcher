@@ -92,8 +92,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func requestPermissions() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        AXIsProcessTrustedWithOptions(options as CFDictionary)
-        CGRequestScreenCaptureAccess()
+        let hasTrusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        let hasScreen = CGPreflightScreenCaptureAccess()
+        if !hasScreen { CGRequestScreenCaptureAccess() }
+        if !hasTrusted || !hasScreen {
+            updateMenuBarIcon(hasPermissions: false)
+        }
+    }
+
+    private func updateMenuBarIcon(hasPermissions: Bool) {
+        let iconName = hasPermissions ? "rectangle.on.rectangle" : "rectangle.on.rectangle.slash"
+        statusItem?.button?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
     }
 
     @objc private func openSettings() {
@@ -132,16 +141,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.hasShadow = true
         panel.contentView = NSHostingView(rootView: view)
         panel.center()
-        panel.makeKeyAndOrderFront(nil)
+        PanelAnimator.show(panel)
         switchPanelWindow = panel
 
         Logger.info("Switch panel shown, \(windows.count) windows")
     }
 
     func hideSwitchPanel() {
-        switchPanelWindow?.orderOut(nil)
-        switchPanelWindow = nil
-        isPanelVisible = false
-        Logger.info("Switch panel hidden")
+        guard let panel = switchPanelWindow else { return }
+        PanelAnimator.hide(panel) { [weak self] in
+            self?.switchPanelWindow = nil
+            self?.isPanelVisible = false
+            Logger.info("Switch panel hidden")
+        }
     }
 }
