@@ -1,0 +1,35 @@
+name: WindowsSwitcher
+options:
+  bundleIdPrefix: com.windowsswitcher
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15"
+
+packages:
+  HotKey:
+    url: https://ghfast.top/https://github.com/soffes/HotKey
+    from: 0.2.0
+
+targets:
+  WindowsSwitcher:
+    type: application
+    platform: macOS
+    sources:
+      - path: WindowsSwitcher/Sources
+        excludes:
+          - Info.plist
+    resources:
+      - path: WindowsSwitcher/Sources/Info.plist
+        buildPhase: none
+    info:
+      path: WindowsSwitcher/Sources/Info.plist
+    dependencies:
+      - package: HotKey
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.windowsswitcher.app
+        SWIFT_VERSION: "5.9"
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        INFOPLIST_FILE: WindowsSwitcher/Sources/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
