@@ -1,0 +1,62 @@
+import AppKit
+import CoreGraphics
+
+actor PreviewCache {
+    private var cache: [CGWindowID: (image: NSImage, timestamp: Date)] = [:]
+    private let maxSize = 50
+
+    func get(_ windowID: CGWindowID) -> NSImage? {
+        guard let entry = cache[windowID] else { return nil }
+        guard Date().timeIntervalSince(entry.timestamp) < 5.0 else {
+            cache.removeValue(forKey: windowID)
+            return nil
+        }
+        return entry.image
+    }
+
+    func set(_ image: NSImage, for windowID: CGWindowID) {
+        if cache.count >= maxSize { evictOldest() }
+        cache[windowID] = (image, Date())
+    }
+
+    func clear() { cache.removeAll() }
+
+    private func evictOldest() {
+        if let oldest = cache.min(by: { $0.value.timestamp < $1.value.timestamp }) {
+            cache.removeValue(forKey: oldest.key)
+        }
+    }
+}
+
+class PreviewGenerator {
+    private let cache = PreviewCache()
+    private let queue = DispatchQueue(label: "com.windowsswitcher.preview", qos: .userInitiated)
+
+    func generatePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
+        if let cached = await cache.get(window.id) { return cached }
+
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let image = self.captureWindow(window.id, size: size)
+                Task {
+                    if let image { await self.cache.set(image, for: window.id) }
+                    continuation.resume(returning: image)
+                }
+            }
+        }
+    }
+
+    func clearCache() async { await cache.clear() }
+
+    private func captureWindow(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
+        guard let cgImage = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            windowID,
+            [.boundsIgnoreFraming, .bestResolution]
+        ) else { return nil }
+
+        let image = NSImage(cgImage: cgImage, size: size)
+        return image
+    }
+}
