@@ -1,0 +1,492 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		122ABF878486E62A3DAFD738 /* PreviewGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */; };
+		1443E837EB245AB2F5E20D2D /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = FD47C6688AF3532003111434 /* HotKey */; };
+		17DCE1B58A0FADC6DC6E3374 /* WindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B80398F273DCF7C8B12FF8 /* WindowManager.swift */; };
+		186211D28D42DB8043641BD9 /* WindowItemView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39EED15FD6926B9E60DF9FDC /* WindowItemView.swift */; };
+		237112AE8140052920484036 /* SwitchPanelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = F85A8FDCD5655C00673C4C1C /* SwitchPanelViewModel.swift */; };
+		25D24BBF4B974DD17F80F03D /* WindowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BC7AB091FE26DE005372983 /* WindowModel.swift */; };
+		26205B5403789B166EA4696E /* SwitchPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B9FAA7379F76BA0D0EF8C9 /* SwitchPanelView.swift */; };
+		29EBA1DF9DDB5AB2CDF978BC /* WindowsSwitcherApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A42A05F51980AF172E6128 /* WindowsSwitcherApp.swift */; };
+		2A622C0E50A7AAF9B80B0B1D /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B4651E6F7DCCE6EFEBE92C /* Logger.swift */; };
+		6964AC9C47196DBEE6D0A3B9 /* SearchBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9513B6C10514C44B38148757 /* SearchBarView.swift */; };
+		7017CD893FDDC5DD49FF8AE0 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A0F070F39D7A2AF099617C /* HotKeyManager.swift */; };
+		74028FE34D99EC425A507242 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */; };
+		7805487D329D7C4313E07206 /* FilterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443479EAF286E51D759D961E /* FilterEngine.swift */; };
+		94A08668C4A186E1CF922AEB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74BE378AF2CB2C559C33365 /* SettingsView.swift */; };
+		9980E92A9A32D04895F08DF0 /* PanelAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */; };
+		B7DD439EDD510E98D6C3F66C /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90BB4603BBAE5AC668324947 /* MenuBarView.swift */; };
+		C3EE2F94287F2281C8D7D2D5 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF52C2CEF6664D31AE467C1B /* DesignTokens.swift */; };
+		CA5EBF5C2521A1D748FA93DE /* ConfigModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4FC58D663B3CB8563B3FD1D /* ConfigModel.swift */; };
+		DE486BED21AF2A6C21EF1550 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F6395992798B47B5D89F76A /* Extensions.swift */; };
+		DE7F31029A4580BEB5FE2B1C /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CC11176E9A1F286871185CB /* PreviewView.swift */; };
+		F807070A205E57B2BE9FC1D8 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D2830A2BFDD6EC96DF6ED1 /* ThemeManager.swift */; };
+		F9B60FF46CDD68A7605EE0E2 /* ConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F823438ED496D6EC5C8A2EA7 /* ConfigManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0F6395992798B47B5D89F76A /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		14A0F070F39D7A2AF099617C /* HotKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyManager.swift; sourceTree = "<group>"; };
+		39EED15FD6926B9E60DF9FDC /* WindowItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowItemView.swift; sourceTree = "<group>"; };
+		42D2830A2BFDD6EC96DF6ED1 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
+		443479EAF286E51D759D961E /* FilterEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterEngine.swift; sourceTree = "<group>"; };
+		47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewGenerator.swift; sourceTree = "<group>"; };
+		6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelAnimator.swift; sourceTree = "<group>"; };
+		6CC11176E9A1F286871185CB /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
+		903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		90BB4603BBAE5AC668324947 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		9513B6C10514C44B38148757 /* SearchBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarView.swift; sourceTree = "<group>"; };
+		9BC7AB091FE26DE005372983 /* WindowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowModel.swift; sourceTree = "<group>"; };
+		C3B9FAA7379F76BA0D0EF8C9 /* SwitchPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchPanelView.swift; sourceTree = "<group>"; };
+		C4A42A05F51980AF172E6128 /* WindowsSwitcherApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowsSwitcherApp.swift; sourceTree = "<group>"; };
+		C9B4651E6F7DCCE6EFEBE92C /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
+		D4FC58D663B3CB8563B3FD1D /* ConfigModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigModel.swift; sourceTree = "<group>"; };
+		DF52C2CEF6664D31AE467C1B /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
+		E74BE378AF2CB2C559C33365 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		F2B80398F273DCF7C8B12FF8 /* WindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManager.swift; sourceTree = "<group>"; };
+		F6BCCF9227C24B94BA80F096 /* WindowsSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WindowsSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F823438ED496D6EC5C8A2EA7 /* ConfigManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigManager.swift; sourceTree = "<group>"; };
+		F85A8FDCD5655C00673C4C1C /* SwitchPanelViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchPanelViewModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		2B28629A69A5538EDD3B4798 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1443E837EB245AB2F5E20D2D /* HotKey in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		11CDB6F8D16282B94D7C1E40 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				F823438ED496D6EC5C8A2EA7 /* ConfigManager.swift */,
+				D4FC58D663B3CB8563B3FD1D /* ConfigModel.swift */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		2ED91C03B3EF5377110991B5 /* PreviewGenerator */ = {
+			isa = PBXGroup;
+			children = (
+				47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */,
+			);
+			path = PreviewGenerator;
+			sourceTree = "<group>";
+		};
+		34497BB1961D522B58AE24F1 /* HotKeyManager */ = {
+			isa = PBXGroup;
+			children = (
+				14A0F070F39D7A2AF099617C /* HotKeyManager.swift */,
+			);
+			path = HotKeyManager;
+			sourceTree = "<group>";
+		};
+		369ACC0A6EB25627872307A9 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */,
+				C4A42A05F51980AF172E6128 /* WindowsSwitcherApp.swift */,
+				11CDB6F8D16282B94D7C1E40 /* Config */,
+				742B6550CB592BB5C681A081 /* Core */,
+				A065FCFCF5469797B9277E98 /* UI */,
+				D73C1BCD82F16FD40D7BAB37 /* Utils */,
+			);
+			name = Sources;
+			path = WindowsSwitcher/Sources;
+			sourceTree = "<group>";
+		};
+		5ADF54C777259AD5B90B68D7 /* WindowManager */ = {
+			isa = PBXGroup;
+			children = (
+				F2B80398F273DCF7C8B12FF8 /* WindowManager.swift */,
+				9BC7AB091FE26DE005372983 /* WindowModel.swift */,
+			);
+			path = WindowManager;
+			sourceTree = "<group>";
+		};
+		675AE1172ABD2B0E03651478 /* MenuBar */ = {
+			isa = PBXGroup;
+			children = (
+				90BB4603BBAE5AC668324947 /* MenuBarView.swift */,
+			);
+			path = MenuBar;
+			sourceTree = "<group>";
+		};
+		742B6550CB592BB5C681A081 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				AE2A0E9796113B5468783D44 /* FilterEngine */,
+				34497BB1961D522B58AE24F1 /* HotKeyManager */,
+				2ED91C03B3EF5377110991B5 /* PreviewGenerator */,
+				5ADF54C777259AD5B90B68D7 /* WindowManager */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		8205D3D51BDEC57E455DC395 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F6BCCF9227C24B94BA80F096 /* WindowsSwitcher.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		87DD7E2F778123831DBFE42E /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				E74BE378AF2CB2C559C33365 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		A065FCFCF5469797B9277E98 /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				675AE1172ABD2B0E03651478 /* MenuBar */,
+				87DD7E2F778123831DBFE42E /* Settings */,
+				CF6F0D7753C22B56BD185EEF /* SwitchPanel */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
+		AA40B625EECA21940B6B661F = {
+			isa = PBXGroup;
+			children = (
+				369ACC0A6EB25627872307A9 /* Sources */,
+				8205D3D51BDEC57E455DC395 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AE2A0E9796113B5468783D44 /* FilterEngine */ = {
+			isa = PBXGroup;
+			children = (
+				443479EAF286E51D759D961E /* FilterEngine.swift */,
+			);
+			path = FilterEngine;
+			sourceTree = "<group>";
+		};
+		CF6F0D7753C22B56BD185EEF /* SwitchPanel */ = {
+			isa = PBXGroup;
+			children = (
+				6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */,
+				6CC11176E9A1F286871185CB /* PreviewView.swift */,
+				9513B6C10514C44B38148757 /* SearchBarView.swift */,
+				C3B9FAA7379F76BA0D0EF8C9 /* SwitchPanelView.swift */,
+				F85A8FDCD5655C00673C4C1C /* SwitchPanelViewModel.swift */,
+				39EED15FD6926B9E60DF9FDC /* WindowItemView.swift */,
+			);
+			path = SwitchPanel;
+			sourceTree = "<group>";
+		};
+		D73C1BCD82F16FD40D7BAB37 /* Utils */ = {
+			isa = PBXGroup;
+			children = (
+				DF52C2CEF6664D31AE467C1B /* DesignTokens.swift */,
+				0F6395992798B47B5D89F76A /* Extensions.swift */,
+				C9B4651E6F7DCCE6EFEBE92C /* Logger.swift */,
+				42D2830A2BFDD6EC96DF6ED1 /* ThemeManager.swift */,
+			);
+			path = Utils;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0261107D4E9167FCE63ABAF2 /* WindowsSwitcher */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E90622E502B5279999889761 /* Build configuration list for PBXNativeTarget "WindowsSwitcher" */;
+			buildPhases = (
+				DD85DCC951F17210847E7370 /* Sources */,
+				2B28629A69A5538EDD3B4798 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WindowsSwitcher;
+			packageProductDependencies = (
+				FD47C6688AF3532003111434 /* HotKey */,
+			);
+			productName = WindowsSwitcher;
+			productReference = F6BCCF9227C24B94BA80F096 /* WindowsSwitcher.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		1422C47600823F4D4566A9B4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					0261107D4E9167FCE63ABAF2 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "WindowsSwitcher" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = AA40B625EECA21940B6B661F;
+			packageReferences = (
+				4C77DBFBE4EB3C3A60C1B5DE /* XCRemoteSwiftPackageReference "HotKey" */,
+			);
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0261107D4E9167FCE63ABAF2 /* WindowsSwitcher */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		DD85DCC951F17210847E7370 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				74028FE34D99EC425A507242 /* AppDelegate.swift in Sources */,
+				F9B60FF46CDD68A7605EE0E2 /* ConfigManager.swift in Sources */,
+				CA5EBF5C2521A1D748FA93DE /* ConfigModel.swift in Sources */,
+				C3EE2F94287F2281C8D7D2D5 /* DesignTokens.swift in Sources */,
+				DE486BED21AF2A6C21EF1550 /* Extensions.swift in Sources */,
+				7805487D329D7C4313E07206 /* FilterEngine.swift in Sources */,
+				7017CD893FDDC5DD49FF8AE0 /* HotKeyManager.swift in Sources */,
+				2A622C0E50A7AAF9B80B0B1D /* Logger.swift in Sources */,
+				B7DD439EDD510E98D6C3F66C /* MenuBarView.swift in Sources */,
+				9980E92A9A32D04895F08DF0 /* PanelAnimator.swift in Sources */,
+				122ABF878486E62A3DAFD738 /* PreviewGenerator.swift in Sources */,
+				DE7F31029A4580BEB5FE2B1C /* PreviewView.swift in Sources */,
+				6964AC9C47196DBEE6D0A3B9 /* SearchBarView.swift in Sources */,
+				94A08668C4A186E1CF922AEB /* SettingsView.swift in Sources */,
+				26205B5403789B166EA4696E /* SwitchPanelView.swift in Sources */,
+				237112AE8140052920484036 /* SwitchPanelViewModel.swift in Sources */,
+				F807070A205E57B2BE9FC1D8 /* ThemeManager.swift in Sources */,
+				186211D28D42DB8043641BD9 /* WindowItemView.swift in Sources */,
+				17DCE1B58A0FADC6DC6E3374 /* WindowManager.swift in Sources */,
+				25D24BBF4B974DD17F80F03D /* WindowModel.swift in Sources */,
+				29EBA1DF9DDB5AB2CDF978BC /* WindowsSwitcherApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		6ACBE4AB9024D0A3CBD90E6A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C5484D2F14C02DF7CC127A70 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = WindowsSwitcher/Sources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.windowsswitcher.app;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		C5A5EDDDC45762737E454F2B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = WindowsSwitcher/Sources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.windowsswitcher.app;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		E30923A3A067EB79268C7E33 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "WindowsSwitcher" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6ACBE4AB9024D0A3CBD90E6A /* Debug */,
+				E30923A3A067EB79268C7E33 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E90622E502B5279999889761 /* Build configuration list for PBXNativeTarget "WindowsSwitcher" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C5A5EDDDC45762737E454F2B /* Debug */,
+				C5484D2F14C02DF7CC127A70 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4C77DBFBE4EB3C3A60C1B5DE /* XCRemoteSwiftPackageReference "HotKey" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://ghfast.top/https://github.com/soffes/HotKey";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		FD47C6688AF3532003111434 /* HotKey */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4C77DBFBE4EB3C3A60C1B5DE /* XCRemoteSwiftPackageReference "HotKey" */;
+			productName = HotKey;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 1422C47600823F4D4566A9B4 /* Project object */;
+}

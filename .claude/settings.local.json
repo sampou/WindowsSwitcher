@@ -10,7 +10,19 @@
       "Bash(swift build:*)",
       "Bash(git commit -m \"fix: 修复编译错误，构建通过:*)",
       "Bash(git commit -m \"feat\\(Sprint5-6\\): 筛选增强/UI组件/主题/动画全部实现:*)",
-      "Bash(git commit -m \"feat\\(测试工程师\\): Sprint7测试用例实现:*)"
+      "Bash(git commit -m \"feat\\(测试工程师\\): Sprint7测试用例实现:*)",
+      "Bash(find /Users/sampou/mac_workspace/WindowsSwitcher -name *.xcodeproj -o -name *.xcworkspace)",
+      "Bash(open:*)",
+      "Bash(pkill WindowsSwitcher)",
+      "Bash(pkill -f \"WindowsSwitcher.app\")",
+      "Bash(chmod +x /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/run.sh)",
+      "Bash(bash /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/run.sh)",
+      "Bash(git commit -m \"fix: 修复macOS App无界面问题:*)",
+      "Bash(bash run.sh 2>&1)",
+      "Bash(bash run.sh)",
+      "Bash(git commit:*)",
+      "Bash(xcodegen generate:*)",
+      "Bash(xcodebuild -project WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug build)"
     ]
   }
 }
