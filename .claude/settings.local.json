@@ -5,7 +5,11 @@
       "Bash(git add:*)",
       "Bash(git commit -m \"feat\\(软件架构师\\): 搭建项目骨架:*)",
       "Bash(git commit -m \"feat\\(移动应用开发者\\): 完善Sprint2-4核心功能实现:*)",
-      "Bash(git commit -m \"feat\\(测试工程师\\): 编写T-019/T-026/T-032单元测试:*)"
+      "Bash(git commit -m \"feat\\(测试工程师\\): 编写T-019/T-026/T-032单元测试:*)",
+      "Bash(swift package:*)",
+      "Bash(swift build:*)",
+      "Bash(git commit -m \"fix: 修复编译错误，构建通过:*)",
+      "Bash(git commit -m \"feat\\(Sprint5-6\\): 筛选增强/UI组件/主题/动画全部实现:*)"
     ]
   }
 }
