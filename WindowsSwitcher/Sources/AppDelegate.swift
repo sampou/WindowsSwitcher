@@ -13,6 +13,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isPanelVisible = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 确保作为菜单栏应用运行，不显示 Dock 图标
+        NSApp.setActivationPolicy(.accessory)
         setupMenuBar()
         requestPermissions()
         setupHotKeys()
