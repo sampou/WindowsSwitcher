@@ -1,6 +1,10 @@
 import AppKit
 import CoreGraphics
 
+// 私有 API：通过 AXUIElement 获取对应的 CGWindowID
+@_silgen_name("_AXUIElementGetWindow")
+private func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 enum WindowEvent {
     case windowCreated(WindowModel)
     case windowDestroyed(CGWindowID)
@@ -44,56 +48,23 @@ class WindowManager: WindowManagerProtocol {
     func activateWindow(_ window: WindowModel) {
         guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else { return }
         app.activate(options: .activateIgnoringOtherApps)
-        let axApp = AXUIElementCreateApplication(window.ownerPID)
-        var windowList: CFTypeRef?
-        AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList)
-        if let wins = windowList as? [AXUIElement] {
-            for win in wins {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                if let title = titleRef as? String, title == window.windowTitle {
-                    AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
-                    AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                    break
-                }
-            }
-        }
+        guard let win = axWindow(for: window) else { return }
+        AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     }
 
     func closeWindow(_ window: WindowModel) {
-        let axApp = AXUIElementCreateApplication(window.ownerPID)
-        var windowList: CFTypeRef?
-        AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList)
-        if let wins = windowList as? [AXUIElement] {
-            for win in wins {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                if let title = titleRef as? String, title == window.windowTitle {
-                    var closeButton: CFTypeRef?
-                    AXUIElementCopyAttributeValue(win, kAXCloseButtonAttribute as CFString, &closeButton)
-                    if let btn = closeButton, CFGetTypeID(btn) == AXUIElementGetTypeID() {
-                        AXUIElementPerformAction(btn as! AXUIElement, kAXPressAction as CFString)
-                    }
-                    break
-                }
-            }
+        guard let win = axWindow(for: window) else { return }
+        var closeButton: CFTypeRef?
+        AXUIElementCopyAttributeValue(win, kAXCloseButtonAttribute as CFString, &closeButton)
+        if let btn = closeButton, CFGetTypeID(btn) == AXUIElementGetTypeID() {
+            AXUIElementPerformAction(btn as! AXUIElement, kAXPressAction as CFString)
         }
     }
 
     func minimizeWindow(_ window: WindowModel) {
-        let axApp = AXUIElementCreateApplication(window.ownerPID)
-        var windowList: CFTypeRef?
-        AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList)
-        if let wins = windowList as? [AXUIElement] {
-            for win in wins {
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-                if let title = titleRef as? String, title == window.windowTitle {
-                    AXUIElementSetAttributeValue(win, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
-                    break
-                }
-            }
-        }
+        guard let win = axWindow(for: window) else { return }
+        AXUIElementSetAttributeValue(win, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
     }
 
     func hideWindow(_ window: WindowModel) {
@@ -173,6 +144,28 @@ class WindowManager: WindowManagerProtocol {
             guard AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute as CFString, &minimizedRef) == .success,
                   let minimized = minimizedRef as? Bool else { return nil }
             return minimized
+        }
+        return nil
+    }
+
+    /// BUG-002: 用 CGWindowID 匹配 AXUIElement，比标题匹配更可靠
+    private func axWindow(for model: WindowModel) -> AXUIElement? {
+        let axApp = AXUIElementCreateApplication(model.ownerPID)
+        var windowList: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+              let wins = windowList as? [AXUIElement] else { return nil }
+        for win in wins {
+            // 通过 _AXUIElementGetWindow 获取 CGWindowID（私有 API，降级用标题匹配）
+            var cgWinID: CGWindowID = 0
+            if _AXUIElementGetWindow(win, &cgWinID) == .success, cgWinID == model.id {
+                return win
+            }
+            // 降级：标题匹配
+            var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+            if let title = titleRef as? String, title == model.windowTitle {
+                return win
+            }
         }
         return nil
     }

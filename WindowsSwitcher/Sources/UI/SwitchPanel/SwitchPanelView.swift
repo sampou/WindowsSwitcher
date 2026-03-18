@@ -42,7 +42,12 @@ struct SwitchPanelView: View {
             onNext: { viewModel.selectNext() },
             onPrev: { viewModel.selectPrevious() },
             onConfirm: { viewModel.activateSelected(); onDismiss() },
-            onDismiss: onDismiss
+            onDismiss: onDismiss,
+            onSelectIndex: { idx in
+                if viewModel.filteredWindows.indices.contains(idx) {
+                    viewModel.selectedIndex = idx
+                }
+            }
         ))
     }
 
@@ -125,6 +130,7 @@ struct KeyEventHandler: NSViewRepresentable {
     let onPrev: () -> Void
     let onConfirm: () -> Void
     let onDismiss: () -> Void
+    var onSelectIndex: ((Int) -> Void)? = nil
 
     func makeNSView(context: Context) -> KeyCatchView {
         let view = KeyCatchView()
@@ -132,6 +138,7 @@ struct KeyEventHandler: NSViewRepresentable {
         view.onPrev = onPrev
         view.onConfirm = onConfirm
         view.onDismiss = onDismiss
+        view.onSelectIndex = onSelectIndex
         return view
     }
 
@@ -140,6 +147,7 @@ struct KeyEventHandler: NSViewRepresentable {
         nsView.onPrev = onPrev
         nsView.onConfirm = onConfirm
         nsView.onDismiss = onDismiss
+        nsView.onSelectIndex = onSelectIndex
     }
 }
 
@@ -148,24 +156,30 @@ class KeyCatchView: NSView {
     var onPrev: (() -> Void)?
     var onConfirm: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onSelectIndex: ((Int) -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 48: // Tab
+        let chars = event.charactersIgnoringModifiers ?? ""
+        // Escape 没有 specialKey，用 keyCode 53
+        if event.keyCode == 53 { onDismiss?(); return }
+        switch event.specialKey {
+        case .tab:
             if event.modifierFlags.contains(.shift) { onPrev?() }
             else { onNext?() }
-        case 36, 76: // Return / Enter
+        case .carriageReturn, .enter, .newline:
             onConfirm?()
-        case 53: // Escape
-            onDismiss?()
-        case 123, 125: // Left / Down
+        case .leftArrow, .downArrow:
             onPrev?()
-        case 124, 126: // Right / Up
+        case .rightArrow, .upArrow:
             onNext?()
         default:
-            super.keyDown(with: event)
+            if let n = Int(chars), (1...9).contains(n) {
+                onSelectIndex?(n - 1)
+            } else {
+                super.keyDown(with: event)
+            }
         }
     }
 }
