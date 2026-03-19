@@ -120,13 +120,13 @@ final class UIIntegrationTests: XCTestCase {
     func testDesignTokensPanelDimensions() {
         XCTAssertEqual(DesignTokens.Panel.width, 720)
         XCTAssertEqual(DesignTokens.Panel.height, 480)
-        XCTAssertEqual(DesignTokens.Panel.cornerRadius, 12)
+        XCTAssertEqual(DesignTokens.Panel.cornerRadius, 10)
     }
 
     func testDesignTokensWindowItemDimensions() {
-        XCTAssertEqual(DesignTokens.WindowItem.width, 160)
+        XCTAssertEqual(DesignTokens.WindowItem.width, 140)
         XCTAssertEqual(DesignTokens.WindowItem.height, 140)
-        XCTAssertEqual(DesignTokens.WindowItem.previewHeight, 81) // 16:9
+        XCTAssertEqual(DesignTokens.WindowItem.previewHeight, 70) // 16:9
     }
 
     // MARK: - ConfigManager 集成

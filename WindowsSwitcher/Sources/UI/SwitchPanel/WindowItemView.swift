@@ -22,9 +22,9 @@ struct WindowItemView: View {
             .padding(DesignTokens.Spacing.xs)
             .frame(width: DesignTokens.WindowItem.width, height: DesignTokens.WindowItem.height)
             .background(itemBackground)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md))
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem))
             .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem)
                     .stroke(isSelected ? DesignTokens.Colors.accent : Color.clear, lineWidth: 2)
             )
 

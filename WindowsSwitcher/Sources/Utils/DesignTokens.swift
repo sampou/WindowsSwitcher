@@ -65,9 +65,10 @@ struct DesignTokens {
         static let md: CGFloat = 8
         static let lg: CGFloat = 12
         static let button: CGFloat = 6
-        static let panel: CGFloat = 12
+        static let panel: CGFloat = 10
         static let preview: CGFloat = 6
         static let icon: CGFloat = 8
+        static let windowItem: CGFloat = 10
     }
 
     // ============================================
@@ -88,7 +89,7 @@ struct DesignTokens {
         static let width: CGFloat = 720
         static let height: CGFloat = 480
         static let padding: CGFloat = 16
-        static let cornerRadius: CGFloat = 12
+        static let cornerRadius: CGFloat = 10
         static let shadowRadius: CGFloat = 20
         static let shadowY: CGFloat = 8
     }
@@ -97,12 +98,12 @@ struct DesignTokens {
     // 窗口项规格
     // ============================================
     struct WindowItem {
-        static let width: CGFloat = 160
+        static let width: CGFloat = 140
         static let height: CGFloat = 140
         static let iconSize: CGFloat = 32
         static let iconCornerRadius: CGFloat = 8
-        static let previewWidth: CGFloat = 144
-        static let previewHeight: CGFloat = 81  // 16:9
+        static let previewWidth: CGFloat = 124
+        static let previewHeight: CGFloat = 70  // 16:9
         static let previewCornerRadius: CGFloat = 6
         static let spacing: CGFloat = 12
         static let titleFontSize: CGFloat = 13

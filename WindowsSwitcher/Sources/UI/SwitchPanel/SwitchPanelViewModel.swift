@@ -131,10 +131,7 @@ class SwitchPanelViewModel: ObservableObject {
 
     private func loadPreview(for window: WindowModel) {
         Task {
-            let size = CGSize(
-                width: config.config.appearance.previewWidth,
-                height: config.config.appearance.previewHeight
-            )
+            let size = CGSize(width: 124, height: 70)
             // BUG-020: 3 秒超时，防止 PreviewGenerator 卡住导致 UI 无响应
             let image = await withTaskGroup(of: NSImage?.self) { group in
                 group.addTask {
