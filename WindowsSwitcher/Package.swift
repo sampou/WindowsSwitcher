@@ -17,7 +17,11 @@ let package = Package(
             dependencies: [
                 .product(name: "HotKey", package: "HotKey"),
             ],
-            path: "Sources"
+            path: "Sources",
+            exclude: [
+                "WindowsSwitcher.entitlements",
+                "Info.plist"
+            ]
         ),
         .testTarget(
             name: "WindowsSwitcherTests",

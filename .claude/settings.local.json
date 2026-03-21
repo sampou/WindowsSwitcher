@@ -28,7 +28,8 @@
       "Bash(xcodebuild -project /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug build)",
       "Bash(swift test:*)",
       "Bash(git checkout:*)",
-      "Bash(find /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources -type f -name *.swift)"
+      "Bash(find /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources -type f -name *.swift)",
+      "Bash(grep -v \"^$\")"
     ]
   }
 }

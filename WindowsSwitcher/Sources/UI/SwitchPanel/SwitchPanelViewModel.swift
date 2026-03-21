@@ -130,22 +130,26 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadPreview(for window: WindowModel) {
+        // BUG-020: Box 包装解决 macOS 13 NSImage Sendable 警告
+        struct ImageBox: @unchecked Sendable { let image: NSImage }
         Task {
             let size = CGSize(width: 124, height: 70)
-            // BUG-020: 3 秒超时，防止 PreviewGenerator 卡住导致 UI 无响应
-            let image = await withTaskGroup(of: NSImage?.self) { group in
-                group.addTask {
-                    await self.previewGenerator.generatePreview(for: window, size: size)
+            let box: ImageBox? = await withTaskGroup(of: ImageBox?.self) { group in
+                group.addTask { [previewGenerator] in
+                    guard let img = await previewGenerator.generatePreview(for: window, size: size)
+                    else { return nil }
+                    return ImageBox(image: img)
                 }
                 group.addTask {
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
                     return nil
                 }
-                let result = await group.next() ?? nil
-                group.cancelAll()
-                return result
+                for await result in group {
+                    if let result { group.cancelAll(); return result }
+                }
+                return nil
             }
-            if let image {
+            if let image = box?.image {
                 previewImages[window.id] = image
             }
         }

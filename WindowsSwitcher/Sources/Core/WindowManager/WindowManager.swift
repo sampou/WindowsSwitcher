@@ -80,8 +80,26 @@ class WindowManager: WindowManagerProtocol {
         let token = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.getAllWindows().forEach { handler(.windowStateChanged($0)) }
+        ) { [weak self] notification in
+            guard let self else { return }
+            // BUG-011: 更新被激活应用的所有窗口的 lastActiveTime
+            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+                let now = Date()
+                for (id, model) in self.windowCache where model.ownerPID == app.processIdentifier {
+                    // 重建 WindowModel 更新时间戳
+                    let updated = WindowModel(
+                        id: model.id, appName: model.appName,
+                        bundleIdentifier: model.bundleIdentifier,
+                        windowTitle: model.windowTitle, appIcon: model.appIcon,
+                        frame: model.frame, isMinimized: model.isMinimized,
+                        isHidden: model.isHidden, isOnScreen: model.isOnScreen,
+                        lastActiveTime: now, windowLayer: model.windowLayer,
+                        ownerPID: model.ownerPID
+                    )
+                    self.windowCache[id] = updated
+                    handler(.windowStateChanged(updated))
+                }
+            }
         }
         observers.append(token)
     }
@@ -114,6 +132,10 @@ class WindowManager: WindowManagerProtocol {
         let isMinimized = Self.axIsMinimized(pid: ownerPID, windowTitle: windowTitle)
             ?? (!isOnScreen && layer == 0)
 
+        // BUG-011: lastActiveTime 始终为 Date()，无法反映真实 LRU 顺序
+        // 改用 windowCache 中已有的时间戳，首次出现时才用 Date()
+        let lastActive = windowCache[windowID]?.lastActiveTime ?? Date()
+
         return WindowModel(
             id: windowID,
             appName: appName,
@@ -124,7 +146,7 @@ class WindowManager: WindowManagerProtocol {
             isMinimized: isMinimized,
             isHidden: app?.isHidden ?? false,
             isOnScreen: isOnScreen,
-            lastActiveTime: Date(),
+            lastActiveTime: lastActive,
             windowLayer: layer,
             ownerPID: ownerPID
         )
