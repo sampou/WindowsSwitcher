@@ -47,6 +47,7 @@ final class ThemeManager: ObservableObject {
     }
 
     private var systemColorScheme: ColorScheme {
-        NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+        guard let app = NSApp else { return .light }
+        return app.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
     }
 }
