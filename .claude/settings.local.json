@@ -29,7 +29,8 @@
       "Bash(swift test:*)",
       "Bash(git checkout:*)",
       "Bash(find /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources -type f -name *.swift)",
-      "Bash(grep -v \"^$\")"
+      "Bash(grep -v \"^$\")",
+      "Bash(find /Users/sampou/trae_workspace/agency-agents-zh/公司架构/测试部/仿Windows窗口切换器 -type f \\\\\\(-name *.md -o -name *.txt -o -name *.doc* \\\\\\))"
     ]
   }
 }

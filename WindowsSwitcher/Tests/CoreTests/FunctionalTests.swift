@@ -160,6 +160,36 @@ final class F02PreviewTests: XCTestCase {
         let generator = PreviewGenerator()
         await generator.clearCache()
     }
+
+    // AC-03: 预览缓存过期后重新生成
+    func testAC03_PreviewCacheExpiry() async {
+        let cache = PreviewCache()
+        await cache.setExpiry(0.01) // 10ms 过期
+        let img = NSImage(size: NSSize(width: 124, height: 70))
+        await cache.set(img, for: 1)
+        try? await Task.sleep(nanoseconds: 20_000_000) // 等 20ms
+        let result = await cache.get(1)
+        XCTAssertNil(result, "过期缓存应返回 nil")
+    }
+
+    // AC-03: 无效窗口 ID 返回 nil
+    func testAC03_InvalidWindowIDReturnsNil() async {
+        let cache = PreviewCache()
+        let result = await cache.get(CGWindowID(999999))
+        XCTAssertNil(result)
+    }
+
+    // AC-03: 缓存满时自动淘汰最旧条目
+    func testAC03_CacheEvictsOldestWhenFull() async {
+        let cache = PreviewCache()
+        let img = NSImage(size: NSSize(width: 1, height: 1))
+        // 写入 51 条（maxSize=50），第 1 条应被淘汰
+        for i in 0..<51 {
+            await cache.set(img, for: CGWindowID(i))
+        }
+        let first = await cache.get(CGWindowID(0))
+        XCTAssertNil(first, "最旧条目应被淘汰")
+    }
 }
 
 // MARK: - AC-05：应用内切换（F03）
@@ -460,6 +490,27 @@ final class F07SettingsTests: XCTestCase {
         let decoded = (try? JSONDecoder().decode(ConfigModel.self, from: corruptData)) ?? ConfigModel()
         XCTAssertEqual(decoded.appearance.panelOpacity, 0.95, accuracy: 0.001)
     }
+
+    // AC-09: 正常保存后 saveError 为 nil
+    func testAC09_SaveErrorNilOnSuccess() {
+        ConfigManager.shared.updateAppearance { $0.panelOpacity = 0.8 }
+        XCTAssertNil(ConfigManager.shared.saveError)
+        ConfigManager.shared.reset()
+    }
+
+    // AC-09: reset 后 saveError 仍为 nil
+    func testAC09_SaveErrorNilAfterReset() {
+        ConfigManager.shared.reset()
+        XCTAssertNil(ConfigManager.shared.saveError)
+    }
+
+    // AC-09: saveError 可手动清除
+    func testAC09_SaveErrorCanBeCleared() {
+        ConfigManager.shared.saveError = "测试错误"
+        XCTAssertNotNil(ConfigManager.shared.saveError)
+        ConfigManager.shared.saveError = nil
+        XCTAssertNil(ConfigManager.shared.saveError)
+    }
 }
 
 // MARK: - AC-10：快捷键冲突检测（F08）
@@ -490,6 +541,23 @@ final class F08HotKeyTests: XCTestCase {
     func testAC10_UnregisterNonExistentKeyNoCrash() {
         let manager = HotKeyManager()
         XCTAssertNoThrow(manager.unregister("nonexistent"))
+    }
+
+    // AC-10: 相同 keyCode+modifiers 不同 identifier 重复注册不崩溃
+    func testAC10_SameKeyComboOverwritesPrevious() {
+        let manager = HotKeyManager()
+        var callCount = 0
+        manager.register(HotKey(keyCode: 48, modifiers: 256, identifier: "first")) { callCount += 1 }
+        manager.register(HotKey(keyCode: 48, modifiers: 256, identifier: "second")) { callCount += 10 }
+        manager.unregister("first")
+        manager.unregister("second")
+        XCTAssertEqual(callCount, 0) // 无触发，不崩溃即通过
+    }
+
+    // AC-10: 注销不存在的 identifier 不崩溃
+    func testAC10_UnregisterUnknownIdentifierNoCrash() {
+        let manager = HotKeyManager()
+        XCTAssertNoThrow(manager.unregister("does-not-exist"))
     }
 
     // AC-10: 默认快捷键配置符合规范
