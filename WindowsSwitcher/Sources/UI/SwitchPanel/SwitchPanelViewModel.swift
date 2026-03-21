@@ -60,13 +60,14 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func applyFilter() {
+        // T-063: 合并 filter+sort 为单次调用，减少中间数组分配
         let criteria = FilterCriteria(
             searchText: searchText,
             showMinimized: config.config.behavior.showMinimizedWindows,
             showHidden: config.config.behavior.showHiddenWindows
         )
-        filteredWindows = filterEngine.filter(windows, by: criteria)
-        filteredWindows = filterEngine.sort(filteredWindows, by: config.config.behavior.sortOrder)
+        filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria,
+                                                     order: config.config.behavior.sortOrder)
         selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
         loadVisiblePreviews()
     }
@@ -124,7 +125,9 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadVisiblePreviews() {
+        // T-063: 跳过已缓存的预览，避免重复生成
         for window in filteredWindows.prefix(10) {
+            guard previewImages[window.id] == nil else { continue }
             loadPreview(for: window)
         }
     }
