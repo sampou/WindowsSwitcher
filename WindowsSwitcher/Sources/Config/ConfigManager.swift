@@ -5,8 +5,9 @@ class ConfigManager: ObservableObject {
     private let key = "com.windowsswitcher.config"
 
     @Published var config: ConfigModel {
-        didSet { save() }
+        didSet { trySave() }
     }
+    @Published var saveError: String? = nil
 
     private init() {
         config = Self.load(forKey: key)
@@ -16,21 +17,25 @@ class ConfigManager: ObservableObject {
 
     private static func load(forKey key: String) -> ConfigModel {
         guard let data = UserDefaults.standard.data(forKey: key) else { return ConfigModel() }
-        // Partial-decode resilience: fall back to default on any schema mismatch
         return (try? JSONDecoder().decode(ConfigModel.self, from: data)) ?? ConfigModel()
     }
 
-    private func save() {
-        guard let data = try? JSONEncoder().encode(config) else { return }
-        UserDefaults.standard.set(data, forKey: key)
-        UserDefaults.standard.synchronize() // ensure flush before termination
+    private func trySave() {
+        do {
+            let data = try JSONEncoder().encode(config)
+            UserDefaults.standard.set(data, forKey: key)
+            UserDefaults.standard.synchronize()
+            if saveError != nil { saveError = nil }
+        } catch {
+            saveError = "设置保存失败：\(error.localizedDescription)"
+        }
     }
 
     func reset() {
         config = ConfigModel()
     }
 
-    // MARK: - Section helpers (T-036, T-038)
+    // MARK: - Section helpers
 
     func updateAppearance(_ block: (inout AppearanceConfig) -> Void) {
         var appearance = config.appearance

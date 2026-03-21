@@ -1,24 +1,71 @@
 import SwiftUI
 
-/// T-045 完善设置界面：外观 / 行为 / 快捷键三个 Tab
+/// F07 设置面板：外观 / 行为 / 快捷键，含保存失败提示和重置功能
 struct SettingsView: View {
+    @ObservedObject private var config = ConfigManager.shared
+    @State private var showResetConfirm = false
+
     var body: some View {
-        TabView {
-            AppearanceSettingsView()
-                .tabItem { Label("外观", systemImage: "paintbrush") }
+        VStack(spacing: 0) {
+            // 保存失败横幅
+            if let error = config.saveError {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.yellow)
+                    Text(error)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Button {
+                        config.saveError = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, DesignTokens.Spacing.md)
+                .padding(.vertical, DesignTokens.Spacing.sm)
+                .background(Color.yellow.opacity(0.15))
+            }
 
-            BehaviorSettingsView()
-                .tabItem { Label("行为", systemImage: "gearshape") }
+            TabView {
+                AppearanceSettingsView()
+                    .tabItem { Label("外观", systemImage: "paintbrush") }
 
-            HotKeySettingsView()
-                .tabItem { Label("快捷键", systemImage: "keyboard") }
+                BehaviorSettingsView()
+                    .tabItem { Label("行为", systemImage: "gearshape") }
+
+                HotKeySettingsView()
+                    .tabItem { Label("快捷键", systemImage: "keyboard") }
+            }
+
+            // 底部重置按钮
+            Divider()
+            HStack {
+                Spacer()
+                Button("恢复默认设置") {
+                    showResetConfirm = true
+                }
+                .foregroundStyle(.red)
+                .buttonStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, DesignTokens.Spacing.md)
+                .padding(.vertical, DesignTokens.Spacing.sm)
+            }
         }
-        .frame(width: 480, height: 380)
-        .padding()
+        .frame(width: 480, height: 420)
+        .confirmationDialog("确认恢复默认设置？", isPresented: $showResetConfirm, titleVisibility: .visible) {
+            Button("恢复默认", role: .destructive) { config.reset() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("所有设置将恢复为出厂默认值，此操作不可撤销。")
+        }
     }
 }
 
 // MARK: - 外观
+
 struct AppearanceSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
 
@@ -60,13 +107,28 @@ struct AppearanceSettingsView: View {
             }
 
             Section("预览尺寸") {
-                LabeledContent("宽度") {
-                    Text("\(Int(config.config.appearance.previewWidth)) px")
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    HStack {
+                        Text("宽度")
+                        Spacer()
+                        Text("\(Int(config.config.appearance.previewWidth)) px")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $config.config.appearance.previewWidth, in: 320...1280, step: 80)
+                        .tint(DesignTokens.Colors.accent)
                 }
-                LabeledContent("高度") {
-                    Text("\(Int(config.config.appearance.previewHeight)) px")
-                        .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    HStack {
+                        Text("高度")
+                        Spacer()
+                        Text("\(Int(config.config.appearance.previewHeight)) px")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $config.config.appearance.previewHeight, in: 180...720, step: 45)
+                        .tint(DesignTokens.Colors.accent)
                 }
             }
         }
@@ -76,6 +138,7 @@ struct AppearanceSettingsView: View {
 }
 
 // MARK: - 行为
+
 struct BehaviorSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
 
@@ -108,6 +171,18 @@ struct BehaviorSettingsView: View {
                     Slider(value: $config.config.behavior.panelDisplayDelay, in: 0...0.5, step: 0.05)
                         .tint(DesignTokens.Colors.accent)
                 }
+
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                    HStack {
+                        Text("预览刷新间隔")
+                        Spacer()
+                        Text(String(format: "%.0f ms", config.config.behavior.previewUpdateInterval * 1000))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $config.config.behavior.previewUpdateInterval, in: 0.05...0.5, step: 0.05)
+                        .tint(DesignTokens.Colors.accent)
+                }
             }
         }
         .formStyle(.grouped)
@@ -116,6 +191,7 @@ struct BehaviorSettingsView: View {
 }
 
 // MARK: - 快捷键
+
 struct HotKeySettingsView: View {
     var body: some View {
         Form {
@@ -126,7 +202,7 @@ struct HotKeySettingsView: View {
             }
 
             Section {
-                HStack {
+                HStack(spacing: DesignTokens.Spacing.sm) {
                     Image(systemName: "info.circle")
                         .foregroundStyle(DesignTokens.Colors.accent)
                     Text("快捷键自定义功能将在 v1.1 中开放")
