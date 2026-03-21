@@ -106,10 +106,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
-        // BUG-010: showSettingsWindow: 是私有 selector，在 macOS 14+ 可能失效
-        // 改用 SwiftUI Settings scene 的标准打开方式
+        // macOS 13: showPreferencesWindow:
+        // macOS 14+: showSettingsWindow: 已被废弃，改用 openSettings: (公开 action)
         if #available(macOS 14.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            NSApp.sendAction(Selector(("openSettings:")), to: nil, from: nil)
         } else {
             NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
         }
