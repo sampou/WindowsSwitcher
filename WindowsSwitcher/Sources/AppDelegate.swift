@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let configManager = ConfigManager.shared
     private let hotKeyManager = HotKeyManager()
     private var isPanelVisible = false
+    private var lastHotKeyTime: Date = .distantPast
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 确保作为菜单栏应用运行，不显示 Dock 图标
@@ -27,6 +28,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey), identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
+            // 防止快速触发（100ms内不重复触发）
+            let now = Date()
+            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.1 else { return }
+            self.lastHotKeyTime = now
             DispatchQueue.main.async {
                 if self.isPanelVisible {
                     NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
@@ -41,6 +46,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey), identifier: "reverseSwitch")
         ) { [weak self] in
             guard let self else { return }
+            // 防止快速触发（100ms内不重复触发）
+            let now = Date()
+            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.1 else { return }
+            self.lastHotKeyTime = now
             DispatchQueue.main.async {
                 if self.isPanelVisible {
                     NotificationCenter.default.post(name: .reverseSwitchHotKeyPressed, object: nil)
