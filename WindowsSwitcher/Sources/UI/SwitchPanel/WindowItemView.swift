@@ -33,8 +33,10 @@ struct WindowItemView: View {
         .scaleEffect(isHovered ? 1.03 : 1.0)
         .animation(DesignTokens.Animation.itemHover, value: isHovered)
         .onHover { isHovered = $0 }
-        .onTapGesture(count: 2) { onActivate() }
-        .onTapGesture(count: 1) { onSelect() }
+        .onTapGesture(count: 1) {
+            onSelect()
+            onActivate()
+        }
     }
 
     // MARK: - 预览图

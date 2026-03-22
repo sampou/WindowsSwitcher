@@ -141,6 +141,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             filterEngine: filterEngine
         )
         if reversed { vm.selectPrevious() }
+        // 刷新窗口列表，确保显示最新的活动窗口
+        vm.refreshWindows()
 
         let view = SwitchPanelView(viewModel: vm) { [weak self] in
             self?.hideSwitchPanel()

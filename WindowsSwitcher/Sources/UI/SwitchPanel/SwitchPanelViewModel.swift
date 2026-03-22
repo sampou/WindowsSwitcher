@@ -29,6 +29,13 @@ class SwitchPanelViewModel: ObservableObject {
         setupNotifications()
     }
 
+    // 刷新窗口列表，确保显示最新的活动窗口
+    func refreshWindows() {
+        let fresh = windowManager.getAllWindows()
+        windows = fresh
+        applyFilter()
+    }
+
     // MARK: - 通知监听（响应全局快捷键）
     private func setupNotifications() {
         NotificationCenter.default.publisher(for: .switchHotKeyPressed)
