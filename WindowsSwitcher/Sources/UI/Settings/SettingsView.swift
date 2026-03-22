@@ -196,9 +196,9 @@ struct HotKeySettingsView: View {
     var body: some View {
         Form {
             Section("当前快捷键") {
-                LabeledContent("显示切换器", value: "⌘ Tab")
-                LabeledContent("反向切换", value: "⌘ ⇧ Tab")
-                LabeledContent("应用内切换", value: "⌘ `")
+                LabeledContent("显示切换器", value: "⌥ Tab")
+                LabeledContent("反向切换", value: "⌥ ⇧ Tab")
+                LabeledContent("应用内切换", value: "⌥ `")
             }
 
             Section {

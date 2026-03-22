@@ -23,7 +23,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            menuItem(icon: "rectangle.on.rectangle", title: "显示切换器", shortcut: "⌘ Tab") {
+            menuItem(icon: "rectangle.on.rectangle", title: "显示切换器", shortcut: "⌥ Tab") {
                 onShowSwitcher()
             }
 

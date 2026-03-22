@@ -22,9 +22,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - 快捷键注册
     private func setupHotKeys() {
-        // Cmd+Tab: 显示/下一个
+        // Option+Tab: 显示/下一个
         hotKeyManager.register(
-            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey), identifier: "switch")
+            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey), identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -36,9 +36,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Cmd+Shift+Tab: 反向切换
+        // Option+Shift+Tab: 反向切换
         hotKeyManager.register(
-            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(cmdKey | shiftKey), identifier: "reverseSwitch")
+            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey), identifier: "reverseSwitch")
         ) { [weak self] in
             guard let self else { return }
             DispatchQueue.main.async {
@@ -50,9 +50,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Cmd+`: 应用内切换
+        // Option+`: 应用内切换
         hotKeyManager.register(
-            HotKey(keyCode: UInt32(kVK_ANSI_Grave), modifiers: UInt32(cmdKey), identifier: "appSwitch")
+            HotKey(keyCode: UInt32(kVK_ANSI_Grave), modifiers: UInt32(optionKey), identifier: "appSwitch")
         ) {
             NotificationCenter.default.post(name: .appSwitchHotKeyPressed, object: nil)
         }

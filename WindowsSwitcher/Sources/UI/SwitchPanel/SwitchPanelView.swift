@@ -98,9 +98,9 @@ struct SwitchPanelView: View {
     // MARK: - 底部快捷键提示栏
     private var shortcutBar: some View {
         HStack(spacing: DesignTokens.Spacing.xl) {
-            shortcutHint("⌘ Tab", label: "切换")
-            shortcutHint("⌘ ⇧ Tab", label: "反向")
-            shortcutHint("⌘ `", label: "应用内")
+            shortcutHint("⌥ Tab", label: "切换")
+            shortcutHint("⌥ ⇧ Tab", label: "反向")
+            shortcutHint("⌥ `", label: "应用内")
             shortcutHint("Esc", label: "退出")
         }
         .padding(.horizontal, DesignTokens.Panel.padding)
