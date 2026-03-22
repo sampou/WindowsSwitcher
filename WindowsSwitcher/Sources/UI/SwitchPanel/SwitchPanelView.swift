@@ -41,7 +41,7 @@ struct SwitchPanelView: View {
         .background(KeyEventHandler(
             onNext: { viewModel.selectNext() },
             onPrev: { viewModel.selectPrevious() },
-            onConfirm: { viewModel.activateSelected(); onDismiss() },
+            onConfirm: { viewModel.activateSelected(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() } },
             onDismiss: onDismiss,
             onSelectIndex: { idx in
                 if viewModel.filteredWindows.indices.contains(idx) {
@@ -70,7 +70,7 @@ struct SwitchPanelView: View {
                                 isSelected: index == viewModel.selectedIndex,
                                 previewImage: viewModel.previewImages[window.id],
                                 onSelect: { viewModel.selectedIndex = index },
-                                onActivate: { viewModel.activateSelected(); onDismiss() },
+                                onActivate: { viewModel.activateSelected(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() } },
                                 onClose: { viewModel.closeWindow(window) },
                                 onMinimize: { viewModel.minimizeWindow(window) }
                             )
