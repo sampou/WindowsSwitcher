@@ -5,6 +5,7 @@ import Carbon
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
+    private var optionKeyMonitor: Any?
     private let windowManager = WindowManager()
     private let previewGenerator = PreviewGenerator()
     private let filterEngine = FilterEngine()
@@ -12,6 +13,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let hotKeyManager = HotKeyManager()
     private var isPanelVisible = false
     private var lastHotKeyTime: Date = .distantPast
+    private var switchPanelViewModel: SwitchPanelViewModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 确保作为菜单栏应用运行，不显示 Dock 图标
@@ -19,6 +21,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         requestPermissions()
         setupHotKeys()
+        // 监听 Option 键释放，当面板显示时自动切换并关闭
+        setupOptionKeyMonitor()
+    }
+
+    // 监听 Option 键释放
+    private func setupOptionKeyMonitor() {
+        optionKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self, self.isPanelVisible else { return event }
+            // Option 键被释放
+            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.option) == false {
+                // Option 键释放，激活当前选中的窗口并关闭面板
+                self.switchPanelViewModel?.activateSelected()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    self.hideSwitchPanel()
+                }
+            }
+            return event
+        }
     }
 
     // MARK: - 快捷键注册
@@ -152,6 +172,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if reversed { vm.selectPrevious() }
         // 刷新窗口列表，确保显示最新的活动窗口
         vm.refreshWindows()
+        // 保存 viewModel 引用，用于 Option 键释放时激活窗口
+        self.switchPanelViewModel = vm
 
         let view = SwitchPanelView(viewModel: vm) { [weak self] in
             self?.hideSwitchPanel()
