@@ -70,7 +70,11 @@ struct SwitchPanelView: View {
                                 isSelected: index == viewModel.selectedIndex,
                                 previewImage: viewModel.previewImages[window.id],
                                 onSelect: { viewModel.selectedIndex = index },
-                                onActivate: { viewModel.activateSelected(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() } },
+                                onActivate: {
+                                    viewModel.selectedIndex = index
+                                    viewModel.activateSelected()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() }
+                                },
                                 onClose: { viewModel.closeWindow(window) },
                                 onMinimize: { viewModel.minimizeWindow(window) }
                             )
