@@ -238,18 +238,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isPanelVisible else { return }
         isPanelVisible = true
 
+        // 1. 先监听窗口变化，以便实时更新活跃时间
+        windowManager.observeWindowChanges { [weak self] event in
+            Task { @MainActor in
+                switch event {
+                case .windowStateChanged(let window):
+                    Logger.debug("Window state changed: \(window.appName)")
+                    // 窗口状态变化时刷新列表
+                    self?.switchPanelViewModel?.refreshWindows()
+                default:
+                    break
+                }
+            }
+        }
+
+        // 2. 实时获取所有窗口（包含最新的活跃时间）
         let windows = windowManager.getAllWindows()
+
+        // 3. 按最近活跃时间排序（最新的在前）
+        let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+
         let vm = SwitchPanelViewModel(
-            windows: windows,
+            windows: sortedWindows,
             windowManager: windowManager,
             previewGenerator: previewGenerator,
             filterEngine: filterEngine
         )
         if reversed { vm.selectPrevious() }
-        // 刷新窗口列表，确保显示最新的活动窗口
-        vm.refreshWindows()
+
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口
         self.switchPanelViewModel = vm
+
+        // 4. 启动定时器定期刷新窗口列表（实时更新）
+        startWindowRefreshTimer(for: vm)
 
         let view = SwitchPanelView(viewModel: vm) { [weak self] in
             self?.hideSwitchPanel()
@@ -270,10 +291,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         PanelAnimator.show(panel)
         switchPanelWindow = panel
 
-        Logger.info("Switch panel shown, \(windows.count) windows")
+        Logger.info("Switch panel shown, \(sortedWindows.count) windows, sorted by lastActiveTime")
+    }
+
+    // 定时刷新窗口列表
+    private var windowRefreshTimer: Timer?
+
+    private func startWindowRefreshTimer(for vm: SwitchPanelViewModel) {
+        // 停止之前的定时器
+        windowRefreshTimer?.invalidate()
+
+        // 每 200ms 刷新一次窗口列表，确保实时更新
+        windowRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self, weak vm] _ in
+            guard let self, let vm = self.switchPanelViewModel else { return }
+            // 刷新窗口列表
+            let freshWindows = self.windowManager.getAllWindows()
+            let sorted = freshWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+
+            Task { @MainActor in
+                vm.updateWindows(sorted)
+            }
+        }
+    }
+
+    private func stopWindowRefreshTimer() {
+        windowRefreshTimer?.invalidate()
+        windowRefreshTimer = nil
     }
 
     func hideSwitchPanel() {
+        // 停止刷新定时器
+        stopWindowRefreshTimer()
+
         guard let panel = switchPanelWindow else { return }
         PanelAnimator.hide(panel) { [weak self] in
             self?.switchPanelWindow = nil

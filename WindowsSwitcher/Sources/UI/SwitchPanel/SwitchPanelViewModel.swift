@@ -32,11 +32,26 @@ class SwitchPanelViewModel: ObservableObject {
     // 刷新窗口列表，确保显示最新的活动窗口
     func refreshWindows() {
         let fresh = windowManager.getAllWindows()
-        let freshIDs = Set(fresh.map { $0.id })
+        updateWindows(fresh)
+    }
+
+    // 更新窗口列表（已排序）
+    func updateWindows(_ newWindows: [WindowModel]) {
+        // 保持当前选中的窗口
+        let previousSelectedID = selectedWindow?.id
+
+        let freshIDs = Set(newWindows.map { $0.id })
         // 移除不存在的窗口的预览图，防止内存泄漏
         previewImages = previewImages.filter { freshIDs.contains($0.key) }
-        windows = fresh
+
+        windows = newWindows
         applyFilter()
+
+        // 尝试保持之前选中的窗口
+        if let previousID = previousSelectedID,
+           let newIndex = filteredWindows.firstIndex(where: { $0.id == previousID }) {
+            selectedIndex = newIndex
+        }
     }
 
     // MARK: - 通知监听（响应全局快捷键）
