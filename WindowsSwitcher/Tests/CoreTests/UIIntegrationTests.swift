@@ -12,7 +12,7 @@ final class UIIntegrationTests: XCTestCase {
     var viewModel: SwitchPanelViewModel!
 
     override func setUp() async throws {
-        windowManager = WindowManager()
+        windowManager = WindowManager.shared
         previewGenerator = PreviewGenerator()
         filterEngine = FilterEngine()
         let windows = makeMockWindows()

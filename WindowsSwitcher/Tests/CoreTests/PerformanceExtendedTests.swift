@@ -35,7 +35,7 @@ final class PerformanceExtendedTests: XCTestCase {
         let windows = (1...10).map { makeWindow(id: CGWindowID($0)) }
         let vm = SwitchPanelViewModel(
             windows: windows,
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )

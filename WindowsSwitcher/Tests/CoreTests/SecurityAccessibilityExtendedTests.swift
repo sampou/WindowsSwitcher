@@ -196,7 +196,7 @@ final class AccessibilityExtendedTests: XCTestCase {
     func testEmptyStateIsHandledGracefully() {
         let vm = SwitchPanelViewModel(
             windows: [],
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )

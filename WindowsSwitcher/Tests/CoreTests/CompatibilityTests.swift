@@ -97,7 +97,8 @@ final class CompatibilityTests: XCTestCase {
         "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
         "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0},
         "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
-        "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256}}
+        "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256},
+        "dockPreview":{"enabled":true,"hoverDelay":0.35,"hideDelay":0.2,"maxPreviewCount":4,"previewWidth":104,"previewHeight":58,"showAnimation":true}}
         """
         let data = json.data(using: .utf8)!
         let config = try JSONDecoder().decode(ConfigModel.self, from: data)
@@ -112,7 +113,8 @@ final class CompatibilityTests: XCTestCase {
         "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
         "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0},
         "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
-        "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256}}
+        "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256},
+        "dockPreview":{"enabled":true,"hoverDelay":0.35,"hideDelay":0.2,"maxPreviewCount":4,"previewWidth":104,"previewHeight":58,"showAnimation":true}}
         """
         let data = json.data(using: .utf8)!
         let config = try JSONDecoder().decode(ConfigModel.self, from: data)

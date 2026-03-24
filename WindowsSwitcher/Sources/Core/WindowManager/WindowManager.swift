@@ -22,9 +22,19 @@ protocol WindowManagerProtocol {
 }
 
 class WindowManager: WindowManagerProtocol {
+    // 单例实例
+    static let shared = WindowManager()
+
     private var eventHandler: ((WindowEvent) -> Void)?
     private var windowCache: [CGWindowID: WindowModel] = [:]
     private var observers: [NSObjectProtocol] = []
+
+    private init() {}
+
+    // 缓存的窗口列表
+    var windows: [WindowModel] {
+        getAllWindows()
+    }
 
     deinit {
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
@@ -46,11 +56,46 @@ class WindowManager: WindowManagerProtocol {
     }
 
     func activateWindow(_ window: WindowModel) {
-        guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else { return }
-        app.activate(options: .activateIgnoringOtherApps)
-        guard let win = axWindow(for: window) else { return }
-        AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
-        AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else {
+            Logger.error("Failed to get NSRunningApplication for PID: \(window.ownerPID)")
+            return
+        }
+
+        // 先激活应用
+        let activateResult = app.activate(options: .activateIgnoringOtherApps)
+        if !activateResult {
+            Logger.warning("NSRunningApplication.activate returned false, trying alternative method")
+            // 尝试使用 AX API 激活应用
+            let axApp = AXUIElementCreateApplication(window.ownerPID)
+            AXUIElementSetAttributeValue(axApp, kAXFocusedApplicationAttribute as CFString, kCFBooleanTrue)
+        }
+
+        // 获取 AX 窗口元素
+        guard let win = axWindow(for: window) else {
+            Logger.warning("Could not find AX window for: \(window.appName) - \(window.windowTitle)")
+            // 降级方案：只是激活应用
+            return
+        }
+
+        // 设置为主窗口
+        let mainResult = AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+        if mainResult != .success {
+            Logger.debug("AXUIElementSetAttributeValue for main failed: \(mainResult.rawValue)")
+        }
+
+        // 设置焦点
+        let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        if focusResult != .success {
+            Logger.debug("AXUIElementSetAttributeValue for focused failed: \(focusResult.rawValue)")
+        }
+
+        // 强制 raise 窗口到前台
+        let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        if raiseResult != .success {
+            Logger.debug("AXUIElementPerformAction raise failed: \(raiseResult.rawValue)")
+        }
+
+        Logger.info("Activated window: \(window.appName) - \(window.windowTitle)")
     }
 
     func closeWindow(_ window: WindowModel) {
@@ -174,21 +219,43 @@ class WindowManager: WindowManagerProtocol {
     private func axWindow(for model: WindowModel) -> AXUIElement? {
         let axApp = AXUIElementCreateApplication(model.ownerPID)
         var windowList: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
-              let wins = windowList as? [AXUIElement] else { return nil }
+        let result = AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList)
+        guard result == .success, let wins = windowList as? [AXUIElement] else {
+            Logger.warning("AXUIElementCopyAttributeValue failed for PID \(model.ownerPID): \(result.rawValue)")
+            return nil
+        }
+
+        if wins.isEmpty {
+            Logger.warning("No windows found for \(model.appName) (PID: \(model.ownerPID))")
+            return nil
+        }
+
         for win in wins {
             // 通过 _AXUIElementGetWindow 获取 CGWindowID（私有 API，降级用标题匹配）
             var cgWinID: CGWindowID = 0
             if _AXUIElementGetWindow(win, &cgWinID) == .success, cgWinID == model.id {
+                Logger.debug("Matched window by CGWindowID: \(cgWinID)")
                 return win
             }
+
             // 降级：标题匹配
             var titleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
             if let title = titleRef as? String, title == model.windowTitle {
+                Logger.debug("Matched window by title: \(title)")
                 return win
             }
         }
+
+        // 如果都匹配不到，返回第一个窗口作为最后降级方案
+        if let firstWin = wins.first {
+            var titleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(firstWin, kAXTitleAttribute as CFString, &titleRef)
+            let title = titleRef as? String ?? "unknown"
+            Logger.warning("Fallback to first window: \(title) for target: \(model.windowTitle)")
+            return firstWin
+        }
+
         return nil
     }
 }

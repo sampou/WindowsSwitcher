@@ -32,6 +32,9 @@ class SwitchPanelViewModel: ObservableObject {
     // 刷新窗口列表，确保显示最新的活动窗口
     func refreshWindows() {
         let fresh = windowManager.getAllWindows()
+        let freshIDs = Set(fresh.map { $0.id })
+        // 移除不存在的窗口的预览图，防止内存泄漏
+        previewImages = previewImages.filter { freshIDs.contains($0.key) }
         windows = fresh
         applyFilter()
     }
@@ -92,8 +95,13 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func activateSelected() {
-        guard filteredWindows.indices.contains(selectedIndex) else { return }
-        windowManager.activateWindow(filteredWindows[selectedIndex])
+        guard filteredWindows.indices.contains(selectedIndex) else {
+            Logger.warning("activateSelected: selectedIndex \(selectedIndex) out of bounds, filtered count: \(filteredWindows.count)")
+            return
+        }
+        let window = filteredWindows[selectedIndex]
+        Logger.info("activateSelected: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
+        windowManager.activateWindow(window)
     }
 
     func closeWindow(_ window: WindowModel) {

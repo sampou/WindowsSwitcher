@@ -22,7 +22,7 @@ final class F01WindowSwitchTests: XCTestCase {
         ]
         vm = SwitchPanelViewModel(
             windows: windows,
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )
@@ -201,7 +201,7 @@ final class F03AppInternalSwitchTests: XCTestCase {
     func testAC05_SwitchWithinAppNoFrontApp() {
         let vm = SwitchPanelViewModel(
             windows: [makeWindow(id: 1, app: "Safari", offset: -1)],
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )
@@ -241,7 +241,7 @@ final class F04WindowManagementTests: XCTestCase {
         let windows = (1...4).map { makeWindow(id: CGWindowID($0), app: "App\($0)", offset: -Double($0)) }
         vm = SwitchPanelViewModel(
             windows: windows,
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )

@@ -5,8 +5,9 @@ import Carbon
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
-    private var optionKeyMonitor: Any?
-    private let windowManager = WindowManager()
+    private var localKeyMonitor: Any?
+    private var globalKeyMonitor: Any?
+    private let windowManager = WindowManager.shared
     private let previewGenerator = PreviewGenerator()
     private let filterEngine = FilterEngine()
     private let configManager = ConfigManager.shared
@@ -25,19 +26,90 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupOptionKeyMonitor()
     }
 
-    // 监听 Option 键释放
+    // 监听 Option 键释放 - 使用全局监听器
     private func setupOptionKeyMonitor() {
-        optionKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            guard let self, self.isPanelVisible else { return event }
+        // 使用全局监听器捕获键盘事件（即使面板显示时也能捕获）
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self else { return }
+
+            let isOptionPressed = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.option)
+            Logger.debug("Global flagsChanged: isOptionPressed=\(isOptionPressed), isPanelVisible=\(self.isPanelVisible)")
+
+            guard self.isPanelVisible else { return }
+
             // Option 键被释放
-            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.option) == false {
-                // Option 键释放，激活当前选中的窗口并关闭面板
-                self.switchPanelViewModel?.activateSelected()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    self.hideSwitchPanel()
+            if !isOptionPressed {
+                Logger.info("Global: Option key released, calling activateSelectedAndHide()")
+                Task { @MainActor in
+                    self.activateSelectedAndHide()
+                }
+            }
+        }
+
+        // 同时使用本地监听器作为备份
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            guard let self else { return event }
+
+            let isOptionPressed = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.option)
+
+            guard self.isPanelVisible else { return event }
+
+            // Option 键被释放
+            if !isOptionPressed {
+                Logger.info("Local: Option key released, calling activateSelectedAndHide()")
+                Task { @MainActor in
+                    self.activateSelectedAndHide()
                 }
             }
             return event
+        }
+    }
+
+    /// 激活选中的窗口并隐藏面板（时序优化）
+    @MainActor
+    private func activateSelectedAndHide() {
+        Logger.info("=== activateSelectedAndHide called ===")
+        Logger.info("switchPanelViewModel is nil: \(switchPanelViewModel == nil)")
+
+        guard let vm = switchPanelViewModel else {
+            Logger.error("switchPanelViewModel is nil! Cannot activate window.")
+            hideSwitchPanel()
+            return
+        }
+
+        // 1. 先获取要激活的窗口信息
+        Logger.info("filteredWindows count: \(vm.filteredWindows.count)")
+        Logger.info("selectedIndex: \(vm.selectedIndex)")
+
+        guard let selectedWindow = vm.selectedWindow else {
+            Logger.warning("No selected window to activate (selectedWindow is nil)")
+            hideSwitchPanel()
+            return
+        }
+
+        Logger.info("Selected window: \(selectedWindow.appName) - PID:\(selectedWindow.ownerPID), Title: \(selectedWindow.windowTitle)")
+
+        // 2. 先隐藏面板（这样面板就不会阻挡焦点转移）
+        hideSwitchPanel()
+
+        // 3. 直接使用 WindowManager.shared 激活窗口（确保使用最新数据）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+            // 刷新窗口列表确保获取最新的窗口信息
+            let freshWindows = self?.windowManager.getAllWindows() ?? []
+            if let freshWindow = freshWindows.first(where: { $0.id == selectedWindow.id }) {
+                self?.windowManager.activateWindow(freshWindow)
+                Logger.info("Activated fresh window: \(freshWindow.appName)")
+            } else {
+                // 如果找不到匹配的窗口，使用原始窗口信息
+                self?.windowManager.activateWindow(selectedWindow)
+                Logger.info("Activated original window: \(selectedWindow.appName)")
+            }
+
+            // 4. 强制激活目标应用（确保焦点转移到目标窗口）
+            if let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) {
+                app.activate(options: .activateIgnoringOtherApps)
+                Logger.info("App activated: \(app.localizedName ?? "unknown")")
+            }
         }
     }
 
@@ -131,6 +203,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if !hasScreen { CGRequestScreenCaptureAccess() }
         if !hasTrusted || !hasScreen {
             updateMenuBarIcon(hasPermissions: false)
+            Logger.warning("Missing permissions - Accessibility: \(hasTrusted), Screen Recording: \(hasScreen)")
+        } else {
+            updateMenuBarIcon(hasPermissions: true)
+            Logger.info("All permissions granted")
         }
     }
 

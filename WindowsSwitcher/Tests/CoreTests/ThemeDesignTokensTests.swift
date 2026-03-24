@@ -333,7 +333,7 @@ final class SwitchPanelViewModelNotificationTests: XCTestCase {
         }
         viewModel = SwitchPanelViewModel(
             windows: windows,
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )
@@ -366,7 +366,7 @@ final class SwitchPanelViewModelNotificationTests: XCTestCase {
     func testSelectedWindowNilWhenEmpty() {
         let emptyVM = SwitchPanelViewModel(
             windows: [],
-            windowManager: WindowManager(),
+            windowManager: WindowManager.shared,
             previewGenerator: PreviewGenerator(),
             filterEngine: FilterEngine()
         )
