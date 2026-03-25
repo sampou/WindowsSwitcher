@@ -24,6 +24,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
         // 监听 Option 键释放，当面板显示时自动切换并关闭
         setupOptionKeyMonitor()
+        // 启动程序坞预览功能（如果启用）
+        setupDockPreview()
+    }
+
+    // 启动程序坞预览功能
+    private func setupDockPreview() {
+        // 检查配置是否启用程序坞预览
+        guard ConfigManager.shared.config.dockPreview.enabled else {
+            Logger.info("Dock preview is disabled in config")
+            return
+        }
+
+        // 启动 DockPreviewManager
+        DockPreviewManager.shared.start()
+        Logger.info("Dock preview started")
     }
 
     // 监听 Option 键释放 - 使用全局监听器

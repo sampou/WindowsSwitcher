@@ -51,6 +51,7 @@ final class AppGroupSwitchTests: XCTestCase {
         XCTAssertTrue(sortOrders.contains(.recent), "SortOrder 应包含 .recent")
         XCTAssertTrue(sortOrders.contains(.appName), "SortOrder 应包含 .appName")
         XCTAssertTrue(sortOrders.contains(.windowTitle), "SortOrder 应包含 .windowTitle")
+        XCTAssertTrue(sortOrders.contains(.appGroup), "SortOrder 应包含 .appGroup")
     }
 
     func testSortOrderCanBeConfigured() {
@@ -139,6 +140,32 @@ final class AppGroupSwitchTests: XCTestCase {
 
         // 验证排序正确
         XCTAssertEqual(sorted[0].bundleIdentifier, "com.apple.Safari", "最近活跃的 Safari 应该在最前面")
+    }
+
+    // MARK: - 测试 5.1: 应用分组排序 (.appGroup)
+
+    func testSortByAppGroup() {
+        let now = Date()
+        let windows = [
+            makeWindow(id: 1, app: "Chrome", bundleID: "com.google.Chrome", activeTime: now.addingTimeInterval(-5)),
+            makeWindow(id: 2, app: "Safari", bundleID: "com.apple.Safari", activeTime: now.addingTimeInterval(-2)),
+            makeWindow(id: 3, app: "Xcode", bundleID: "com.apple.dt.Xcode", activeTime: now.addingTimeInterval(-10)),
+            makeWindow(id: 4, app: "Chrome", bundleID: "com.google.Chrome", activeTime: now.addingTimeInterval(-8)),
+            makeWindow(id: 5, app: "Safari", bundleID: "com.apple.Safari", activeTime: now.addingTimeInterval(-1))
+        ]
+
+        let filterEngine = FilterEngine()
+        let sorted = filterEngine.sort(windows, by: .appGroup)
+
+        // 验证按应用分组（最近活跃应用在前）
+        XCTAssertEqual(sorted[0].bundleIdentifier, "com.apple.Safari", "最近活跃的 Safari 应该在最前面")
+        // Safari 有两个窗口
+        XCTAssertEqual(sorted[1].bundleIdentifier, "com.apple.Safari")
+        // 然后是 Chrome
+        XCTAssertEqual(sorted[2].bundleIdentifier, "com.google.Chrome")
+        XCTAssertEqual(sorted[3].bundleIdentifier, "com.google.Chrome")
+        // 最后是 Xcode
+        XCTAssertEqual(sorted[4].bundleIdentifier, "com.apple.dt.Xcode")
     }
 
     // MARK: - 测试 6: 切换操作响应时间（性能测试）
