@@ -11,6 +11,9 @@ class SwitchPanelViewModel: ObservableObject {
     }
     @Published var previewImages: [CGWindowID: NSImage] = [:]
 
+    /// 当前选中的目标应用 bundleIdentifier（用于应用分组排序）
+    private(set) var currentTargetAppBundleID: String?
+
     private let windowManager: WindowManagerProtocol
     private let previewGenerator: PreviewGenerator
     private let filterEngine: FilterEngine
@@ -91,21 +94,63 @@ class SwitchPanelViewModel: ObservableObject {
             showMinimized: config.config.behavior.showMinimizedWindows,
             showHidden: config.config.behavior.showHiddenWindows
         )
-        filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria,
-                                                     order: config.config.behavior.sortOrder)
+
+        let sortOrder = config.config.behavior.sortOrder
+
+        // 如果是应用分组排序且有目标应用，使用特殊的排序逻辑
+        if sortOrder == .appGroup, let targetBundleID = currentTargetAppBundleID {
+            let filtered = filterEngine.filter(windows, by: criteria)
+            filteredWindows = filterEngine.sortByAppGroupWithTarget(filtered, targetAppBundleID: targetBundleID)
+        } else {
+            filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria, order: sortOrder)
+        }
+
         selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
         loadVisiblePreviews()
+    }
+
+    /// 设置目标应用并重新排序窗口
+    /// - Parameter bundleID: 目标应用的 bundleIdentifier
+    func setTargetApp(bundleID: String?) {
+        currentTargetAppBundleID = bundleID
+        applyFilter()
+    }
+
+    /// 切换到下一个窗口时更新目标应用
+    func updateTargetOnNext() {
+        guard let selected = selectedWindow else { return }
+        currentTargetAppBundleID = selected.bundleIdentifier
+        applyFilter()
+    }
+
+    /// 切换到上一个窗口时更新目标应用
+    func updateTargetOnPrevious() {
+        guard let selected = selectedWindow else { return }
+        currentTargetAppBundleID = selected.bundleIdentifier
+        applyFilter()
     }
 
     func selectNext() {
         guard !filteredWindows.isEmpty else { return }
         selectedIndex = (selectedIndex + 1) % filteredWindows.count
+
+        // 如果使用应用分组排序，切换时更新目标应用
+        if config.config.behavior.sortOrder == .appGroup {
+            updateTargetOnNext()
+        }
+
         loadPreview(for: filteredWindows[selectedIndex])
     }
 
     func selectPrevious() {
         guard !filteredWindows.isEmpty else { return }
         selectedIndex = (selectedIndex - 1 + filteredWindows.count) % filteredWindows.count
+
+        // 如果使用应用分组排序，切换时更新目标应用
+        if config.config.behavior.sortOrder == .appGroup {
+            updateTargetOnPrevious()
+        }
+
         loadPreview(for: filteredWindows[selectedIndex])
     }
 

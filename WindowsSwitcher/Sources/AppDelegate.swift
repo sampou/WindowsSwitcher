@@ -264,6 +264,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             previewGenerator: previewGenerator,
             filterEngine: filterEngine
         )
+
+        // 如果使用应用分组排序，设置初始目标应用（当前最活跃的应用）
+        if configManager.config.behavior.sortOrder == .appGroup {
+            if let firstWindow = sortedWindows.first {
+                vm.setTargetApp(bundleID: firstWindow.bundleIdentifier)
+            }
+        }
+
         if reversed { vm.selectPrevious() }
 
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口

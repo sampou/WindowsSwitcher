@@ -39,4 +39,5 @@ extension Notification.Name {
     static let reverseSwitchHotKeyPressed = Notification.Name("com.windowsswitcher.reverseSwitchHotKey")
     static let appSwitchHotKeyPressed = Notification.Name("com.windowsswitcher.appSwitchHotKey")
     static let windowListDidChange = Notification.Name("com.windowsswitcher.windowListDidChange")
+    static let dockPreviewWindowSelected = Notification.Name("com.windowsswitcher.dockPreviewWindowSelected")
 }

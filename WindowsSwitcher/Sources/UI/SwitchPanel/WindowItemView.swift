@@ -37,6 +37,9 @@ struct WindowItemView: View {
             onSelect()
             onActivate()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(window.appName)，\(window.windowTitle)\(isSelected ? "，已选中" : "")")
+        .accessibilityHint("双击切换到该窗口")
     }
 
     // MARK: - 预览图
@@ -128,6 +131,8 @@ struct WindowItemView: View {
                     .font(.system(size: 14))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("最小化窗口")
+            .accessibilityHint("将窗口最小化到程序坞")
 
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
@@ -135,6 +140,8 @@ struct WindowItemView: View {
                     .font(.system(size: 14))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("关闭窗口")
+            .accessibilityHint("关闭当前窗口")
         }
         .padding(4)
         .background(.black.opacity(0.4))

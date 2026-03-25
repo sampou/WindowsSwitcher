@@ -17,6 +17,8 @@ struct SearchBarView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .focused($isFocused)
+                .accessibilityLabel("搜索窗口")
+                .accessibilityHint("输入应用名称或窗口标题搜索")
 
             if !text.isEmpty {
                 Button {
@@ -27,6 +29,7 @@ struct SearchBarView: View {
                         .font(.system(size: 14))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("清除搜索内容")
                 .transition(.opacity.animation(DesignTokens.Animation.itemHover))
             }
         }

@@ -49,6 +49,9 @@ struct SwitchPanelView: View {
                 }
             }
         ))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("窗口切换面板")
+        .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 Escape 退出")
     }
 
     // MARK: - 搜索栏

@@ -27,6 +27,7 @@ struct DesignTokens {
         // 选中色
         static let selectedBackground = Color(NSColor.selectedContentBackgroundColor)
         static let selectedControl = Color(NSColor.selectedControlColor)
+        static let selectedBorder = Color.accentColor
 
         // 兼容旧代码的 Light/Dark 结构
         struct Light {
@@ -108,5 +109,36 @@ struct DesignTokens {
         static let spacing: CGFloat = 12
         static let titleFontSize: CGFloat = 13
         static let subtitleFontSize: CGFloat = 11
+    }
+
+    // ============================================
+    // 程序坞预览规格 (T-050 设计规范)
+    // ============================================
+    struct DockPreview {
+        // 面板
+        static let panelCornerRadius: CGFloat = 10
+        static let shadowRadius: CGFloat = 12
+        static let shadowY: CGFloat = 4
+
+        // 预览项
+        static let itemWidth: CGFloat = 120
+        static let itemHeight: CGFloat = 80
+        static let itemCornerRadius: CGFloat = 10
+
+        // 预览图
+        static let previewWidth: CGFloat = 104
+        static let previewHeight: CGFloat = 58  // 16:9
+        static let previewCornerRadius: CGFloat = 8
+
+        // 字体
+        static let titleFontSize: CGFloat = 11
+
+        // 间距
+        static let itemSpacing: CGFloat = 8
+
+        // 动画
+        static let showDelay: TimeInterval = 0.35  // 350ms 触发延迟
+        static let showDuration: TimeInterval = 0.2  // 200ms 显示动画
+        static let hideDuration: TimeInterval = 0.15  // 150ms 隐藏动画
     }
 }
