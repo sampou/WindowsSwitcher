@@ -108,67 +108,7 @@ class FilterEngine {
         case .recent:      return windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
         case .appName:     return windows.sorted { $0.appName.localizedCompare($1.appName) == .orderedAscending }
         case .windowTitle: return windows.sorted { $0.windowTitle.localizedCompare($1.windowTitle) == .orderedAscending }
-        case .appGroup:    return sortByAppGroup(windows, targetAppBundleID: nil)
         }
-    }
-
-    /// 按应用程序分组排序
-    /// - 参数:
-    ///   - windows: 窗口列表
-    ///   - targetAppBundleID: 目标应用程序的 bundleIdentifier，如果为 nil 则按最近活跃应用分组
-    /// - 返回: 排序后的窗口列表
-    ///   排序规则:
-    ///   1. 第一个位置显示目标应用的窗口（如果指定了目标应用）
-    ///   2. 第二个位置开始显示其他应用的窗口，按最近活跃时间降序排列
-    func sortByAppGroup(_ windows: [WindowModel], targetAppBundleID: String?) -> [WindowModel] {
-        guard !windows.isEmpty else { return [] }
-
-        // 确定目标应用：如果没有指定，使用最活跃的应用
-        let targetApp: String
-        if let bundleID = targetAppBundleID {
-            targetApp = bundleID
-        } else {
-            // 找到最近最活跃的应用
-            targetApp = windows.max(by: { $0.lastActiveTime < $1.lastActiveTime })?.bundleIdentifier ?? ""
-        }
-
-        // 分离目标应用窗口和其他应用窗口
-        let targetWindows = windows.filter { $0.bundleIdentifier == targetApp }
-        let otherWindows = windows.filter { $0.bundleIdentifier != targetApp }
-
-        // 按活跃时间排序
-        let sortedTarget = targetWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-        let sortedOther = otherWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-
-        // 合并：目标应用窗口在前，其他应用窗口按活跃时间在后
-        return sortedTarget + sortedOther
-    }
-
-    /// 带目标应用的分组排序（用于切换到指定应用后重新排列）
-    /// - 参数:
-    ///   - windows: 窗口列表
-    ///   - targetAppBundleID: 目标应用程序的 bundleIdentifier
-    /// - 返回: 排序后的窗口列表
-    ///   排序规则:
-    ///   1. 第一个位置显示目标应用的窗口（刚切换到的）
-    ///   2. 第二个位置显示原最活跃应用中最活跃的窗口
-    ///   3. 第三个位置显示原最活跃应用中次级活跃的窗口
-    ///   4. 后续位置依次按所有窗口的活跃度降序排列（排除目标应用已显示的窗口）
-    func sortByAppGroupWithTarget(_ windows: [WindowModel], targetAppBundleID: String) -> [WindowModel] {
-        guard !windows.isEmpty else { return [] }
-
-        // 获取目标应用的窗口
-        let targetWindows = windows.filter { $0.bundleIdentifier == targetAppBundleID }
-        let otherWindows = windows.filter { $0.bundleIdentifier != targetAppBundleID }
-
-        // 目标应用窗口按活跃时间排序，取最活跃的作为第一个
-        let sortedTarget = targetWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-
-        // 其他应用窗口按活跃时间排序
-        let sortedOther = otherWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-
-        // 合并：目标应用窗口 + 其他应用窗口
-        return sortedTarget + sortedOther
     }
 
     func filterAndSort(_ windows: [WindowModel], criteria: FilterCriteria, order: SortOrder) -> [WindowModel] {

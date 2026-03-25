@@ -11,9 +11,6 @@ class SwitchPanelViewModel: ObservableObject {
     }
     @Published var previewImages: [CGWindowID: NSImage] = [:]
 
-    /// 当前选中的目标应用 bundleIdentifier（用于应用分组排序）
-    private(set) var currentTargetAppBundleID: String?
-
     private let windowManager: WindowManagerProtocol
     private let previewGenerator: PreviewGenerator
     private let filterEngine: FilterEngine
@@ -94,49 +91,44 @@ class SwitchPanelViewModel: ObservableObject {
             showMinimized: config.config.behavior.showMinimizedWindows,
             showHidden: config.config.behavior.showHiddenWindows
         )
-
-        let sortOrder = config.config.behavior.sortOrder
-
-        // 如果是应用分组排序且有目标应用，使用特殊的排序逻辑
-        if sortOrder == .appGroup, let targetBundleID = currentTargetAppBundleID {
-            let filtered = filterEngine.filter(windows, by: criteria)
-            filteredWindows = filterEngine.sortByAppGroupWithTarget(filtered, targetAppBundleID: targetBundleID)
-        } else {
-            filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria, order: sortOrder)
-        }
-
+        filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria,
+                                                     order: config.config.behavior.sortOrder)
         selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
         loadVisiblePreviews()
     }
 
-    /// 设置目标应用并重新排序窗口
-    /// - Parameter bundleID: 目标应用的 bundleIdentifier
-    func setTargetApp(bundleID: String?) {
-        currentTargetAppBundleID = bundleID
-        applyFilter()
-    }
+    // 记录当前选中窗口的应用（用于检测应用切换）
+    private var currentSelectedAppBundleID: String?
 
-    /// 切换到下一个窗口时更新目标应用
-    func updateTargetOnNext() {
-        guard let selected = selectedWindow else { return }
-        currentTargetAppBundleID = selected.bundleIdentifier
-        applyFilter()
-    }
-
-    /// 切换到上一个窗口时更新目标应用
-    func updateTargetOnPrevious() {
-        guard let selected = selectedWindow else { return }
-        currentTargetAppBundleID = selected.bundleIdentifier
-        applyFilter()
+    // 是否启用应用分组切换功能（通过配置控制）
+    // TODO: v1.2 版本默认启用
+    private var isAppGroupSwitchEnabled: Bool {
+        // 当前默认关闭，等待 v1.2 版本
+        return false
     }
 
     func selectNext() {
         guard !filteredWindows.isEmpty else { return }
-        selectedIndex = (selectedIndex + 1) % filteredWindows.count
 
-        // 如果使用应用分组排序，切换时更新目标应用
-        if config.config.behavior.sortOrder == .appGroup {
-            updateTargetOnNext()
+        let nextIndex = (selectedIndex + 1) % filteredWindows.count
+        let nextWindow = filteredWindows[nextIndex]
+        let currentWindow = filteredWindows[selectedIndex]
+
+        // 检测是否切换到不同应用（使用 appName 判断，更稳定）
+        let isAppSwitch = currentWindow.appName != nextWindow.appName
+
+        // 只有启用应用分组功能且发生应用切换时才重新排列
+        if isAppGroupSwitchEnabled && isAppSwitch {
+            // 应用切换：重新排列窗口顺序
+            filteredWindows = rearrangeWindowsForAppSwitch(
+                from: currentWindow,
+                to: nextWindow,
+                in: filteredWindows
+            )
+            selectedIndex = 0  // 切换后选中新应用的第一窗口
+        } else {
+            // 同一应用内切换或不启用功能时
+            selectedIndex = nextIndex
         }
 
         loadPreview(for: filteredWindows[selectedIndex])
@@ -144,14 +136,77 @@ class SwitchPanelViewModel: ObservableObject {
 
     func selectPrevious() {
         guard !filteredWindows.isEmpty else { return }
-        selectedIndex = (selectedIndex - 1 + filteredWindows.count) % filteredWindows.count
 
-        // 如果使用应用分组排序，切换时更新目标应用
-        if config.config.behavior.sortOrder == .appGroup {
-            updateTargetOnPrevious()
+        let prevIndex = (selectedIndex - 1 + filteredWindows.count) % filteredWindows.count
+        let prevWindow = filteredWindows[prevIndex]
+        let currentWindow = filteredWindows[selectedIndex]
+
+        // 检测是否切换到不同应用（使用 appName 判断，更稳定）
+        let isAppSwitch = currentWindow.appName != prevWindow.appName
+
+        // 只有启用应用分组功能且发生应用切换时才重新排列
+        if isAppGroupSwitchEnabled && isAppSwitch {
+            // 应用切换：重新排列窗口顺序
+            filteredWindows = rearrangeWindowsForAppSwitch(
+                from: currentWindow,
+                to: prevWindow,
+                in: filteredWindows
+            )
+            selectedIndex = 0  // 切换后选中新应用的第一窗口
+        } else {
+            // 同一应用内切换或不启用功能时
+            selectedIndex = prevIndex
         }
 
         loadPreview(for: filteredWindows[selectedIndex])
+    }
+
+    /// 根据应用切换重新排列窗口顺序
+    /// 排列规则：
+    /// 1. 目标应用的窗口在最前（按活跃度降序）
+    /// 2. 原应用的其他窗口次之（按活跃度降序）
+    /// 3. 其他应用窗口最后（按活跃度降序）
+    private func rearrangeWindowsForAppSwitch(
+        from currentWindow: WindowModel,
+        to targetWindow: WindowModel,
+        in windows: [WindowModel]
+    ) -> [WindowModel] {
+        let targetAppBundleID = targetWindow.bundleIdentifier
+        let currentAppBundleID = currentWindow.bundleIdentifier
+
+        // 按应用分组
+        var targetAppWindows: [WindowModel] = []
+        var currentAppWindows: [WindowModel] = []
+        var otherAppWindows: [WindowModel] = []
+
+        for window in windows {
+            if window.bundleIdentifier == targetAppBundleID {
+                // 跳过目标窗口本身，避免重复
+                if window.id != targetWindow.id {
+                    targetAppWindows.append(window)
+                }
+            } else if window.bundleIdentifier == currentAppBundleID {
+                currentAppWindows.append(window)
+            } else {
+                otherAppWindows.append(window)
+            }
+        }
+
+        // 按活跃度排序（最近活跃的在前）
+        targetAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
+        currentAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
+        otherAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
+
+        // 组合：新窗口 + 原应用窗口 + 其他应用窗口
+        var result: [WindowModel] = []
+        result.append(targetWindow)                    // 目标窗口在最前
+        result.append(contentsOf: targetAppWindows)   // 目标应用其他窗口
+        result.append(contentsOf: currentAppWindows)  // 原应用其他窗口
+        result.append(contentsOf: otherAppWindows)    // 其他应用窗口
+
+        Logger.debug("App switch: \(currentWindow.appName) -> \(targetWindow.appName), rearranged to \(result.count) windows")
+
+        return result
     }
 
     func activateSelected() {

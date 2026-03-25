@@ -5,7 +5,7 @@ enum AppTheme: String, Codable, Equatable, CaseIterable {
 }
 
 enum SortOrder: String, Codable, Equatable, CaseIterable {
-    case recent, appName, windowTitle, appGroup
+    case recent, appName, windowTitle
 }
 
 struct HotKeyConfig: Codable, Equatable {

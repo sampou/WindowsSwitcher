@@ -54,4 +54,10 @@ class ConfigManager: ObservableObject {
         block(&hotKeys)
         config.hotKeys = hotKeys
     }
+
+    func updateDockPreview(_ block: (inout DockPreviewConfig) -> Void) {
+        var dockPreview = config.dockPreview
+        block(&dockPreview)
+        config.dockPreview = dockPreview
+    }
 }

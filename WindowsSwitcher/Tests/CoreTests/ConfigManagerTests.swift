@@ -178,11 +178,10 @@ final class ConfigModelSubstructTests: XCTestCase {
     }
 
     func testSortOrderAllCases() {
-        XCTAssertEqual(SortOrder.allCases.count, 4)
+        XCTAssertEqual(SortOrder.allCases.count, 3)
         XCTAssertTrue(SortOrder.allCases.contains(.recent))
         XCTAssertTrue(SortOrder.allCases.contains(.appName))
         XCTAssertTrue(SortOrder.allCases.contains(.windowTitle))
-        XCTAssertTrue(SortOrder.allCases.contains(.appGroup))
     }
 
     func testAppThemeRawValues() {
