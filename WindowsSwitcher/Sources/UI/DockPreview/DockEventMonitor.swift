@@ -29,51 +29,87 @@ class DockEventMonitor: ObservableObject {
 
     // MARK: - Public Methods
 
+    // 使用 NSEvent 全局监听（更简单可靠）
+    private var globalMouseMonitor: Any?
+
     func startMonitoring() {
-        guard eventTap == nil else { return }
+        guard globalMouseMonitor == nil else { return }
 
         // 检查辅助功能权限
         let hasAccessibility = AXIsProcessTrusted()
-        Logger.info("DockEventMonitor start - Accessibility permission: \(hasAccessibility)")
+        Logger.info("DockEventMonitor start - Accessibility: \(hasAccessibility)")
 
-        guard hasAccessibility else {
-            Logger.warning("Cannot start DockEventMonitor - accessibility permission required")
-            return
+        // 使用 NSEvent 全局监听鼠标移动
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            self?.handleMouseMoved(event)
         }
 
-        // 创建事件tap - 只监听 mouseMoved
-        let eventMask = (1 << CGEventType.mouseMoved.rawValue)
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else {
-                    return Unmanaged.passRetained(event)
-                }
-                let monitor = Unmanaged<DockEventMonitor>.fromOpaque(refcon).takeUnretainedValue()
-                monitor.handleEvent(proxy: proxy, type: type, event: event)
-                return Unmanaged.passRetained(event)
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            Logger.warning("Failed to create event tap - accessibility permission may be required")
-            return
-        }
-
-        eventTap = tap
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-
-        if let source = runLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
+        if globalMouseMonitor != nil {
             Logger.info("DockEventMonitor started successfully")
+        } else {
+            Logger.warning("Failed to create mouse monitor")
         }
     }
 
+    private func handleMouseMoved(_ event: NSEvent) {
+        let location = NSEvent.mouseLocation
+        let dockFrame = getDockFrame()
+
+        Logger.debug("Mouse at: \(location), dock: \(dockFrame)")
+
+        // 检查鼠标是否在 Dock 区域
+        let isInDockArea = dockFrame.insetBy(dx: -20, dy: -20).contains(location)
+
+        if isInDockArea {
+            Logger.debug("In dock area, checking app...")
+            if let appBundleID = getAppBundleIDAtScreenLocation(location) {
+                Logger.debug("App found: \(appBundleID)")
+                startHoverTimer(for: appBundleID)
+            }
+        } else {
+            cancelHoverTimer()
+        }
+    }
+
+    // 转换屏幕坐标
+    private func getAppBundleIDAtScreenLocation(_ location: CGPoint) -> String? {
+        guard let screen = NSScreen.main else { return nil }
+
+        // 转换坐标（macOS 坐标系统不同）
+        let y = screen.frame.height - location.y
+
+        let systemWideElement = AXUIElementCreateSystemWide()
+
+        var element: AXUIElement?
+        let result = AXUIElementCopyElementAtPosition(
+            systemWideElement,
+            Float(location.x),
+            Float(y),
+            &element
+        )
+
+        guard result == .success, let axElement = element else {
+            return nil
+        }
+
+        var pid: pid_t = 0
+        AXUIElementGetPid(axElement, &pid)
+
+        guard let app = NSRunningApplication(processIdentifier: pid) else {
+            return nil
+        }
+
+        return app.bundleIdentifier
+    }
+
     func stopMonitoring() {
+        // 清理全局监听器
+        if let monitor = globalMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalMouseMonitor = nil
+        }
+
+        // 清理旧的 CGEvent tap
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
         }
@@ -129,31 +165,6 @@ class DockEventMonitor: ObservableObject {
     private func requestAccessibilityPermission() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         AXIsProcessTrustedWithOptions(options as CFDictionary)
-    }
-
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) {
-        guard type == .mouseMoved else {
-            return
-        }
-
-        let location = event.location
-        let dockFrame = getDockFrame()
-
-        Logger.debug("Mouse moved to: \(location), dockFrame: \(dockFrame)")
-
-        // 检查鼠标是否在 Dock 区域
-        let isInDockArea = dockFrame.insetBy(dx: -20, dy: -20).contains(location)
-
-        if isInDockArea {
-            Logger.debug("Mouse is in dock area")
-            // 获取鼠标下的应用
-            if let appBundleID = getAppBundleIDAtLocation(location) {
-                Logger.debug("App bundle ID at location: \(appBundleID)")
-                startHoverTimer(for: appBundleID)
-            }
-        } else {
-            cancelHoverTimer()
-        }
     }
 
     private func startHoverTimer(for bundleID: String) {
