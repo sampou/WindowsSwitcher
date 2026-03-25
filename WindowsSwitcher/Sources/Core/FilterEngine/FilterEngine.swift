@@ -108,7 +108,64 @@ class FilterEngine {
         case .recent:      return windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
         case .appName:     return windows.sorted { $0.appName.localizedCompare($1.appName) == .orderedAscending }
         case .windowTitle: return windows.sorted { $0.windowTitle.localizedCompare($1.windowTitle) == .orderedAscending }
+        case .appGroup:    return sortByAppGroup(windows, targetAppBundleID: nil)
         }
+    }
+
+    // 应用分组排序：将最活跃应用的窗口排前面
+    func sortByAppGroup(_ windows: [WindowModel], targetAppBundleID: String?) -> [WindowModel] {
+        if let targetID = targetAppBundleID {
+            return sortByAppGroupWithTarget(windows, targetAppBundleID: targetID)
+        }
+
+        // 按应用分组，最活跃应用的窗口在前
+        var appGroups: [String: [WindowModel]] = [:]
+        for window in windows {
+            appGroups[window.bundleIdentifier, default: []].append(window)
+        }
+
+        // 计算每个应用的最晚活跃时间
+        var appLastActive: [String: Date] = [:]
+        for (bundleID, appWindows) in appGroups {
+            appLastActive[bundleID] = appWindows.map { $0.lastActiveTime }.max() ?? Date.distantPast
+        }
+
+        // 按应用活跃时间排序
+        let sortedBundleIDs = appGroups.keys.sorted {
+            appLastActive[$0] ?? Date.distantPast > appLastActive[$1] ?? Date.distantPast
+        }
+
+        // 按活跃时间排序每个应用的窗口，然后组合
+        var result: [WindowModel] = []
+        for bundleID in sortedBundleIDs {
+            let sortedWindows = (appGroups[bundleID] ?? []).sorted { $0.lastActiveTime > $1.lastActiveTime }
+            result.append(contentsOf: sortedWindows)
+        }
+
+        return result
+    }
+
+    // 带目标应用的应用分组排序
+    func sortByAppGroupWithTarget(_ windows: [WindowModel], targetAppBundleID: String) -> [WindowModel] {
+        var targetAppWindows: [WindowModel] = []
+        var otherAppWindows: [WindowModel] = []
+
+        for window in windows {
+            if window.bundleIdentifier == targetAppBundleID {
+                targetAppWindows.append(window)
+            } else {
+                otherAppWindows.append(window)
+            }
+        }
+
+        // 按活跃时间排序
+        targetAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
+        otherAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
+
+        // 目标应用窗口在前
+        var result = targetAppWindows
+        result.append(contentsOf: otherAppWindows)
+        return result
     }
 
     func filterAndSort(_ windows: [WindowModel], criteria: FilterCriteria, order: SortOrder) -> [WindowModel] {

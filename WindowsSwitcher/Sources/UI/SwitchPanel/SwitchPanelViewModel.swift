@@ -101,10 +101,9 @@ class SwitchPanelViewModel: ObservableObject {
     private var currentSelectedAppBundleID: String?
 
     // 是否启用应用分组切换功能（通过配置控制）
-    // TODO: v1.2 版本默认启用
     private var isAppGroupSwitchEnabled: Bool {
-        // 当前默认关闭，等待 v1.2 版本
-        return false
+        // 从配置中读取排序方式，如果是 appGroup 则启用
+        return config.config.behavior.sortOrder == .appGroup
     }
 
     func selectNext() {
