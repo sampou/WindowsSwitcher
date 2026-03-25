@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isPanelVisible = false
     private var lastHotKeyTime: Date = .distantPast
     private var switchPanelViewModel: SwitchPanelViewModel?
+    private var dockPreviewManager: DockPreviewManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 确保作为菜单栏应用运行，不显示 Dock 图标
@@ -24,6 +25,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotKeys()
         // 监听 Option 键释放，当面板显示时自动切换并关闭
         setupOptionKeyMonitor()
+        // 启动程序坞预览（如果启用）
+        setupDockPreview()
+    }
+
+    // 程序坞预览设置
+    private func setupDockPreview() {
+        if configManager.config.dockPreview.enabled {
+            dockPreviewManager = DockPreviewManager.shared
+            dockPreviewManager?.start()
+            Logger.info("DockPreview enabled and started")
+        } else {
+            Logger.info("DockPreview disabled in settings")
+        }
     }
 
     // 监听 Option 键释放 - 使用全局监听器

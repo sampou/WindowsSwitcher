@@ -149,6 +149,24 @@ struct BehaviorSettingsView: View {
                 Toggle("显示隐藏窗口", isOn: $config.config.behavior.showHiddenWindows)
             }
 
+            Section("程序坞预览") {
+                Toggle("启用程序坞预览", isOn: $config.config.dockPreview.enabled)
+
+                if config.config.dockPreview.enabled {
+                    Picker("悬停延迟", selection: $config.config.dockPreview.hoverDelay) {
+                        Text("快速 (0.2s)").tag(0.2)
+                        Text("正常 (0.35s)").tag(0.35)
+                        Text("慢速 (0.5s)").tag(0.5)
+                    }
+
+                    Stepper("最大预览数: \(config.config.dockPreview.maxPreviewCount)",
+                            value: $config.config.dockPreview.maxPreviewCount,
+                            in: 1...6)
+
+                    Toggle("显示动画", isOn: $config.config.dockPreview.showAnimation)
+                }
+            }
+
             Section("排序") {
                 Picker("排序方式", selection: $config.config.behavior.sortOrder) {
                     Text("最近使用").tag(SortOrder.recent)
