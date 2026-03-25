@@ -120,6 +120,54 @@ final class DockPreviewTests: XCTestCase {
         XCTAssertLessThanOrEqual(config.hoverDelay, 1.0, "悬停延迟应该 <= 1000ms")
     }
 
+    // MARK: - F12-T25 隐藏延迟测试
+
+    func testHideDelayConfiguration() {
+        let config = ConfigManager.shared.config.dockPreview
+        XCTAssertGreaterThanOrEqual(config.hideDelay, 0.1, "隐藏延迟应该 >= 100ms")
+        XCTAssertLessThanOrEqual(config.hideDelay, 1.0, "隐藏延迟应该 <= 1000ms")
+    }
+
+    // MARK: - F12-T26 动画显示配置测试
+
+    func testShowAnimationConfiguration() {
+        // 默认应该启用动画
+        let config = ConfigManager.shared.config.dockPreview
+        XCTAssertTrue(config.showAnimation, "默认应该启用动画")
+
+        // 测试可以修改为禁用
+        ConfigManager.shared.updateDockPreview { $0.showAnimation = false }
+        XCTAssertFalse(ConfigManager.shared.config.dockPreview.showAnimation)
+
+        // 恢复默认
+        ConfigManager.shared.updateDockPreview { $0.showAnimation = true }
+        XCTAssertTrue(ConfigManager.shared.config.dockPreview.showAnimation)
+    }
+
+    // MARK: - F12-T27 预览图尺寸测试
+
+    func testPreviewDimensionsConfiguration() {
+        let config = ConfigManager.shared.config.dockPreview
+        XCTAssertEqual(config.previewWidth, 104, "预览图宽度应该是 104")
+        XCTAssertEqual(config.previewHeight, 58, "预览图高度应该是 58")
+    }
+
+    // MARK: - F12-T28 启用状态配置测试
+
+    func testDockPreviewEnabledConfiguration() {
+        // 默认应该启用
+        let config = ConfigManager.shared.config.dockPreview
+        XCTAssertTrue(config.enabled, "默认应该启用程序坞预览")
+
+        // 测试可以修改为禁用
+        ConfigManager.shared.updateDockPreview { $0.enabled = false }
+        XCTAssertFalse(ConfigManager.shared.config.dockPreview.enabled)
+
+        // 恢复默认
+        ConfigManager.shared.updateDockPreview { $0.enabled = true }
+        XCTAssertTrue(ConfigManager.shared.config.dockPreview.enabled)
+    }
+
     // MARK: - 通知测试
 
     func testDockPreviewWindowSelectedNotification() {

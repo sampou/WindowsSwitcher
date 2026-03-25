@@ -154,9 +154,45 @@ struct BehaviorSettingsView: View {
                     Text("最近使用").tag(SortOrder.recent)
                     Text("应用名称").tag(SortOrder.appName)
                     Text("窗口标题").tag(SortOrder.windowTitle)
+                    Text("应用分组").tag(SortOrder.appGroup)
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
+            }
+
+            Section("程序坞预览") {
+                Toggle("启用程序坞预览", isOn: $config.config.dockPreview.enabled)
+
+                if config.config.dockPreview.enabled {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        HStack {
+                            Text("悬停延迟")
+                            Spacer()
+                            Text(String(format: "%.0f ms", config.config.dockPreview.hoverDelay * 1000))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.1...1.0, step: 0.05)
+                            .tint(DesignTokens.Colors.accent)
+                    }
+
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        HStack {
+                            Text("最大预览数")
+                            Spacer()
+                            Text("\(config.config.dockPreview.maxPreviewCount)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Picker("最大预览数", selection: $config.config.dockPreview.maxPreviewCount) {
+                            Text("2个").tag(2)
+                            Text("4个").tag(4)
+                            Text("6个").tag(6)
+                            Text("8个").tag(8)
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
             }
 
             Section("延迟") {
