@@ -154,6 +154,7 @@ struct BehaviorSettingsView: View {
                     Text("最近使用").tag(SortOrder.recent)
                     Text("应用名称").tag(SortOrder.appName)
                     Text("窗口标题").tag(SortOrder.windowTitle)
+                    Text("应用分组").tag(SortOrder.appGroup)
                 }
                 .pickerStyle(.inline)
                 .labelsHidden()
