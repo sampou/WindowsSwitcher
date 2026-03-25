@@ -20,15 +20,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var dockPreviewCancellable: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Logger.info("=== Application starting ===")
+
         // 确保作为菜单栏应用运行，不显示 Dock 图标
         NSApp.setActivationPolicy(.accessory)
+        Logger.info("1. Activation policy set")
+
         setupMenuBar()
+        Logger.info("2. MenuBar setup complete")
+
         requestPermissions()
+        Logger.info("3. Permissions requested")
+
         setupHotKeys()
+        Logger.info("4. HotKeys setup complete")
+
         // 监听 Option 键释放，当面板显示时自动切换并关闭
         setupOptionKeyMonitor()
+        Logger.info("5. Option key monitor setup complete")
+
         // 启动程序坞预览功能（如果启用）
+        Logger.info("6. Calling setupDockPreview...")
         setupDockPreview()
+        Logger.info("7. setupDockPreview complete")
     }
 
     // 启动程序坞预览功能
