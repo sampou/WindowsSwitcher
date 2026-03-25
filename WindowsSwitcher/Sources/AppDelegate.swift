@@ -76,7 +76,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // 显示程序坞预览面板
     @MainActor
     private func showDockPreviewPanel() {
-        guard dockPreviewWindow == nil else { return }
+        Logger.info("showDockPreviewPanel called, dockPreviewWindow=\(dockPreviewWindow == nil)")
+
+        guard dockPreviewWindow == nil else {
+            Logger.info("Dock preview window already exists, skipping")
+            return
+        }
+
+        // 检查预览项
+        let items = DockPreviewManager.shared.previewItems
+        Logger.info("Preview items count: \(items.count)")
+
+        guard !items.isEmpty else {
+            Logger.warning("No preview items to show")
+            return
+        }
 
         let view = DockPreviewPanelView(manager: DockPreviewManager.shared) {
             DockPreviewManager.shared.hidePreviewPanel()
@@ -84,7 +98,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 400, height: 120),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
         )
@@ -94,10 +108,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.contentView = NSHostingView(rootView: view)
+        panel.center()
         panel.orderFront(nil)
 
         dockPreviewWindow = panel
-        Logger.info("Dock preview window shown")
+        Logger.info("Dock preview window shown successfully")
     }
 
     // 隐藏程序坞预览面板

@@ -72,11 +72,18 @@ class DockPreviewManager: ObservableObject {
     }
 
     private func showPreview() {
-        guard !previewItems.isEmpty else { return }
+        Logger.info("showPreview called, previewItems count: \(previewItems.count)")
+
+        guard !previewItems.isEmpty else {
+            Logger.warning("showPreview guard failed - no preview items")
+            return
+        }
 
         withAnimation(DesignTokens.Animation.panelShow) {
             isPreviewVisible = true
         }
+
+        Logger.info("showPreview completed, isPreviewVisible set to true")
     }
 
     private func hidePreview() {
