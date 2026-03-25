@@ -304,4 +304,65 @@ final class DockPreviewDesignTokensTests: XCTestCase {
         // 104:58 ≈ 16:9 (1.79)
         XCTAssertEqual(ratio, 16.0 / 9.0, accuracy: 0.1, "Dock预览图比例应该接近 16:9")
     }
+
+    // MARK: - 新功能测试：预览窗口显示/隐藏逻辑
+
+    func testDockPreviewManagerSingleton() {
+        // 验证单例存在
+        let manager = DockPreviewManager.shared
+        XCTAssertNotNil(manager, "DockPreviewManager 单例应该存在")
+    }
+
+    func testIsPreviewVisibleDefaultValue() {
+        // 验证默认状态为隐藏
+        let manager = DockPreviewManager.shared
+        XCTAssertFalse(manager.isPreviewVisible, "预览窗口默认应该隐藏")
+    }
+
+    func testIsPreviewVisibleStateChange() {
+        let manager = DockPreviewManager.shared
+
+        // 初始状态为隐藏
+        XCTAssertFalse(manager.isPreviewVisible)
+
+        // 手动设置显示状态
+        manager.isPreviewVisible = true
+        XCTAssertTrue(manager.isPreviewVisible, "预览窗口应该显示")
+
+        // 手动设置隐藏状态
+        manager.isPreviewVisible = false
+        XCTAssertFalse(manager.isPreviewVisible, "预览窗口应该隐藏")
+    }
+
+    func testHidePreviewPanelMethod() {
+        let manager = DockPreviewManager.shared
+
+        // 先显示预览
+        manager.isPreviewVisible = true
+        XCTAssertTrue(manager.isPreviewVisible)
+
+        // 调用 hidePreviewPanel 隐藏预览
+        manager.hidePreviewPanel()
+        XCTAssertFalse(manager.isPreviewVisible, "hidePreviewPanel 应该隐藏预览")
+    }
+
+    func testPreviewItemsDefaultEmpty() {
+        let manager = DockPreviewManager.shared
+        XCTAssertTrue(manager.previewItems.isEmpty, "预览项默认应该为空")
+    }
+
+    func testHoveredIndexDefaultNil() {
+        let manager = DockPreviewManager.shared
+        XCTAssertNil(manager.hoveredIndex, "悬停索引默认应该为 nil")
+    }
+
+    func testDockPositionDefaultBottom() {
+        let manager = DockPreviewManager.shared
+        XCTAssertEqual(manager.currentDockPosition, .bottom, "Dock 位置默认应该是底部")
+    }
+
+    func testDockPreviewManagerHasPreviewGenerator() {
+        let manager = DockPreviewManager.shared
+        XCTAssertNotNil(manager.previewGenerator, "应该包含共享的 PreviewGenerator")
+    }
 }

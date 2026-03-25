@@ -32,6 +32,15 @@ class DockEventMonitor: ObservableObject {
     func startMonitoring() {
         guard eventTap == nil else { return }
 
+        // 检查辅助功能权限
+        let hasAccessibility = AXIsProcessTrusted()
+        Logger.info("DockEventMonitor start - Accessibility permission: \(hasAccessibility)")
+
+        guard hasAccessibility else {
+            Logger.warning("Cannot start DockEventMonitor - accessibility permission required")
+            return
+        }
+
         // 创建事件tap - 只监听 mouseMoved
         let eventMask = (1 << CGEventType.mouseMoved.rawValue)
 
@@ -60,7 +69,7 @@ class DockEventMonitor: ObservableObject {
         if let source = runLoopSource {
             CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
             CGEvent.tapEnable(tap: tap, enable: true)
-            Logger.info("DockEventMonitor started")
+            Logger.info("DockEventMonitor started successfully")
         }
     }
 
@@ -130,12 +139,16 @@ class DockEventMonitor: ObservableObject {
         let location = event.location
         let dockFrame = getDockFrame()
 
+        Logger.debug("Mouse moved to: \(location), dockFrame: \(dockFrame)")
+
         // 检查鼠标是否在 Dock 区域
         let isInDockArea = dockFrame.insetBy(dx: -20, dy: -20).contains(location)
 
         if isInDockArea {
+            Logger.debug("Mouse is in dock area")
             // 获取鼠标下的应用
             if let appBundleID = getAppBundleIDAtLocation(location) {
+                Logger.debug("App bundle ID at location: \(appBundleID)")
                 startHoverTimer(for: appBundleID)
             }
         } else {
