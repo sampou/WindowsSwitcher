@@ -64,6 +64,23 @@ final class AppGroupSwitchTests: XCTestCase {
 
         ConfigManager.shared.updateBehavior { $0.sortOrder = .windowTitle }
         XCTAssertEqual(ConfigManager.shared.config.behavior.sortOrder, .windowTitle)
+
+        // 验证应用分组排序选项
+        ConfigManager.shared.updateBehavior { $0.sortOrder = .appGroup }
+        XCTAssertEqual(ConfigManager.shared.config.behavior.sortOrder, .appGroup)
+    }
+
+    // MARK: - 测试 1.1: 应用分组排序配置测试
+
+    func testAppGroupSortOrderConfiguration() {
+        // 测试通过配置启用应用分组排序
+        ConfigManager.shared.updateBehavior { $0.sortOrder = .appGroup }
+
+        let behavior = ConfigManager.shared.config.behavior
+        XCTAssertEqual(behavior.sortOrder, .appGroup, "应用分组排序应该能正确保存")
+
+        // 验证 SortOrder.appGroup 枚举值正确
+        XCTAssertEqual(SortOrder.appGroup.rawValue, "appGroup", "appGroup 枚举值应该是 'appGroup'")
     }
 
     // MARK: - 测试 2: 按活跃度排序 (recent)

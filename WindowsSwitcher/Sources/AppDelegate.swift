@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Carbon
+import Combine
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -15,6 +16,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isPanelVisible = false
     private var lastHotKeyTime: Date = .distantPast
     private var switchPanelViewModel: SwitchPanelViewModel?
+    private var dockPreviewWindow: NSWindow?
+    private var dockPreviewCancellable: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 确保作为菜单栏应用运行，不显示 Dock 图标
@@ -39,6 +42,57 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 启动 DockPreviewManager
         DockPreviewManager.shared.start()
         Logger.info("Dock preview started")
+
+        // 监听预览显示状态变化，创建/隐藏预览窗口
+        dockPreviewCancellable = DockPreviewManager.shared.$isPreviewVisible
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isVisible in
+                if isVisible {
+                    Task { @MainActor in
+                        self?.showDockPreviewPanel()
+                    }
+                } else {
+                    Task { @MainActor in
+                        self?.hideDockPreviewPanel()
+                    }
+                }
+            }
+    }
+
+    // 显示程序坞预览面板
+    @MainActor
+    private func showDockPreviewPanel() {
+        guard dockPreviewWindow == nil else { return }
+
+        let view = DockPreviewPanelView(manager: DockPreviewManager.shared) {
+            DockPreviewManager.shared.hidePreviewPanel()
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 120),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.contentView = NSHostingView(rootView: view)
+        panel.orderFront(nil)
+
+        dockPreviewWindow = panel
+        Logger.info("Dock preview window shown")
+    }
+
+    // 隐藏程序坞预览面板
+    @MainActor
+    private func hideDockPreviewPanel() {
+        guard let window = dockPreviewWindow else { return }
+        window.orderOut(nil)
+        dockPreviewWindow = nil
+        Logger.info("Dock preview window hidden")
     }
 
     // 监听 Option 键释放 - 使用全局监听器

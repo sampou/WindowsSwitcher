@@ -34,7 +34,9 @@
       "Bash(find Sources/UI -name *.swift -newer Sources/Utils/DesignTokens.swift)",
       "Bash(xcodebuild -project WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configuration Debug test)",
       "Bash(xcodebuild:*)",
-      "Bash(ls -la /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Tests/CoreTests/*.swift)"
+      "Bash(ls -la /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Tests/CoreTests/*.swift)",
+      "Bash(ls -la /Users/sampou/trae_workspace/agency-agents-zh/公司架构/*/仿Windows窗口切换器/memory/)",
+      "Bash(ls -la /Users/sampou/trae_workspace/agency-agents-zh/公司架构/*/memory/)"
     ]
   }
 }

@@ -86,6 +86,11 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
+    // 公开方法，供外部调用隐藏预览
+    public func hidePreviewPanel() {
+        hidePreview()
+    }
+
     func selectItem(_ item: DockPreviewItem) {
         // 激活窗口
         WindowManager.shared.activateWindow(item.windowModel)

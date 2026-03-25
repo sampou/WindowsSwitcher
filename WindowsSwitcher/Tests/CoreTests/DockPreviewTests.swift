@@ -168,6 +168,42 @@ final class DockPreviewTests: XCTestCase {
         XCTAssertTrue(ConfigManager.shared.config.dockPreview.enabled)
     }
 
+    // MARK: - F12-T29 最大预览数选项测试 (2/4/6/8)
+
+    func testMaxPreviewCountOptions() {
+        // 测试所有有效选项
+        let validOptions = [2, 4, 6, 8]
+
+        for option in validOptions {
+            ConfigManager.shared.updateDockPreview { $0.maxPreviewCount = option }
+            XCTAssertEqual(ConfigManager.shared.config.dockPreview.maxPreviewCount, option,
+                "应该能设置为 \(option) 个")
+        }
+
+        // 恢复默认值
+        ConfigManager.shared.updateDockPreview { $0.maxPreviewCount = 4 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.maxPreviewCount, 4)
+    }
+
+    // MARK: - F12-T30 悬停延迟范围测试 (100ms-1000ms)
+
+    func testHoverDelayRange() {
+        // 测试最小值
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.1 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.1, "应该能设置为 100ms")
+
+        // 测试最大值
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 1.0 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 1.0, "应该能设置为 1000ms")
+
+        // 测试中间值
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.35 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.35, "应该能设置为 350ms")
+
+        // 恢复默认值
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.35 }
+    }
+
     // MARK: - 通知测试
 
     func testDockPreviewWindowSelectedNotification() {
