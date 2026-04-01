@@ -14,6 +14,10 @@ final class DockPreviewTests: XCTestCase {
         manager = DockPreviewManager.shared
         cancellables = []
         ConfigManager.shared.reset()
+        // 清理单例状态
+        manager.previewItems = []
+        manager.isPreviewVisible = false
+        manager.hoveredIndex = nil
     }
 
     override func tearDown() async throws {

@@ -62,8 +62,8 @@ final class DockPreviewManualTests: XCTestCase {
     }
 
     func testHoverDelayMaximum() {
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 2.0 }
-        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 2.0, "悬停延迟应该支持最大值 2000ms")
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 1.0 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 1.0, "悬停延迟应该支持最大值 1000ms")
     }
 
     // MARK: - 测试3：Dock 位置检测
