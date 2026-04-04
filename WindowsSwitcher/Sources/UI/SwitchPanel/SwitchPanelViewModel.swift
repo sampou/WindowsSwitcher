@@ -262,18 +262,21 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadPreview(for window: WindowModel) {
-        // BUG-020: Box 包装解决 macOS 13 NSImage Sendable 警告
+        // 优化：使用适中的预览尺寸，平衡质量和性能
         struct ImageBox: @unchecked Sendable { let image: NSImage }
         Task {
-            let size = CGSize(width: 124, height: 70)
+            // 使用适中的预览尺寸
+            let size = CGSize(width: 200, height: 112)  // 16:9适中预览
             let box: ImageBox? = await withTaskGroup(of: ImageBox?.self) { group in
+                // 主任务：生成预览
                 group.addTask { [previewGenerator] in
                     guard let img = await previewGenerator.generatePreview(for: window, size: size)
                     else { return nil }
                     return ImageBox(image: img)
                 }
+                // 超时任务：500ms后放弃
                 group.addTask {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                     return nil
                 }
                 for await result in group {
@@ -283,6 +286,36 @@ class SwitchPanelViewModel: ObservableObject {
             }
             if let image = box?.image {
                 previewImages[window.id] = image
+            }
+        }
+
+        // 预加载相邻窗口的预览
+        prefetchAdjacentPreviews(from: window)
+    }
+
+    /// 预加载相邻窗口的预览（向前预加载2个，向后预加载1个）
+    private func prefetchAdjacentPreviews(from window: WindowModel) {
+        guard let currentIndex = filteredWindows.firstIndex(where: { $0.id == window.id }) else { return }
+
+        // 预加载范围：当前索引-2 到 当前索引+1
+        let startIndex = max(0, currentIndex - 2)
+        let endIndex = min(filteredWindows.count - 1, currentIndex + 1)
+
+        for index in startIndex...endIndex {
+            guard index != currentIndex else { continue }  // 跳过当前窗口
+            let windowToPreload = filteredWindows[index]
+            // 只预加载尚未缓存的窗口
+            guard previewImages[windowToPreload.id] == nil else { continue }
+
+            // 低优先级预加载（不阻塞主线程）
+            Task.detached(priority: .background) { [weak self] in
+                guard let self = self else { return }
+                let size = CGSize(width: 124, height: 70)  // 小尺寸预览
+                if let img = await self.previewGenerator.generatePreview(for: windowToPreload, size: size) {
+                    await MainActor.run {
+                        self.previewImages[windowToPreload.id] = img
+                    }
+                }
             }
         }
     }

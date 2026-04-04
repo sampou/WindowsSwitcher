@@ -15,23 +15,23 @@ struct WindowItemView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 previewArea
                 appInfo
             }
-            .padding(DesignTokens.Spacing.xs)
+            .padding(DesignTokens.Spacing.lg)
             .frame(width: DesignTokens.WindowItem.width, height: DesignTokens.WindowItem.height)
             .background(itemBackground)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem))
+            // 只保留边框，移除所有动画以提升性能
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem)
                     .stroke(isSelected ? DesignTokens.Colors.accent : Color.clear, lineWidth: 2)
             )
+            .padding(20)  // 直接添加 padding 控制间距
 
             if isHovered { actionButtons }
         }
-        .scaleEffect(isHovered ? 1.03 : 1.0)
-        .animation(DesignTokens.Animation.itemHover, value: isHovered)
         .onHover { isHovered = $0 }
         .onTapGesture(count: 1) {
             onSelect()

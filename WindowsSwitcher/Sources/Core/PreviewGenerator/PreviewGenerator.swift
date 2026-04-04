@@ -59,6 +59,8 @@ class PreviewGenerator {
     func clearCache() async { await cache.clear() }
 
     private func captureWindow(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
+        guard CGPreflightScreenCaptureAccess() else { return nil }
+
         guard let cgImage = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
@@ -66,7 +68,7 @@ class PreviewGenerator {
             [.boundsIgnoreFraming, .bestResolution]
         ) else { return nil }
 
-        let image = NSImage(cgImage: cgImage, size: size)
-        return image
+        // 直接返回原始图片，不缩放
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 }

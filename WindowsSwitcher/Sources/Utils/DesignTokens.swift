@@ -81,14 +81,22 @@ struct DesignTokens {
         static let itemHover = SwiftUI.Animation.easeOut(duration: 0.15)
         static let previewLoad = SwiftUI.Animation.easeOut(duration: 0.1)
         static let itemClose = SwiftUI.Animation.easeIn(duration: 0.2)
+
+        // 改进：添加弹性动画 - 用于选中/悬停状态
+        static func springery(response: Double, dampingFraction: Double) -> SwiftUI.Animation {
+            SwiftUI.Animation.spring(response: response, dampingFraction: dampingFraction)
+        }
+
+        // 改进：添加平滑过渡动画 - 用于大预览区域
+        static let previewTransition = SwiftUI.Animation.easeInOut(duration: 0.2)
     }
 
     // ============================================
     // 面板规格
     // ============================================
     struct Panel {
-        static let width: CGFloat = 720
-        static let height: CGFloat = 480
+        static let width: CGFloat = 1200  // 进一步增大宽度
+        static let height: CGFloat = 600  // 同时增大高度
         static let padding: CGFloat = 16
         static let cornerRadius: CGFloat = 10
         static let shadowRadius: CGFloat = 20
@@ -106,7 +114,7 @@ struct DesignTokens {
         static let previewWidth: CGFloat = 124
         static let previewHeight: CGFloat = 70  // 16:9
         static let previewCornerRadius: CGFloat = 6
-        static let spacing: CGFloat = 12
+        static let spacing: CGFloat = 35  // 增大间距防止重叠
         static let titleFontSize: CGFloat = 13
         static let subtitleFontSize: CGFloat = 11
     }
@@ -140,5 +148,15 @@ struct DesignTokens {
         static let showDelay: TimeInterval = 0.35  // 350ms 触发延迟
         static let showDuration: TimeInterval = 0.2  // 200ms 显示动画
         static let hideDuration: TimeInterval = 0.15  // 150ms 隐藏动画
+    }
+
+    // ============================================
+    // 大预览区域规格 (Alt+Tab 切换预览)
+    // ============================================
+    struct LargePreview {
+        static let width: CGFloat = 400
+        static let height: CGFloat = 225  // 16:9
+        static let cornerRadius: CGFloat = 8
+        static let bottomPadding: CGFloat = 16
     }
 }

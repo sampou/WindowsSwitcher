@@ -42,8 +42,8 @@
 		47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewGenerator.swift; sourceTree = "<group>"; };
 		6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelAnimator.swift; sourceTree = "<group>"; };
 		6CC11176E9A1F286871185CB /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
-		6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockPreviewPanelView.swift; sourceTree = "<group>"; };
-		6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockEventMonitor.swift; sourceTree = "<group>"; };
+		6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "/Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift"; sourceTree = "<absolute>"; };
+		6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "/Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift"; sourceTree = "<absolute>"; };
 		903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		90BB4603BBAE5AC668324947 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		9513B6C10514C44B38148757 /* SearchBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarView.swift; sourceTree = "<group>"; };
@@ -332,6 +332,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -365,8 +366,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WindowsSwitcher/Sources/WindowsSwitcher.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = WindowsSwitcher/Sources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -385,8 +388,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WindowsSwitcher/Sources/WindowsSwitcher.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = "";
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = WindowsSwitcher/Sources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -435,6 +440,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;

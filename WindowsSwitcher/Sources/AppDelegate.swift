@@ -47,15 +47,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // 启动程序坞预览功能
     private func setupDockPreview() {
+        Logger.info(">>> setupDockPreview called")
+
         // 检查配置是否启用程序坞预览
         guard ConfigManager.shared.config.dockPreview.enabled else {
-            Logger.info("Dock preview is disabled in config")
+            Logger.info("Dock preview is DISABLED in config")
             return
         }
 
+        Logger.info("Dock preview is ENABLED, starting...")
+
         // 启动 DockPreviewManager
         DockPreviewManager.shared.start()
-        Logger.info("Dock preview started")
+        Logger.info("DockPreviewManager.start() called")
 
         // 监听预览显示状态变化，创建/隐藏预览窗口
         dockPreviewCancellable = DockPreviewManager.shared.$isPreviewVisible
@@ -76,43 +80,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // 显示程序坞预览面板
     @MainActor
     private func showDockPreviewPanel() {
-        Logger.info("showDockPreviewPanel called, dockPreviewWindow=\(dockPreviewWindow == nil)")
-
         guard dockPreviewWindow == nil else {
-            Logger.info("Dock preview window already exists, skipping")
             return
         }
 
         // 检查预览项
         let items = DockPreviewManager.shared.previewItems
-        Logger.info("Preview items count: \(items.count)")
-
         guard !items.isEmpty else {
-            Logger.warning("No preview items to show")
             return
         }
 
-        let view = DockPreviewPanelView(manager: DockPreviewManager.shared) {
-            DockPreviewManager.shared.hidePreviewPanel()
-        }
+        // 获取预览面板应该显示的位置
+        let screenFrame = NSScreen.main?.frame ?? .zero
+        let dockFrame = DockGeometry.getDockFrame()
+
+        let previewPosition = CGPoint(
+            x: screenFrame.midX,
+            y: dockFrame.maxY + 80
+        )
+
+        // 创建简单的预览视图
+        let previewContainer = createPreviewContainer()
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 120),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 150),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless, .titled],
             backing: .buffered,
             defer: false
         )
         panel.isFloatingPanel = true
         panel.level = .floating
-        panel.backgroundColor = .clear
+        panel.backgroundColor = NSColor.white
         panel.isOpaque = false
         panel.hasShadow = true
-        panel.contentView = NSHostingView(rootView: view)
-        panel.center()
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.contentView = previewContainer
+
+        // 设置窗口位置
+        panel.setFrameOrigin(NSPoint(
+            x: previewPosition.x - 200,
+            y: previewPosition.y - 75
+        ))
+
         panel.orderFront(nil)
 
         dockPreviewWindow = panel
-        Logger.info("Dock preview window shown successfully")
     }
 
     // 隐藏程序坞预览面板
@@ -122,6 +135,68 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.orderOut(nil)
         dockPreviewWindow = nil
         Logger.info("Dock preview window hidden")
+    }
+
+    // 创建预览容器视图（使用 NSView 代替 SwiftUI）
+    private func createPreviewContainer() -> NSView {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 150))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.white.cgColor
+
+        let items = DockPreviewManager.shared.previewItems
+        let spacing: CGFloat = 8
+
+        for (index, item) in items.prefix(4).enumerated() {
+            let x = CGFloat(index) * (104 + spacing)
+            let itemView = createItemView(for: item, index: index)
+            itemView.frame = NSRect(x: x, y: 8, width: 104, height: 134)
+            container.addSubview(itemView)
+        }
+
+        return container
+    }
+
+    // 创建单个预览项视图
+    private func createItemView(for item: DockPreviewItem, index: Int) -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 104, height: 134))
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 8
+        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        view.layer?.borderWidth = 1
+        view.layer?.borderColor = NSColor.separatorColor.cgColor
+
+        // 异步加载预览图
+        Task {
+            let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
+            let size = CGSize(width: 100, height: 70)
+            if let image = await generator.generatePreview(for: item.windowModel, size: size) {
+                await MainActor.run {
+                    self.addImageToView(view, image: image)
+                }
+            }
+        }
+
+        // 添加标题
+        let titleLabel = NSTextField(labelWithString: item.windowTitle)
+        titleLabel.frame = NSRect(x: 2, y: 2, width: 100, height: 16)
+        titleLabel.font = NSFont.systemFont(ofSize: 10)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.alignment = .center
+        view.addSubview(titleLabel)
+
+        return view
+    }
+
+    // 将图片添加到视图
+    private func addImageToView(_ view: NSView, image: NSImage) {
+        let imageView = NSImageView(frame: NSRect(x: 2, y: 18, width: 100, height: 70))
+        imageView.image = image
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = 4
+        imageView.layer?.masksToBounds = true
+        view.addSubview(imageView)
     }
 
     // 监听 Option 键释放 - 使用全局监听器
@@ -298,13 +373,43 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
         let hasTrusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         let hasScreen = CGPreflightScreenCaptureAccess()
-        if !hasScreen { CGRequestScreenCaptureAccess() }
+
+        if !hasScreen {
+            // 请求屏幕录制权限
+            CGRequestScreenCaptureAccess()
+            // 提示用户手动开启
+            showPermissionAlert(for: "屏幕录制")
+        }
+
+        if !hasTrusted {
+            showPermissionAlert(for: "辅助功能")
+        }
+
         if !hasTrusted || !hasScreen {
             updateMenuBarIcon(hasPermissions: false)
             Logger.warning("Missing permissions - Accessibility: \(hasTrusted), Screen Recording: \(hasScreen)")
         } else {
             updateMenuBarIcon(hasPermissions: true)
             Logger.info("All permissions granted")
+        }
+    }
+
+    private func showPermissionAlert(for permission: String) {
+        let alert = NSAlert()
+        alert.messageText = "需要\(permission)权限"
+        alert.informativeText = "WindowsSwitcher 需要\(permission)权限来显示窗口预览。请在系统设置中开启该权限。"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "稍后")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            openPrivacySettings()
+        }
+    }
+
+    private func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -375,7 +480,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: DesignTokens.Panel.width, height: DesignTokens.Panel.height),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled],
             backing: .buffered,
             defer: false
         )
@@ -385,6 +490,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.contentView = NSHostingView(rootView: view)
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
         panel.center()
         PanelAnimator.show(panel)
         switchPanelWindow = panel

@@ -5,8 +5,20 @@ struct SwitchPanelView: View {
     @ObservedObject var viewModel: SwitchPanelViewModel
     let onDismiss: () -> Void
 
-    // 每行最多显示的窗口数
-    private let columns = [GridItem(.adaptive(minimum: DesignTokens.WindowItem.width, maximum: DesignTokens.WindowItem.width), spacing: DesignTokens.WindowItem.spacing)]
+    // 每行显示的窗口数 - 根据面板宽度动态计算，确保每个窗口有足够空间
+    private var columns: [GridItem] {
+        let panelWidth = DesignTokens.Panel.width
+        let itemWidth = DesignTokens.WindowItem.width
+        let desiredSpacing: CGFloat = 30  // 期望的间距
+        // 计算可以容纳的列数：(面板宽度 + 间距) / (窗口宽度 + 间距)
+        let columnCount = max(3, min(6, Int((panelWidth + desiredSpacing) / (itemWidth + desiredSpacing))))
+        return (0..<columnCount).map { _ in
+            GridItem(.fixed(itemWidth), spacing: desiredSpacing)
+        }
+    }
+
+    // 用于自动滚动到选中项
+    @State private var selectedScrollID: CGWindowID?
 
     var body: some View {
         ZStack {
@@ -14,27 +26,11 @@ struct SwitchPanelView: View {
             VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
 
-            VStack(spacing: 0) {
-                // 搜索栏
-                searchBar
-                    .padding(.horizontal, DesignTokens.Panel.padding)
-                    .padding(.top, DesignTokens.Panel.padding)
-                    .padding(.bottom, DesignTokens.Spacing.sm)
-
-                Divider()
-                    .opacity(0.3)
-
-                // 窗口网格
-                windowGrid
-                    .padding(DesignTokens.Panel.padding)
-
-                Divider()
-                    .opacity(0.3)
-
-                // 底部快捷键提示栏
-                shortcutBar
-            }
+            // 窗口网格 - 平铺显示，与屏幕边框保持距离
+            windowGrid
+                .padding(DesignTokens.Panel.padding)
         }
+        // 增大面板尺寸以显示更多窗口
         .frame(width: DesignTokens.Panel.width, height: DesignTokens.Panel.height)
         .shadow(color: .black.opacity(0.25), radius: DesignTokens.Panel.shadowRadius,
                 x: 0, y: DesignTokens.Panel.shadowY)
@@ -49,14 +45,15 @@ struct SwitchPanelView: View {
                 }
             }
         ))
+        .onChange(of: viewModel.selectedIndex) { newIndex in
+            // 当选中索引变化时，自动滚动到选中项
+            if let window = viewModel.filteredWindows.indices.contains(newIndex) ? viewModel.filteredWindows[newIndex] : nil {
+                selectedScrollID = window.id
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("窗口切换面板")
         .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 Escape 退出")
-    }
-
-    // MARK: - 搜索栏
-    private var searchBar: some View {
-        SearchBarView(text: $viewModel.searchText)
     }
 
     // MARK: - 窗口网格
@@ -65,22 +62,32 @@ struct SwitchPanelView: View {
             if viewModel.filteredWindows.isEmpty {
                 emptyState
             } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVGrid(columns: columns, spacing: DesignTokens.WindowItem.spacing) {
-                        ForEach(Array(viewModel.filteredWindows.enumerated()), id: \.element.id) { index, window in
-                            WindowItemView(
-                                window: window,
-                                isSelected: index == viewModel.selectedIndex,
-                                previewImage: viewModel.previewImages[window.id],
-                                onSelect: { viewModel.selectedIndex = index },
-                                onActivate: {
-                                    viewModel.selectedIndex = index
-                                    viewModel.activateSelected()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() }
-                                },
-                                onClose: { viewModel.closeWindow(window) },
-                                onMinimize: { viewModel.minimizeWindow(window) }
-                            )
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        LazyVGrid(columns: columns, spacing: 0) {
+                            ForEach(Array(viewModel.filteredWindows.enumerated()), id: \.element.id) { index, window in
+                                WindowItemView(
+                                    window: window,
+                                    isSelected: index == viewModel.selectedIndex,
+                                    previewImage: viewModel.previewImages[window.id],
+                                    onSelect: { viewModel.selectedIndex = index },
+                                    onActivate: {
+                                        viewModel.selectedIndex = index
+                                        viewModel.activateSelected()
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() }
+                                    },
+                                    onClose: { viewModel.closeWindow(window) },
+                                    onMinimize: { viewModel.minimizeWindow(window) }
+                                )
+                                .id(window.id)
+                            }
+                        }
+                        // 使用drawingGroup优化复杂视图渲染
+                        .drawingGroup()
+                        .onChange(of: selectedScrollID) { newID in
+                            if let windowID = newID {
+                                proxy.scrollTo(windowID, anchor: .center)
+                            }
                         }
                     }
                 }

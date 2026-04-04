@@ -216,9 +216,218 @@ class DockEventMonitor: ObservableObject {
     }
 
     private func getAppBundleIDAtLocation(_ location: CGPoint) -> String? {
-        // 使用 AXUIElement 获取鼠标位置的应用
+        // 方案 1: 使用专门的 Dock 图标检测（推荐）
+        if let bundleID = getDockIconBundleIDAtLocation(location) {
+            return bundleID
+        }
+        
+        // 方案 2: 备用 - 使用 AXUIElement 获取鼠标位置的应用
+        return getAppFromAXElement(at: location)
+    }
+    
+    // MARK: - Dock 图标检测（通过 Accessibility API 直接查询 Dock）
+    
+    /// 通过 Accessibility API 直接获取 Dock 图标的 Bundle ID
+    private func getDockIconBundleIDAtLocation(_ location: CGPoint) -> String? {
+        // 1. 获取 Dock 进程的 AXUIElement
+        guard let dockElement = findDockElement() else {
+            Logger.debug("无法找到 Dock 元素")
+            return nil
+        }
+        
+        // 2. 将鼠标位置转换为 AX 坐标系（原点左上角，Y 向下）
+        guard let screenHeight = NSScreen.main?.frame.height else { return nil }
+        let axLocation = CGPoint(x: location.x, y: screenHeight - location.y)
+        
+        // 3. 遍历 Dock 子元素寻找匹配的图标
+        return findDockIconAtPosition(dockElement, point: axLocation)
+    }
+    
+    /// 查找 Dock 进程的 AXUIElement
+    private func findDockElement() -> AXUIElement? {
+        // 通过窗口列表查找 Dock
+        guard let windowList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
+            Logger.debug("[Dock] 无法获取窗口列表")
+            return nil
+        }
+        
+        Logger.debug("[Dock] 窗口数量: \(windowList.count)")
+        
+        for window in windowList {
+            if let ownerName = window[kCGWindowOwnerName as String] as? String,
+               ownerName == "Dock" {
+                if let ownerPID = window[kCGWindowOwnerPID as String] as? Int32 {
+                    Logger.debug("[Dock] 找到 Dock, PID: \(ownerPID)")
+                    return AXUIElementCreateApplication(ownerPID)
+                }
+            }
+        }
+        
+        Logger.debug("[Dock] 未找到 Dock 窗口")
+        return nil
+    }
+    
+    /// 在 Dock 元素中查找指定位置的图标
+    private func findDockIconAtPosition(_ dockElement: AXUIElement, point: CGPoint) -> String? {
+        var childrenRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(dockElement, kAXChildrenAttribute as CFString, &childrenRef)
+        
+        guard result == .success, let children = childrenRef as? [AXUIElement] else {
+            Logger.debug("无法获取 Dock 子元素: \(result.rawValue)")
+            return nil
+        }
+        
+        Logger.debug("Dock 子元素数量: \(children.count)")
+        
+        for (index, child) in children.enumerated() {
+            // 获取图标的角色
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleRef)
+            let role = roleRef as? String ?? "unknown"
+            
+            // 获取图标的位置和大小
+            var positionRef: CFTypeRef?
+            var sizeRef: CFTypeRef?
+            
+            guard AXUIElementCopyAttributeValue(child, kAXPositionAttribute as CFString, &positionRef) == .success,
+                  AXUIElementCopyAttributeValue(child, kAXSizeAttribute as CFString, &sizeRef) == .success else {
+                continue
+            }
+            
+            var position = CGPoint.zero
+            var size = CGSize.zero
+            AXValueGetValue(positionRef as! AXValue, .cgPoint, &position)
+            AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+            
+            let iconRect = CGRect(origin: position, size: size)
+            
+            Logger.debug("图标 \(index): role=\(role), frame=\(iconRect)")
+            
+            // 检查鼠标是否在此图标范围内
+            if iconRect.contains(point) {
+                Logger.debug("✅ 匹配到图标 \(index), role=\(role)")
+                
+                // 尝试从图标获取应用信息
+                if let bundleID = getBundleIDFromDockIcon(child) {
+                    Logger.debug("✅ 获取到 Bundle ID: \(bundleID)")
+                    return bundleID
+                }
+                
+                // 如果无法获取 Bundle ID，尝试获取标题作为备用
+                if let title = getIconTitle(child) {
+                    Logger.debug("✅ 获取到标题: \(title)")
+                    return bundleIDFromAppName(title)
+                }
+                
+                // 尝试递归获取子元素
+                if let bundleID = getBundleIDFromChildElements(child) {
+                    Logger.debug("✅ 从子元素获取到 Bundle ID: \(bundleID)")
+                    return bundleID
+                }
+                
+                return nil
+            }
+        }
+        
+        return nil
+    }
+    
+    /// 递归获取子元素中的 Bundle ID
+    private func getBundleIDFromChildElements(_ element: AXUIElement) -> String? {
+        var childrenRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenRef)
+        
+        guard result == .success, let children = childrenRef as? [AXUIElement], !children.isEmpty else {
+            return nil
+        }
+        
+        for child in children {
+            if let bundleID = getBundleIDFromDockIcon(child) {
+                return bundleID
+            }
+            
+            // 继续递归
+            if let bundleID = getBundleIDFromChildElements(child) {
+                return bundleID
+            }
+        }
+        
+        return nil
+    }
+    
+    /// 从 Dock 图标元素获取 Bundle ID
+    private func getBundleIDFromDockIcon(_ icon: AXUIElement) -> String? {
+        // 方法 1: 尝试通过 description 获取（通常包含应用信息）
+        var descRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(icon, kAXDescriptionAttribute as CFString, &descRef) == .success,
+           let description = descRef as? String, !description.isEmpty {
+            // 尝试从描述中提取 Bundle ID 或应用名
+            if let bundleID = bundleIDFromAppName(description) {
+                return bundleID
+            }
+        }
+        
+        // 方法 2: 尝试通过 value 获取
+        var valueRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(icon, kAXValueAttribute as CFString, &valueRef) == .success,
+           let value = valueRef as? String, !value.isEmpty {
+            if let bundleID = bundleIDFromAppName(value) {
+                return bundleID
+            }
+        }
+        
+        // 方法 3: 尝试通过 title 获取
+        var titleRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(icon, kAXTitleAttribute as CFString, &titleRef) == .success,
+           let title = titleRef as? String, !title.isEmpty {
+            if let bundleID = bundleIDFromAppName(title) {
+                return bundleID
+            }
+        }
+        
+        return nil
+    }
+    
+    /// 获取图标标题
+    private func getIconTitle(_ element: AXUIElement) -> String? {
+        let attributes = [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute]
+        
+        for attr in attributes {
+            var valueRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, attr as CFString, &valueRef) == .success,
+               let value = valueRef as? String, !value.isEmpty {
+                return value
+            }
+        }
+        
+        return nil
+    }
+    
+    /// 根据应用名称查找 Bundle ID
+    private func bundleIDFromAppName(_ name: String) -> String? {
+        // 查找运行中的应用
+        let runningApps = NSWorkspace.shared.runningApplications
+        
+        // 精确匹配
+        if let app = runningApps.first(where: { $0.localizedName == name }) {
+            return app.bundleIdentifier
+        }
+        
+        // 包含匹配（不区分大小写）
+        if let app = runningApps.first(where: {
+            $0.localizedName?.lowercased().contains(name.lowercased()) ?? false ||
+            $0.bundleIdentifier?.lowercased().contains(name.lowercased()) ?? false
+        }) {
+            return app.bundleIdentifier
+        }
+        
+        return nil
+    }
+    
+    /// 备用方案：使用 AXUIElementCopyElementAtPosition（原有方法）
+    private func getAppFromAXElement(at location: CGPoint) -> String? {
         let systemWideElement = AXUIElementCreateSystemWide()
-
+        
         var element: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(
             systemWideElement,
@@ -226,21 +435,20 @@ class DockEventMonitor: ObservableObject {
             Float(NSScreen.main!.frame.height - location.y),
             &element
         )
-
+        
         guard result == .success, let axElement = element else {
             return nil
         }
-
+        
         // 获取应用 PID
         var pid: pid_t = 0
         AXUIElementGetPid(axElement, &pid)
-
+        
         // 获取应用 Bundle ID
         guard let app = NSRunningApplication(processIdentifier: pid) else {
             return nil
         }
-
+        
         return app.bundleIdentifier
     }
-}
 

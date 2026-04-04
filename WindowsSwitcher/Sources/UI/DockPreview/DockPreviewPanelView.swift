@@ -53,9 +53,11 @@ class DockPreviewManager: ObservableObject {
         }
 
         // 获取该应用的所有窗口
-        let windows = WindowManager.shared.windows.filter { window in
-            window.bundleIdentifier == bundleID && window.isOnScreen && !window.isMinimized
-        }
+        let allWindows = WindowManager.shared.windows
+        let matchingWindows = allWindows.filter { $0.bundleIdentifier == bundleID }
+
+        // 放宽过滤条件
+        let windows = matchingWindows.filter { !$0.isMinimized }
 
         guard !windows.isEmpty else {
             hidePreview()
@@ -68,22 +70,18 @@ class DockPreviewManager: ObservableObject {
             item.previewGenerator = previewGenerator
             return item
         }
+
         showPreview()
     }
 
     private func showPreview() {
-        Logger.info("showPreview called, previewItems count: \(previewItems.count)")
-
         guard !previewItems.isEmpty else {
-            Logger.warning("showPreview guard failed - no preview items")
             return
         }
 
         withAnimation(DesignTokens.Animation.panelShow) {
             isPreviewVisible = true
         }
-
-        Logger.info("showPreview completed, isPreviewVisible set to true")
     }
 
     private func hidePreview() {
