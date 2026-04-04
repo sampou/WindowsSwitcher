@@ -261,12 +261,36 @@ class SwitchPanelViewModel: ObservableObject {
         }
     }
 
+    // 用于控制并发预览生成任务
+    private var previewLoadTasks: [CGWindowID: Task<Void, Never>] = [:]
+    private var activePreviewLoads = 0
+    private let maxConcurrentPreviews = 3  // 最大并发预览生成数量
+    private let previewLoadQueue = DispatchQueue(label: "com.windowsswitcher.previewLoad", qos: .userInitiated, attributes: .concurrent)
+
     private func loadPreview(for window: WindowModel) {
-        // 优化：使用适中的预览尺寸，平衡质量和性能
-        struct ImageBox: @unchecked Sendable { let image: NSImage }
-        Task {
+        // 如果已经在加载中，取消之前的任务
+        previewLoadTasks[window.id]?.cancel()
+        
+        let task = Task { [weak self] in
+            guard let self = self else { return }
+            
+            // 等待直到有足够的并发槽位
+            while self.activePreviewLoads >= self.maxConcurrentPreviews {
+                try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
+                guard !Task.isCancelled else { return }
+            }
+            
+            self.activePreviewLoads += 1
+            defer { self.activePreviewLoads -= 1 }
+            
+            struct ImageBox: @unchecked Sendable { let image: NSImage }
+            
             // 使用适中的预览尺寸
-            let size = CGSize(width: 200, height: 112)  // 16:9适中预览
+            let size = CGSize(width: 200, height: 112)
+            
+            // 检查是否已取消
+            guard !Task.isCancelled else { return }
+            
             let box: ImageBox? = await withTaskGroup(of: ImageBox?.self) { group in
                 // 主任务：生成预览
                 group.addTask { [previewGenerator] in
@@ -284,13 +308,25 @@ class SwitchPanelViewModel: ObservableObject {
                 }
                 return nil
             }
-            if let image = box?.image {
-                previewImages[window.id] = image
+            
+            // 检查是否已取消，并在主线程更新UI
+            guard !Task.isCancelled else { return }
+            
+            await MainActor.run {
+                if let image = box?.image {
+                    self.previewImages[window.id] = image
+                }
+                self.previewLoadTasks.removeValue(forKey: window.id)
             }
         }
-
-        // 预加载相邻窗口的预览
-        prefetchAdjacentPreviews(from: window)
+        
+        previewLoadTasks[window.id] = task
+        
+        // 延迟预加载相邻窗口，避免阻塞当前预览
+        Task {
+            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms延迟
+            await self.prefetchAdjacentPreviews(from: window)
+        }
     }
 
     /// 预加载相邻窗口的预览（向前预加载2个，向后预加载1个）
