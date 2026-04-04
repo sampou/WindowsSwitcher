@@ -263,9 +263,6 @@ class SwitchPanelViewModel: ObservableObject {
 
     // 用于控制并发预览生成任务
     private var previewLoadTasks: [CGWindowID: Task<Void, Never>] = [:]
-    private var activePreviewLoads = 0
-    private let maxConcurrentPreviews = 3  // 最大并发预览生成数量
-    private let previewLoadQueue = DispatchQueue(label: "com.windowsswitcher.previewLoad", qos: .userInitiated, attributes: .concurrent)
 
     private func loadPreview(for window: WindowModel) {
         // 如果已经在加载中，取消之前的任务
@@ -274,63 +271,26 @@ class SwitchPanelViewModel: ObservableObject {
         let task = Task { [weak self] in
             guard let self = self else { return }
             
-            // 等待直到有足够的并发槽位
-            while self.activePreviewLoads >= self.maxConcurrentPreviews {
-                try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
-                guard !Task.isCancelled else { return }
-            }
-            
-            self.activePreviewLoads += 1
-            defer { self.activePreviewLoads -= 1 }
-            
-            struct ImageBox: @unchecked Sendable { let image: NSImage }
-            
             // 使用适中的预览尺寸
             let size = CGSize(width: 200, height: 112)
             
-            // 检查是否已取消
-            guard !Task.isCancelled else { return }
-            
-            let box: ImageBox? = await withTaskGroup(of: ImageBox?.self) { group in
-                // 主任务：生成预览
-                group.addTask { [previewGenerator] in
-                    guard let img = await previewGenerator.generatePreview(for: window, size: size)
-                    else { return nil }
-                    return ImageBox(image: img)
-                }
-                // 超时任务：500ms后放弃
-                group.addTask {
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                    return nil
-                }
-                for await result in group {
-                    if let result { group.cancelAll(); return result }
-                }
-                return nil
-            }
-            
-            // 检查是否已取消，并在主线程更新UI
-            guard !Task.isCancelled else { return }
-            
-            await MainActor.run {
-                if let image = box?.image {
+            // 直接使用 PreviewGenerator 生成预览（内部已包含缓存逻辑）
+            if let image = await self.previewGenerator.generatePreview(for: window, size: size) {
+                await MainActor.run {
                     self.previewImages[window.id] = image
+                    self.previewLoadTasks.removeValue(forKey: window.id)
                 }
-                self.previewLoadTasks.removeValue(forKey: window.id)
             }
+            
+            // 预加载相邻窗口
+            await self.prefetchAdjacentPreviews(from: window)
         }
         
         previewLoadTasks[window.id] = task
-        
-        // 延迟预加载相邻窗口，避免阻塞当前预览
-        Task {
-            try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms延迟
-            await self.prefetchAdjacentPreviews(from: window)
-        }
     }
 
     /// 预加载相邻窗口的预览（向前预加载2个，向后预加载1个）
-    private func prefetchAdjacentPreviews(from window: WindowModel) {
+    private func prefetchAdjacentPreviews(from window: WindowModel) async {
         guard let currentIndex = filteredWindows.firstIndex(where: { $0.id == window.id }) else { return }
 
         // 预加载范围：当前索引-2 到 当前索引+1
@@ -340,13 +300,16 @@ class SwitchPanelViewModel: ObservableObject {
         for index in startIndex...endIndex {
             guard index != currentIndex else { continue }  // 跳过当前窗口
             let windowToPreload = filteredWindows[index]
-            // 只预加载尚未缓存的窗口
+            
+            // 只预加载尚未在内存中的窗口
             guard previewImages[windowToPreload.id] == nil else { continue }
 
             // 低优先级预加载（不阻塞主线程）
             Task.detached(priority: .background) { [weak self] in
                 guard let self = self else { return }
+                
                 let size = CGSize(width: 124, height: 70)  // 小尺寸预览
+                // PreviewGenerator 内部已包含缓存逻辑
                 if let img = await self.previewGenerator.generatePreview(for: windowToPreload, size: size) {
                     await MainActor.run {
                         self.previewImages[windowToPreload.id] = img
