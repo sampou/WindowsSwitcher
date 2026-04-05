@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var switchPanelWindow: NSWindow?
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
+    private var globalEscKeyMonitor: Any?  // ESC 键全局监听器
     private let windowManager = WindowManager.shared
     private let previewGenerator = PreviewGenerator()
     private let filterEngine = FilterEngine()
@@ -533,8 +534,84 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         PanelAnimator.show(panel)
         switchPanelWindow = panel
 
+        // 设置 ESC 键全局监听器
+        setupEscKeyMonitor()
+
         let totalTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         Logger.info("==> showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
+    }
+
+    // 设置 ESC 键全局监听器
+    private func setupEscKeyMonitor() {
+        // 先移除旧的监听器
+        removeEscKeyMonitor()
+
+        Logger.info("==> Setting up ESC key monitor")
+
+        // 使用全局监听器
+        globalEscKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            Logger.info("==> Global keyDown: keyCode=\(event.keyCode)")
+            guard let self, self.isPanelVisible else { return }
+
+            // ESC 键的 keyCode 是 53
+            if event.keyCode == 53 {
+                Logger.info("==> Global ESC pressed, hiding panel")
+                Task { @MainActor in
+                    self.hideSwitchPanel()
+                }
+            }
+        }
+
+        if globalEscKeyMonitor != nil {
+            Logger.info("==> ESC key monitor created successfully")
+        } else {
+            Logger.warning("==> Failed to create ESC key monitor")
+        }
+
+        // 同时使用本地监听器
+        setupLocalEscKeyMonitor()
+    }
+
+    // 设置本地 ESC 键监听器
+    private var localEscKeyMonitor: Any?
+
+    private func setupLocalEscKeyMonitor() {
+        // 移除旧的本地监听器
+        if let monitor = localEscKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEscKeyMonitor = nil
+        }
+
+        localEscKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            Logger.info("==> Local keyDown: keyCode=\(event.keyCode)")
+            guard let self, self.isPanelVisible else { return event }
+
+            // ESC 键的 keyCode 是 53
+            if event.keyCode == 53 {
+                Logger.info("==> Local ESC pressed, hiding panel")
+                Task { @MainActor in
+                    self.hideSwitchPanel()
+                }
+                return nil // 阻止事件继续传递
+            }
+            return event
+        }
+
+        if localEscKeyMonitor != nil {
+            Logger.info("==> Local ESC key monitor created successfully")
+        }
+    }
+
+    // 移除 ESC 键监听器
+    private func removeEscKeyMonitor() {
+        if let monitor = globalEscKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEscKeyMonitor = nil
+        }
+        if let monitor = localEscKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEscKeyMonitor = nil
+        }
     }
 
     // 定时刷新窗口列表 - 已禁用，避免快速切换时产生卡顿
@@ -553,6 +630,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func hideSwitchPanel() {
         // 停止刷新定时器
         stopWindowRefreshTimer()
+
+        // 移除 ESC 键监听器
+        removeEscKeyMonitor()
 
         guard let panel = switchPanelWindow else { return }
         PanelAnimator.hide(panel) { [weak self] in
