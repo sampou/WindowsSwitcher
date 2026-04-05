@@ -4,15 +4,15 @@ import CoreGraphics
 actor PreviewCache {
     // MARK: - 内存缓存
     private var memoryCache: [String: CachedEntry] = [:]
-    private let maxMemorySize = 50
-    
+    private let maxMemorySize = 80  // 增加内存缓存数量
+
     // MARK: - 磁盘缓存
     private let cacheDirectory: URL
-    private let maxDiskCacheSize: Int64 = 100 * 1024 * 1024  // 100MB
-    
-    // MARK: - 配置
-    var expiryInterval: TimeInterval = 300  // 5分钟缓存有效期
-    
+    private let maxDiskCacheSize: Int64 = 200 * 1024 * 1024  // 200MB
+
+    // MARK: - 配置 - 使用长时间缓存，基于内容哈希判断是否更新
+    var expiryInterval: TimeInterval = 600  // 10分钟缓存有效期
+
     // MARK: - 初始化
     init() {
         let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
@@ -160,48 +160,75 @@ actor PreviewCache {
 
 class PreviewGenerator {
     private let cache = PreviewCache()
-    private let queue = DispatchQueue(label: "com.windowsswitcher.preview", qos: .userInitiated)
+    // 使用并发队列，支持多线程并行生成缩略图
+    private let queue = DispatchQueue(label: "com.windowsswitcher.preview", qos: .userInitiated, attributes: .concurrent)
+    // 信号量限制并发生成数量
+    private let semaphore = DispatchSemaphore(value: 3)
 
     init() {
-        // BUG-017: 将缓存过期时间与配置中的 previewUpdateInterval 对齐
-        let interval = ConfigManager.shared.config.behavior.previewUpdateInterval
-        Task { await cache.setExpiry(interval > 0 ? interval * 10 : 5.0) }
+        // 使用固定的长时间缓存（10分钟），只有在窗口内容变化时才更新
+        // 缓存过期不影响正常使用，因为我们会根据内容哈希判断是否需要重新生成
+        Task { await cache.setExpiry(600) }
     }
 
+    /// 生成单个窗口预览
     func generatePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
-        let startTime = CFAbsoluteTimeGetCurrent()
-
-        // 计算窗口内容哈希
-        let windowHash = await cache.computeWindowHash(for: window)
-
         // 检查缓存（包括内存和磁盘）
-        if let cached = await cache.get(for: window.id, windowHash: windowHash) {
-            Logger.info("==> PreviewGenerator: cache HIT for \(window.appName), time: \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms")
+        if let cached = await cache.get(for: window.id, windowHash: await cache.computeWindowHash(for: window)) {
             return cached
         }
 
-        Logger.info("==> PreviewGenerator: cache MISS for \(window.appName), generating...")
-
         return await withCheckedContinuation { continuation in
-            queue.async {
-                let t0 = CFAbsoluteTimeGetCurrent()
+            queue.async { [weak self] in
+                guard let self else { return }
+
+                // 限制并发数量
+                self.semaphore.wait()
+                defer { self.semaphore.signal() }
+
                 let image = self.captureWindow(window.id, size: size)
-                Logger.info("==> PreviewGenerator: captureWindow took \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms for \(window.appName)")
-                // BUG-008: 先 resume，再异步写缓存，确保 continuation 在所有路径都被调用
                 continuation.resume(returning: image)
+
                 if let image {
-                    Task { await self.cache.set(image, for: window.id, windowHash: windowHash) }
+                    Task {
+                        await self.cache.set(image, for: window.id, windowHash: await self.cache.computeWindowHash(for: window))
+                    }
                 }
-                Logger.info("==> PreviewGenerator: TOTAL time: \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms for \(window.appName)")
             }
+        }
+    }
+
+    /// 批量生成预览（用于面板打开时）
+    func generatePreviews(for windows: [WindowModel], size: CGSize) async -> [CGWindowID: NSImage] {
+        // 简化的批量生成：每次处理一部分，使用信号量限制并发
+        await withTaskGroup(of: (CGWindowID, NSImage?).self) { group in
+            var results: [CGWindowID: NSImage] = [:]
+
+            for window in windows {
+                group.addTask {
+                    let image = await self.generatePreview(for: window, size: size)
+                    return (window.id, image)
+                }
+            }
+
+            // 收集所有结果
+            for await (windowID, image) in group {
+                if let image = image {
+                    results[windowID] = image
+                }
+            }
+
+            return results
         }
     }
 
     func clearCache() async { await cache.clear() }
 
+    /// 捕获窗口截图 - 优化分辨率
     private func captureWindow(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
 
+        // 使用 bestResolution 获取高质量截图，然后缩放到目标尺寸
         guard let cgImage = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
@@ -209,7 +236,19 @@ class PreviewGenerator {
             [.boundsIgnoreFraming, .bestResolution]
         ) else { return nil }
 
-        // 直接返回原始图片，不缩放
-        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        // 缩放到目标尺寸
+        let targetSize = NSSize(width: size.width, height: size.height)
+        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+
+        // 缩放图片
+        let resizedImage = NSImage(size: targetSize)
+        resizedImage.lockFocus()
+        nsImage.draw(in: NSRect(origin: .zero, size: targetSize),
+                    from: NSRect(origin: .zero, size: nsImage.size),
+                    operation: .copy,
+                    fraction: 1.0)
+        resizedImage.unlockFocus()
+
+        return resizedImage
     }
 }

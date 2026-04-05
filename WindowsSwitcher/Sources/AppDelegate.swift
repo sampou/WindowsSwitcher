@@ -539,6 +539,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let totalTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         Logger.info("==> showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
+
+        // 批量预加载所有窗口缩略图
+        preloadAllPreviews(windows: sortedWindows, viewModel: vm)
+    }
+
+    // 批量预加载所有窗口缩略图
+    private func preloadAllPreviews(windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+        let previewSize = CGSize(
+            width: ConfigManager.shared.config.dockPreview.previewWidth,
+            height: ConfigManager.shared.config.dockPreview.previewHeight
+        )
+
+        // 并发批量生成所有缩略图
+        Task {
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let previewImages = await previewGenerator.generatePreviews(for: windows, size: previewSize)
+
+            await MainActor.run {
+                // 将生成的缩略图存入 ViewModel
+                for (windowID, image) in previewImages {
+                    viewModel.previewImages[windowID] = image
+                }
+                Logger.info("==> Preloaded \(previewImages.count) previews in \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms")
+            }
+        }
     }
 
     // 设置 ESC 键全局监听器
