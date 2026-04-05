@@ -37,7 +37,7 @@ struct SwitchPanelView: View {
         .background(KeyEventHandler(
             onNext: { viewModel.selectNext() },
             onPrev: { viewModel.selectPrevious() },
-            onConfirm: { viewModel.activateSelected(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() } },
+            onConfirm: { viewModel.activateSelected(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() } },
             onDismiss: onDismiss,
             onSelectIndex: { idx in
                 if viewModel.filteredWindows.indices.contains(idx) {
@@ -45,11 +45,10 @@ struct SwitchPanelView: View {
                 }
             }
         ))
-        .onChange(of: viewModel.selectedIndex) { newIndex in
-            // 当选中索引变化时，自动滚动到选中项
-            if let window = viewModel.filteredWindows.indices.contains(newIndex) ? viewModel.filteredWindows[newIndex] : nil {
-                selectedScrollID = window.id
-            }
+        .onChange(of: viewModel.selectedIndex) { (newIndex: Int) in
+            // 简化：只在有效索引时设置
+            guard newIndex >= 0 && newIndex < viewModel.filteredWindows.count else { return }
+            selectedScrollID = viewModel.filteredWindows[newIndex].id
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("窗口切换面板")
@@ -74,7 +73,7 @@ struct SwitchPanelView: View {
                                     onActivate: {
                                         viewModel.selectedIndex = index
                                         viewModel.activateSelected()
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { onDismiss() }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
                                     },
                                     onClose: { viewModel.closeWindow(window) },
                                     onMinimize: { viewModel.minimizeWindow(window) }
@@ -82,11 +81,14 @@ struct SwitchPanelView: View {
                                 .id(window.id)
                             }
                         }
-                        // 使用drawingGroup优化复杂视图渲染
-                        .drawingGroup()
+                        // 移除 drawingGroup，因为它会导致每次更新都重新光栅化整个视图
+                        // .drawingGroup()
                         .onChange(of: selectedScrollID) { newID in
+                            // 只在非空时滚动，避免空值触发
                             if let windowID = newID {
-                                proxy.scrollTo(windowID, anchor: .center)
+                                withAnimation(.none) {
+                                    proxy.scrollTo(windowID, anchor: .center)
+                                }
                             }
                         }
                     }

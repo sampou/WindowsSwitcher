@@ -29,6 +29,11 @@ class WindowManager: WindowManagerProtocol {
     private var windowCache: [CGWindowID: WindowModel] = [:]
     private var observers: [NSObjectProtocol] = []
 
+    // 窗口列表缓存（避免频繁调用 CGWindowListCopyWindowInfo）
+    private var cachedWindows: [WindowModel] = []
+    private var cacheTimestamp: Date?
+    private let cacheTTL: TimeInterval = 0.1 // 100ms 缓存
+
     private init() {}
 
     // 缓存的窗口列表
@@ -42,13 +47,32 @@ class WindowManager: WindowManagerProtocol {
     }
 
     func getAllWindows() -> [WindowModel] {
+        // 使用缓存，避免频繁调用
+        let now = Date()
+        if let timestamp = cacheTimestamp,
+           now.timeIntervalSince(timestamp) < cacheTTL,
+           !cachedWindows.isEmpty {
+            return cachedWindows
+        }
+
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             return []
         }
         let windows = list.compactMap { buildWindowModel(from: $0) }
         windows.forEach { windowCache[$0.id] = $0 }
+
+        // 更新缓存
+        cachedWindows = windows
+        cacheTimestamp = now
+
+        // 按最后活跃时间排序
         return windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+    }
+
+    /// 强制刷新窗口缓存
+    func refreshCache() {
+        cacheTimestamp = nil
     }
 
     func getWindows(for appName: String) -> [WindowModel] {
@@ -61,38 +85,43 @@ class WindowManager: WindowManagerProtocol {
             return
         }
 
-        // 先激活应用
+        // 快速激活应用（核心方法）
         let activateResult = app.activate(options: .activateIgnoringOtherApps)
         if !activateResult {
-            Logger.warning("NSRunningApplication.activate returned false, trying alternative method")
-            // 尝试使用 AX API 激活应用
-            let axApp = AXUIElementCreateApplication(window.ownerPID)
-            AXUIElementSetAttributeValue(axApp, kAXFocusedApplicationAttribute as CFString, kCFBooleanTrue)
+            Logger.warning("NSRunningApplication.activate returned false")
         }
 
-        // 获取 AX 窗口元素
-        guard let win = axWindow(for: window) else {
-            Logger.warning("Could not find AX window for: \(window.appName) - \(window.windowTitle)")
-            // 降级方案：只是激活应用
-            return
+        // 更新窗口的 lastActiveTime 为当前时间，确保排序正确
+        let now = Date()
+        if var cachedWindow = windowCache[window.id] {
+            cachedWindow = WindowModel(
+                id: cachedWindow.id,
+                appName: cachedWindow.appName,
+                bundleIdentifier: cachedWindow.bundleIdentifier,
+                windowTitle: cachedWindow.windowTitle,
+                appIcon: cachedWindow.appIcon,
+                frame: cachedWindow.frame,
+                isMinimized: cachedWindow.isMinimized,
+                isHidden: cachedWindow.isHidden,
+                isOnScreen: cachedWindow.isOnScreen,
+                lastActiveTime: now,
+                windowLayer: cachedWindow.windowLayer,
+                ownerPID: cachedWindow.ownerPID
+            )
+            windowCache[window.id] = cachedWindow
+            // 同时更新缓存的窗口列表
+            cachedWindows = cachedWindows.map { $0.id == window.id ? cachedWindow : $0 }
         }
 
-        // 设置为主窗口
-        let mainResult = AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
-        if mainResult != .success {
-            Logger.debug("AXUIElementSetAttributeValue for main failed: \(mainResult.rawValue)")
-        }
-
-        // 设置焦点
-        let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-        if focusResult != .success {
-            Logger.debug("AXUIElementSetAttributeValue for focused failed: \(focusResult.rawValue)")
-        }
-
-        // 强制 raise 窗口到前台
-        let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-        if raiseResult != .success {
-            Logger.debug("AXUIElementPerformAction raise failed: \(raiseResult.rawValue)")
+        // 简化窗口激活：只做必要操作，减少延迟
+        // 直接 raise 窗口，跳过不必要的 AX API 调用
+        DispatchQueue.main.async { [weak self] in
+            if let win = self?.axWindow(for: window) {
+                // 设置焦点（异步执行，不阻塞）
+                AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                // raise 窗口
+                AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            }
         }
 
         Logger.info("Activated window: \(window.appName) - \(window.windowTitle)")

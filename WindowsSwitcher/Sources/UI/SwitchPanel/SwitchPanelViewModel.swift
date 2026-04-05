@@ -58,12 +58,20 @@ class SwitchPanelViewModel: ObservableObject {
     private func setupNotifications() {
         NotificationCenter.default.publisher(for: .switchHotKeyPressed)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.selectNext() }
+            .sink { [weak self] _ in
+                let t0 = CFAbsoluteTimeGetCurrent()
+                self?.selectNext()
+                Logger.info("=== notification -> selectNext took: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms ===")
+            }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .reverseSwitchHotKeyPressed)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.selectPrevious() }
+            .sink { [weak self] _ in
+                let t0 = CFAbsoluteTimeGetCurrent()
+                self?.selectPrevious()
+                Logger.info("=== notification -> selectPrevious took: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms ===")
+            }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .appSwitchHotKeyPressed)
@@ -107,11 +115,17 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func selectNext() {
-        guard !filteredWindows.isEmpty else { return }
+        Logger.info("==> selectNext called, selectedIndex: \(selectedIndex), count: \(filteredWindows.count)")
+        guard !filteredWindows.isEmpty else {
+            Logger.warning("==> selectNext: filteredWindows is empty!")
+            return
+        }
 
         let nextIndex = (selectedIndex + 1) % filteredWindows.count
         let nextWindow = filteredWindows[nextIndex]
         let currentWindow = filteredWindows[selectedIndex]
+
+        Logger.info("==> selectNext: \(currentWindow.appName) -> \(nextWindow.appName)")
 
         // 检测是否切换到不同应用（使用 appName 判断，更稳定）
         let isAppSwitch = currentWindow.appName != nextWindow.appName
@@ -125,9 +139,11 @@ class SwitchPanelViewModel: ObservableObject {
                 in: filteredWindows
             )
             selectedIndex = 0  // 切换后选中新应用的第一窗口
+            Logger.info("==> selectNext: app switch, new index: 0")
         } else {
             // 同一应用内切换或不启用功能时
             selectedIndex = nextIndex
+            Logger.info("==> selectNext: same app switch, new index: \(nextIndex)")
         }
 
         loadPreview(for: filteredWindows[selectedIndex])
@@ -242,7 +258,7 @@ class SwitchPanelViewModel: ObservableObject {
 
     private func refreshWindowsAfterDelay() {
         Task {
-            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms (从300ms减少，大幅提升响应速度)
             let fresh = windowManager.getAllWindows()
             windows = fresh
             applyFilter()
@@ -254,10 +270,36 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadVisiblePreviews() {
-        // T-063: 跳过已缓存的预览，避免重复生成
-        for window in filteredWindows.prefix(10) {
-            guard previewImages[window.id] == nil else { continue }
-            loadPreview(for: window)
+        // 使用多线程并行加载所有可见窗口的预览
+        let windowsToLoad = Array(filteredWindows.prefix(20))  // 增加到20个窗口
+        
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for window in windowsToLoad {
+                    // 跳过已有缓存的窗口
+                    if previewImages[window.id] != nil { continue }
+                    
+                    group.addTask { [weak self] in
+                        await self?.loadPreviewAsync(for: window)
+                    }
+                }
+            }
+        }
+    }
+    
+    // 异步加载单个预览（非阻塞）
+    private func loadPreviewAsync(for window: WindowModel) async {
+        // 如果已经有缓存，跳过
+        if previewImages[window.id] != nil { return }
+        
+        // 使用适中的预览尺寸
+        let size = CGSize(width: 200, height: 112)
+        
+        // 直接使用 PreviewGenerator 生成预览（内部已包含缓存逻辑）
+        if let image = await self.previewGenerator.generatePreview(for: window, size: size) {
+            await MainActor.run {
+                self.previewImages[window.id] = image
+            }
         }
     }
 

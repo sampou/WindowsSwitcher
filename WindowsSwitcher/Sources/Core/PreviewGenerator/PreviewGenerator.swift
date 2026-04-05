@@ -169,22 +169,30 @@ class PreviewGenerator {
     }
 
     func generatePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
+        let startTime = CFAbsoluteTimeGetCurrent()
+
         // 计算窗口内容哈希
         let windowHash = await cache.computeWindowHash(for: window)
-        
+
         // 检查缓存（包括内存和磁盘）
         if let cached = await cache.get(for: window.id, windowHash: windowHash) {
+            Logger.info("==> PreviewGenerator: cache HIT for \(window.appName), time: \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms")
             return cached
         }
 
+        Logger.info("==> PreviewGenerator: cache MISS for \(window.appName), generating...")
+
         return await withCheckedContinuation { continuation in
             queue.async {
+                let t0 = CFAbsoluteTimeGetCurrent()
                 let image = self.captureWindow(window.id, size: size)
+                Logger.info("==> PreviewGenerator: captureWindow took \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms for \(window.appName)")
                 // BUG-008: 先 resume，再异步写缓存，确保 continuation 在所有路径都被调用
                 continuation.resume(returning: image)
                 if let image {
                     Task { await self.cache.set(image, for: window.id, windowHash: windowHash) }
                 }
+                Logger.info("==> PreviewGenerator: TOTAL time: \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms for \(window.appName)")
             }
         }
     }

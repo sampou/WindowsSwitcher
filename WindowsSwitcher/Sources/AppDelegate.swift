@@ -266,7 +266,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hideSwitchPanel()
 
         // 3. 直接使用 WindowManager.shared 激活窗口（确保使用最新数据）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             // 刷新窗口列表确保获取最新的窗口信息
             let freshWindows = self?.windowManager.getAllWindows() ?? []
             if let freshWindow = freshWindows.first(where: { $0.id == selectedWindow.id }) {
@@ -293,14 +293,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey), identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
-            // 防止快速触发（100ms内不重复触发）
+            let t0 = CFAbsoluteTimeGetCurrent()
+            Logger.info("=== Option+Tab pressed ===")
+            // 移除节流限制，允许最快速度切换
             let now = Date()
-            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.1 else { return }
+            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.005 else { return }  // 5ms 节流
             self.lastHotKeyTime = now
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                let t1 = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                Logger.info("=== hotkey dispatch delay: \(t1)ms ===")
+                guard let self else { return }
                 if self.isPanelVisible {
+                    Logger.info("--> Panel visible, switching to next")
+                    let t2 = CFAbsoluteTimeGetCurrent()
                     NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
+                    Logger.info("=== notification post took: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms ===")
                 } else {
+                    Logger.info("--> Panel hidden, showing panel")
                     Task { @MainActor in self.showSwitchPanel() }
                 }
             }
@@ -311,9 +320,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey), identifier: "reverseSwitch")
         ) { [weak self] in
             guard let self else { return }
-            // 防止快速触发（100ms内不重复触发）
+            Logger.info("=== Option+Shift+Tab pressed ===")
+            // 快速切换：20ms 延迟（从100ms减少，大幅提升切换速度）
             let now = Date()
-            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.1 else { return }
+            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.02 else { return }
             self.lastHotKeyTime = now
             DispatchQueue.main.async {
                 if self.isPanelVisible {
@@ -438,6 +448,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - 切换面板
     @MainActor
     func showSwitchPanel(reversed: Bool = false) {
+        Logger.info("==> showSwitchPanel START")
+        let startTime = CFAbsoluteTimeGetCurrent()
+
         guard !isPanelVisible else { return }
         isPanelVisible = true
 
@@ -456,17 +469,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // 2. 实时获取所有窗口（包含最新的活跃时间）
+        let t0 = CFAbsoluteTimeGetCurrent()
         let windows = windowManager.getAllWindows()
+        Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
-        // 3. 按最近活跃时间排序（最新的在前）
-        let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+        // 3. 按最近活跃时间排序（最新的在前），并将当前前台应用的窗口放在最前面
+        let t1 = CFAbsoluteTimeGetCurrent()
+        // 获取当前前台应用的 bundleIdentifier
+        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
+        var sortedWindows: [WindowModel]
+        if let frontID = frontmostBundleID {
+            // 分离当前前台应用的窗口和其他窗口
+            let frontmostWindows = windows.filter { $0.bundleIdentifier == frontID }
+            let otherWindows = windows.filter { $0.bundleIdentifier != frontID }
+            // 前台窗口按活跃时间排序，其他窗口也按活跃时间排序
+            let sortedFront = frontmostWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+            let sortedOther = otherWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+            sortedWindows = sortedFront + sortedOther
+            Logger.info("==> sort windows: frontmost=\(frontID), frontmostCount=\(frontmostWindows.count)")
+        } else {
+            sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+        }
+        Logger.info("==> sort windows: \((CFAbsoluteTimeGetCurrent() - t1)*1000)ms")
+
+        let t2 = CFAbsoluteTimeGetCurrent()
         let vm = SwitchPanelViewModel(
             windows: sortedWindows,
             windowManager: windowManager,
             previewGenerator: previewGenerator,
             filterEngine: filterEngine
         )
+        Logger.info("==> SwitchPanelViewModel created: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms")
         if reversed { vm.selectPrevious() }
 
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口
@@ -475,9 +509,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 4. 启动定时器定期刷新窗口列表（实时更新）
         startWindowRefreshTimer(for: vm)
 
+        let t3 = CFAbsoluteTimeGetCurrent()
         let view = SwitchPanelView(viewModel: vm) { [weak self] in
             self?.hideSwitchPanel()
         }
+        Logger.info("==> SwitchPanelView created: \((CFAbsoluteTimeGetCurrent() - t3)*1000)ms")
+
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: DesignTokens.Panel.width, height: DesignTokens.Panel.height),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled],
@@ -496,27 +533,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         PanelAnimator.show(panel)
         switchPanelWindow = panel
 
-        Logger.info("Switch panel shown, \(sortedWindows.count) windows, sorted by lastActiveTime")
+        let totalTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        Logger.info("==> showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
     }
 
-    // 定时刷新窗口列表
+    // 定时刷新窗口列表 - 已禁用，避免快速切换时产生卡顿
     private var windowRefreshTimer: Timer?
 
     private func startWindowRefreshTimer(for vm: SwitchPanelViewModel) {
-        // 停止之前的定时器
-        windowRefreshTimer?.invalidate()
-
-        // 每 200ms 刷新一次窗口列表，确保实时更新
-        windowRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self, weak vm] _ in
-            guard let self, let vm = self.switchPanelViewModel else { return }
-            // 刷新窗口列表
-            let freshWindows = self.windowManager.getAllWindows()
-            let sorted = freshWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-
-            Task { @MainActor in
-                vm.updateWindows(sorted)
-            }
-        }
+        // 已禁用：不再定期刷新窗口列表，避免影响切换流畅度
+        // 窗口列表会在下次显示面板时自动刷新
     }
 
     private func stopWindowRefreshTimer() {

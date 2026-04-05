@@ -23,12 +23,14 @@ struct WindowItemView: View {
             .frame(width: DesignTokens.WindowItem.width, height: DesignTokens.WindowItem.height)
             .background(itemBackground)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem))
-            // 只保留边框，移除所有动画以提升性能
+            // 移除所有动画以提升性能
             .overlay(
                 RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem)
                     .stroke(isSelected ? DesignTokens.Colors.accent : Color.clear, lineWidth: 2)
             )
-            .padding(20)  // 直接添加 padding 控制间距
+            .padding(20)
+            // 禁用 hover 动画
+            .animation(.none, value: isHovered)
 
             if isHovered { actionButtons }
         }
@@ -53,7 +55,7 @@ struct WindowItemView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fill)
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
-                    .transition(.opacity.animation(DesignTokens.Animation.previewLoad))
+                    // 移除过渡动画以提升性能
             } else {
                 Image(nsImage: window.appIcon)
                     .resizable()
