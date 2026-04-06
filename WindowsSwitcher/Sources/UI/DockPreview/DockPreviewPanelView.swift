@@ -200,29 +200,46 @@ struct DockPreviewItemView: View {
 
     @State private var previewImage: NSImage?
 
-    // 获取预览图尺寸（优先使用配置）
-    private var previewSize: CGSize {
-        let config = ConfigManager.shared.config.dockPreview
-        return CGSize(width: config.previewWidth, height: config.previewHeight)
-    }
+    // 与切换器面板保持一致的尺寸
+    private var itemWidth: CGFloat { DesignTokens.DockPreview.itemWidth }
+    private var itemHeight: CGFloat { DesignTokens.DockPreview.itemHeight + 36 } // 额外空间给标题
+    private var previewWidth: CGFloat { DesignTokens.DockPreview.previewWidth }
+    private var previewHeight: CGFloat { DesignTokens.DockPreview.previewHeight }
+    private var iconSize: CGFloat { 20 }
+    private var iconCornerRadius: CGFloat { 4 }
 
     var body: some View {
-        VStack(spacing: DesignTokens.Spacing.xs) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             // 预览图
             previewContent
-                .frame(
-                    width: previewSize.width,
-                    height: previewSize.height
-                )
+                .frame(width: previewWidth, height: previewHeight)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.DockPreview.previewCornerRadius))
 
-            // 窗口标题
-            Text(item.windowTitle)
-                .font(.system(size: DesignTokens.DockPreview.titleFontSize))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+            // 应用信息（与切换器面板一致）
+            HStack(spacing: DesignTokens.Spacing.xs) {
+                Image(nsImage: item.appIcon)
+                    .resizable()
+                    .frame(width: iconSize, height: iconSize)
+                    .clipShape(RoundedRectangle(cornerRadius: iconCornerRadius))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.appName)
+                        .font(.system(size: DesignTokens.DockPreview.titleFontSize, weight: .semibold))
+                        .foregroundStyle(DesignTokens.Colors.label)
+                        .lineLimit(1)
+
+                    if !item.windowTitle.isEmpty && item.windowTitle != item.appName {
+                        Text(item.windowTitle)
+                            .font(.system(size: DesignTokens.DockPreview.titleFontSize - 1))
+                            .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding(.horizontal, 2)
         }
         .padding(DesignTokens.Spacing.sm)
+        .frame(width: itemWidth, height: itemHeight)
         .background(
             RoundedRectangle(cornerRadius: DesignTokens.DockPreview.itemCornerRadius)
                 .fill(backgroundColor)
@@ -272,7 +289,7 @@ struct DockPreviewItemView: View {
             let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
             previewImage = await generator.generatePreview(
                 for: item.windowModel,
-                size: previewSize
+                size: CGSize(width: previewWidth, height: previewHeight)
             )
         }
     }
@@ -283,6 +300,7 @@ struct DockPreviewItem: Identifiable {
     let id: UUID
     let windowModel: WindowModel
     let windowTitle: String
+    let appName: String
     let appIcon: NSImage
 
     // 共享的 PreviewGenerator 引用
@@ -292,6 +310,7 @@ struct DockPreviewItem: Identifiable {
         self.id = UUID()
         self.windowModel = windowModel
         self.windowTitle = windowModel.windowTitle.isEmpty ? windowModel.appName : windowModel.windowTitle
+        self.appName = windowModel.appName
         self.appIcon = windowModel.appIcon
         self.previewGenerator = nil
     }
