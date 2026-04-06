@@ -3,18 +3,56 @@ import AppKit
 
 struct SwitchPanelView: View {
     @ObservedObject var viewModel: SwitchPanelViewModel
+    @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
 
-    // 每行显示的窗口数 - 根据面板宽度动态计算，确保每个窗口有足够空间
+    // 动态获取预览尺寸
+    private var previewSize: PreviewSize {
+        configManager.config.appearance.previewSize
+    }
+
+    // 每行显示的窗口数 - 自适应
+    private var columnCount: Int {
+        // 如果用户设置了固定列数，使用设置值
+        if configManager.config.appearance.switcherColumns > 0 {
+            return configManager.config.appearance.switcherColumns
+        }
+
+        // 自动计算
+        let itemWidth = previewSize.itemDimensions.width
+        let desiredSpacing: CGFloat = 16
+        let maxPanelWidth: CGFloat = 1400
+
+        return max(3, min(8, Int((maxPanelWidth - DesignTokens.Panel.padding * 2) / (itemWidth + desiredSpacing))))
+    }
+
     private var columns: [GridItem] {
-        let panelWidth = DesignTokens.Panel.width
-        let itemWidth = DesignTokens.WindowItem.width
-        let desiredSpacing: CGFloat = 30  // 期望的间距
-        // 计算可以容纳的列数：(面板宽度 + 间距) / (窗口宽度 + 间距)
-        let columnCount = max(3, min(6, Int((panelWidth + desiredSpacing) / (itemWidth + desiredSpacing))))
+        let itemWidth = previewSize.itemDimensions.width
+        let desiredSpacing: CGFloat = 16
         return (0..<columnCount).map { _ in
             GridItem(.fixed(itemWidth), spacing: desiredSpacing)
         }
+    }
+
+    // 面板自适应宽度
+    private var panelWidth: CGFloat {
+        let itemWidth = previewSize.itemDimensions.width
+        let desiredSpacing: CGFloat = 16
+        let minWidth: CGFloat = 400
+        let maxWidth: CGFloat = 1400
+        let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + DesignTokens.Panel.padding * 2
+        return min(max(contentWidth, minWidth), maxWidth)
+    }
+
+    // 面板自适应高度
+    private var panelHeight: CGFloat {
+        let itemHeight = previewSize.itemDimensions.height
+        let windowCount = viewModel.filteredWindows.count
+        let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
+        let minHeight: CGFloat = 300
+        let maxHeight: CGFloat = 800
+        let contentHeight = CGFloat(rowCount) * (itemHeight + 16) + DesignTokens.Panel.padding * 2 + 40 // 40是底部快捷栏
+        return min(max(contentHeight, minHeight), maxHeight)
     }
 
     // 用于自动滚动到选中项
@@ -31,7 +69,7 @@ struct SwitchPanelView: View {
                 .padding(DesignTokens.Panel.padding)
         }
         // 增大面板尺寸以显示更多窗口
-        .frame(width: DesignTokens.Panel.width, height: DesignTokens.Panel.height)
+        .frame(width: panelWidth, height: panelHeight)
         .shadow(color: .black.opacity(0.25), radius: DesignTokens.Panel.shadowRadius,
                 x: 0, y: DesignTokens.Panel.shadowY)
         .background(KeyEventHandler(
@@ -43,7 +81,9 @@ struct SwitchPanelView: View {
                 if viewModel.filteredWindows.indices.contains(idx) {
                     viewModel.selectedIndex = idx
                 }
-            }
+            },
+            onMoveUp: { viewModel.selectUp() },
+            onMoveDown: { viewModel.selectDown() }
         ))
         .onChange(of: viewModel.selectedIndex) { (newIndex: Int) in
             // 简化：只在有效索引时设置
@@ -147,6 +187,8 @@ struct KeyEventHandler: NSViewRepresentable {
     let onConfirm: () -> Void
     let onDismiss: () -> Void
     var onSelectIndex: ((Int) -> Void)? = nil
+    var onMoveUp: (() -> Void)? = nil    // 上方向键
+    var onMoveDown: (() -> Void)? = nil  // 下方向键
 
     func makeNSView(context: Context) -> KeyCatchView {
         let view = KeyCatchView()
@@ -155,6 +197,8 @@ struct KeyEventHandler: NSViewRepresentable {
         view.onConfirm = onConfirm
         view.onDismiss = onDismiss
         view.onSelectIndex = onSelectIndex
+        view.onMoveUp = onMoveUp
+        view.onMoveDown = onMoveDown
         return view
     }
 
@@ -164,6 +208,8 @@ struct KeyEventHandler: NSViewRepresentable {
         nsView.onConfirm = onConfirm
         nsView.onDismiss = onDismiss
         nsView.onSelectIndex = onSelectIndex
+        nsView.onMoveUp = onMoveUp
+        nsView.onMoveDown = onMoveDown
     }
 }
 
@@ -173,23 +219,32 @@ class KeyCatchView: NSView {
     var onConfirm: (() -> Void)?
     var onDismiss: (() -> Void)?
     var onSelectIndex: ((Int) -> Void)?
+    var onMoveUp: (() -> Void)?
+    var onMoveDown: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
         let chars = event.charactersIgnoringModifiers ?? ""
         // Escape 没有 specialKey，用 keyCode 53
-        if event.keyCode == 53 { onDismiss?(); return }
+        if event.keyCode == 53 {
+            Logger.info("==> ESC pressed, hiding panel")
+            onDismiss?(); return
+        }
         switch event.specialKey {
         case .tab:
             if event.modifierFlags.contains(.shift) { onPrev?() }
             else { onNext?() }
         case .carriageReturn, .enter, .newline:
             onConfirm?()
-        case .leftArrow, .downArrow:
-            onPrev?()
-        case .rightArrow, .upArrow:
-            onNext?()
+        case .leftArrow:
+            onPrev?()  // 左：上一项
+        case .rightArrow:
+            onNext?()  // 右：下一项
+        case .upArrow:
+            onMoveUp?()  // 上：上一行同列
+        case .downArrow:
+            onMoveDown?()  // 下：下一行同列
         default:
             if let n = Int(chars), (1...9).contains(n) {
                 onSelectIndex?(n - 1)

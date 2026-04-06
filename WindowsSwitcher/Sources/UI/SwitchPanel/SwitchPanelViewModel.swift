@@ -176,6 +176,74 @@ class SwitchPanelViewModel: ObservableObject {
         loadPreview(for: filteredWindows[selectedIndex])
     }
 
+    /// 上方向键：移动到上一行同列位置
+    func selectUp() {
+        guard !filteredWindows.isEmpty else { return }
+
+        // 获取列数
+        let columnCount = getColumnCount()
+        guard columnCount > 0 else { return }
+
+        let currentRow = selectedIndex / columnCount
+        let currentCol = selectedIndex % columnCount
+
+        if currentRow == 0 {
+            // 已在第一行，不做处理或循环到最后一行
+            return
+        }
+
+        // 计算上一行同列位置
+        let targetIndex = (currentRow - 1) * columnCount + currentCol
+
+        // 边界检查：确保目标索引有效
+        if targetIndex < filteredWindows.count {
+            selectedIndex = targetIndex
+            loadPreview(for: filteredWindows[selectedIndex])
+        }
+    }
+
+    /// 下方向键：移动到下一行同列位置
+    func selectDown() {
+        guard !filteredWindows.isEmpty else { return }
+
+        // 获取列数
+        let columnCount = getColumnCount()
+        guard columnCount > 0 else { return }
+
+        let totalRows = (filteredWindows.count + columnCount - 1) / columnCount
+        let currentRow = selectedIndex / columnCount
+        let currentCol = selectedIndex % columnCount
+
+        if currentRow >= totalRows - 1 {
+            // 已在最后一行，不做处理
+            return
+        }
+
+        // 计算下一行同列位置
+        let targetIndex = (currentRow + 1) * columnCount + currentCol
+
+        // 边界检查：确保目标索引有效
+        if targetIndex < filteredWindows.count {
+            selectedIndex = targetIndex
+            loadPreview(for: filteredWindows[selectedIndex])
+        }
+    }
+
+    /// 获取当前列数
+    private func getColumnCount() -> Int {
+        let previewSize = ConfigManager.shared.config.appearance.previewSize
+        let itemWidth = previewSize.itemDimensions.width
+        let maxPanelWidth: CGFloat = 1400
+
+        var columnCount: Int
+        if ConfigManager.shared.config.appearance.switcherColumns > 0 {
+            columnCount = ConfigManager.shared.config.appearance.switcherColumns
+        } else {
+            columnCount = max(3, min(8, Int((maxPanelWidth - 24) / (itemWidth + 16))))
+        }
+        return columnCount
+    }
+
     /// 根据应用切换重新排列窗口顺序
     /// 排列规则：
     /// 1. 目标应用的窗口在最前（按活跃度降序）

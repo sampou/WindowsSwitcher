@@ -8,6 +8,30 @@ enum SortOrder: String, Codable, Equatable, CaseIterable {
     case recent, appName, windowTitle, appGroup
 }
 
+enum PreviewSize: String, Codable, Equatable, CaseIterable {
+    case small = "小"
+    case medium = "中"
+    case large = "大"
+
+    // 预览窗口尺寸
+    var dimensions: (width: CGFloat, height: CGFloat) {
+        switch self {
+        case .small: return (80, 45)
+        case .medium: return (114, 64)
+        case .large: return (160, 90)
+        }
+    }
+
+    // 窗口项整体尺寸
+    var itemDimensions: (width: CGFloat, height: CGFloat) {
+        switch self {
+        case .small: return (100, 90)
+        case .medium: return (130, 110)
+        case .large: return (180, 150)
+        }
+    }
+}
+
 struct HotKeyConfig: Codable, Equatable {
     var switchKeyCode: UInt32 = 48       // Tab
     var switchModifiers: UInt32 = 256    // Cmd
@@ -21,6 +45,8 @@ struct AppearanceConfig: Codable, Equatable {
     var panelCornerRadius: Double = 12
     var previewWidth: Double = 640
     var previewHeight: Double = 360
+    var previewSize: PreviewSize = .medium  // 预览窗口大小
+    var switcherColumns: Int = 0  // 切换器每行列数，0表示自动计算
     var theme: AppTheme = .auto
 }
 

@@ -474,24 +474,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let windows = windowManager.getAllWindows()
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
-        // 3. 按最近活跃时间排序（最新的在前），并将当前前台应用的窗口放在最前面
+        // 3. 按最近活跃时间排序（所有窗口统一排序，不按应用分组）
         let t1 = CFAbsoluteTimeGetCurrent()
-        // 获取当前前台应用的 bundleIdentifier
-        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
 
-        var sortedWindows: [WindowModel]
-        if let frontID = frontmostBundleID {
-            // 分离当前前台应用的窗口和其他窗口
-            let frontmostWindows = windows.filter { $0.bundleIdentifier == frontID }
-            let otherWindows = windows.filter { $0.bundleIdentifier != frontID }
-            // 前台窗口按活跃时间排序，其他窗口也按活跃时间排序
-            let sortedFront = frontmostWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-            let sortedOther = otherWindows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-            sortedWindows = sortedFront + sortedOther
-            Logger.info("==> sort windows: frontmost=\(frontID), frontmostCount=\(frontmostWindows.count)")
-        } else {
-            sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-        }
+        // 打印排序结果日志
+        let first3 = sortedWindows.prefix(3).map { "\($0.appName):\($0.lastActiveTime.timeIntervalSinceNow)s" }
+        Logger.info("==> sort result by lastActiveTime, first3: \(first3)")
         Logger.info("==> sort windows: \((CFAbsoluteTimeGetCurrent() - t1)*1000)ms")
 
         let t2 = CFAbsoluteTimeGetCurrent()
@@ -516,8 +505,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Logger.info("==> SwitchPanelView created: \((CFAbsoluteTimeGetCurrent() - t3)*1000)ms")
 
+        // 创建面板，使用较大尺寸以适应不同预览大小
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: DesignTokens.Panel.width, height: DesignTokens.Panel.height),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 400),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled],
             backing: .buffered,
             defer: false
@@ -527,10 +517,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
-        panel.contentView = NSHostingView(rootView: view)
+
+        // 先创建 hostingView 并添加到面板
+        let hostingView = NSHostingView(rootView: view)
+        panel.contentView = hostingView
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+
+        // 强制布局后获取正确大小
+        hostingView.layoutSubtreeIfNeeded()
+        let fittingSize = hostingView.fittingSize
+        let newSize = NSSize(width: max(400, fittingSize.width), height: max(300, fittingSize.height))
+        panel.setContentSize(newSize)
         panel.center()
+
         PanelAnimator.show(panel)
         switchPanelWindow = panel
 
@@ -546,10 +546,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // 批量预加载所有窗口缩略图
     private func preloadAllPreviews(windows: [WindowModel], viewModel: SwitchPanelViewModel) {
-        let previewSize = CGSize(
-            width: ConfigManager.shared.config.dockPreview.previewWidth,
-            height: ConfigManager.shared.config.dockPreview.previewHeight
-        )
+        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
 
         // 并发批量生成所有缩略图
         Task {

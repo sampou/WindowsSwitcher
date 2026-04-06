@@ -80,56 +80,23 @@ struct AppearanceSettingsView: View {
                 .pickerStyle(.segmented)
             }
 
-            Section("面板") {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    HStack {
-                        Text("透明度")
-                        Spacer()
-                        Text("\(Int(config.config.appearance.panelOpacity * 100))%")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $config.config.appearance.panelOpacity, in: 0.5...1.0, step: 0.05)
-                        .tint(DesignTokens.Colors.accent)
+            Section("预览窗口") {
+                Picker("预览大小", selection: $config.config.appearance.previewSize) {
+                    Text("小").tag(PreviewSize.small)
+                    Text("中").tag(PreviewSize.medium)
+                    Text("大").tag(PreviewSize.large)
                 }
+                .pickerStyle(.segmented)
 
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    HStack {
-                        Text("圆角半径")
-                        Spacer()
-                        Text("\(Int(config.config.appearance.panelCornerRadius)) pt")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $config.config.appearance.panelCornerRadius, in: 4...24, step: 2)
-                        .tint(DesignTokens.Colors.accent)
+                Picker("每行列数", selection: $config.config.appearance.switcherColumns) {
+                    Text("自动").tag(0)
+                    Text("3列").tag(3)
+                    Text("4列").tag(4)
+                    Text("5列").tag(5)
+                    Text("6列").tag(6)
+                    Text("8列").tag(8)
                 }
-            }
-
-            Section("预览尺寸") {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    HStack {
-                        Text("宽度")
-                        Spacer()
-                        Text("\(Int(config.config.appearance.previewWidth)) px")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $config.config.appearance.previewWidth, in: 320...1280, step: 80)
-                        .tint(DesignTokens.Colors.accent)
-                }
-
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    HStack {
-                        Text("高度")
-                        Spacer()
-                        Text("\(Int(config.config.appearance.previewHeight)) px")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $config.config.appearance.previewHeight, in: 180...720, step: 45)
-                        .tint(DesignTokens.Colors.accent)
-                }
+                .pickerStyle(.segmented)
             }
         }
         .formStyle(.grouped)
@@ -144,20 +111,9 @@ struct BehaviorSettingsView: View {
 
     var body: some View {
         Form {
-            Section("窗口过滤") {
+            Section("窗口显示") {
                 Toggle("显示最小化窗口", isOn: $config.config.behavior.showMinimizedWindows)
                 Toggle("显示隐藏窗口", isOn: $config.config.behavior.showHiddenWindows)
-            }
-
-            Section("排序") {
-                Picker("排序方式", selection: $config.config.behavior.sortOrder) {
-                    Text("最近使用").tag(SortOrder.recent)
-                    Text("应用名称").tag(SortOrder.appName)
-                    Text("窗口标题").tag(SortOrder.windowTitle)
-                    Text("应用分组").tag(SortOrder.appGroup)
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
             }
 
             Section("程序坞预览") {
@@ -192,32 +148,6 @@ struct BehaviorSettingsView: View {
                         }
                         .pickerStyle(.segmented)
                     }
-                }
-            }
-
-            Section("延迟") {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    HStack {
-                        Text("面板显示延迟")
-                        Spacer()
-                        Text(String(format: "%.0f ms", config.config.behavior.panelDisplayDelay * 1000))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $config.config.behavior.panelDisplayDelay, in: 0...0.5, step: 0.05)
-                        .tint(DesignTokens.Colors.accent)
-                }
-
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                    HStack {
-                        Text("预览刷新间隔")
-                        Spacer()
-                        Text(String(format: "%.0f ms", config.config.behavior.previewUpdateInterval * 1000))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(value: $config.config.behavior.previewUpdateInterval, in: 0.05...0.5, step: 0.05)
-                        .tint(DesignTokens.Colors.accent)
                 }
             }
         }

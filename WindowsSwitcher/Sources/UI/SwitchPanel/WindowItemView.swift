@@ -12,15 +12,36 @@ struct WindowItemView: View {
     let onMinimize: () -> Void
 
     @State private var isHovered = false
+    @ObservedObject private var configManager = ConfigManager.shared
+
+    // 动态获取预览尺寸
+    private var previewSize: PreviewSize {
+        configManager.config.appearance.previewSize
+    }
+    private var itemWidth: CGFloat {
+        previewSize.itemDimensions.width
+    }
+
+    private var itemHeight: CGFloat {
+        previewSize.itemDimensions.height
+    }
+
+    private var previewWidth: CGFloat {
+        previewSize.dimensions.width
+    }
+
+    private var previewHeight: CGFloat {
+        previewSize.dimensions.height
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                 previewArea
                 appInfo
             }
-            .padding(DesignTokens.Spacing.lg)
-            .frame(width: DesignTokens.WindowItem.width, height: DesignTokens.WindowItem.height)
+            .padding(DesignTokens.Spacing.sm)
+            .frame(width: itemWidth, height: itemHeight)
             .background(itemBackground)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem))
             // 移除所有动画以提升性能
@@ -51,11 +72,11 @@ struct WindowItemView: View {
                 .fill(DesignTokens.Colors.secondaryBackground)
 
             if let image = previewImage {
+                // 根据实际窗口比例显示
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
-                    // 移除过渡动画以提升性能
             } else {
                 Image(nsImage: window.appIcon)
                     .resizable()
@@ -84,7 +105,18 @@ struct WindowItemView: View {
                 }
             }
         }
-        .frame(width: DesignTokens.WindowItem.previewWidth, height: DesignTokens.WindowItem.previewHeight)
+        // 使用实际窗口比例显示
+        .aspectRatio(windowAspectRatio, contentMode: .fit)
+        .frame(maxWidth: previewWidth, maxHeight: previewHeight)
+        .frame(minWidth: 60, minHeight: 40)
+    }
+
+    // 计算实际窗口的宽高比
+    private var windowAspectRatio: CGFloat {
+        let width = window.frame.width
+        let height = window.frame.height
+        guard width > 0 && height > 0 else { return 16.0 / 9.0 }
+        return width / height
     }
 
     // MARK: - 应用信息

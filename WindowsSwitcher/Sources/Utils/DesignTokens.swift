@@ -51,11 +51,11 @@ struct DesignTokens {
     // ============================================
     struct Spacing {
         static let xs: CGFloat = 4
-        static let sm: CGFloat = 8
-        static let md: CGFloat = 12
-        static let lg: CGFloat = 16
-        static let xl: CGFloat = 24
-        static let xxl: CGFloat = 32
+        static let sm: CGFloat = 6
+        static let md: CGFloat = 10
+        static let lg: CGFloat = 12
+        static let xl: CGFloat = 16
+        static let xxl: CGFloat = 24
     }
 
     // ============================================
@@ -95,9 +95,9 @@ struct DesignTokens {
     // 面板规格
     // ============================================
     struct Panel {
-        static let width: CGFloat = 1200  // 进一步增大宽度
-        static let height: CGFloat = 600  // 同时增大高度
-        static let padding: CGFloat = 16
+        static let width: CGFloat = 1100  // 减小宽度
+        static let height: CGFloat = 550  // 减小高度
+        static let padding: CGFloat = 12  // 减小内边距
         static let cornerRadius: CGFloat = 10
         static let shadowRadius: CGFloat = 20
         static let shadowY: CGFloat = 8
@@ -107,16 +107,16 @@ struct DesignTokens {
     // 窗口项规格
     // ============================================
     struct WindowItem {
-        static let width: CGFloat = 140
-        static let height: CGFloat = 140
-        static let iconSize: CGFloat = 32
-        static let iconCornerRadius: CGFloat = 8
-        static let previewWidth: CGFloat = 124
-        static let previewHeight: CGFloat = 70  // 16:9
-        static let previewCornerRadius: CGFloat = 6
-        static let spacing: CGFloat = 35  // 增大间距防止重叠
-        static let titleFontSize: CGFloat = 13
-        static let subtitleFontSize: CGFloat = 11
+        static let width: CGFloat = 130
+        static let height: CGFloat = 130
+        static let iconSize: CGFloat = 28
+        static let iconCornerRadius: CGFloat = 6
+        static let previewWidth: CGFloat = 114
+        static let previewHeight: CGFloat = 64  // 16:9
+        static let previewCornerRadius: CGFloat = 5
+        static let spacing: CGFloat = 20  // 减小间距
+        static let titleFontSize: CGFloat = 12
+        static let subtitleFontSize: CGFloat = 10
     }
 
     // ============================================

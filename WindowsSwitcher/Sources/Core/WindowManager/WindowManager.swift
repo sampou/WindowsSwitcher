@@ -32,7 +32,11 @@ class WindowManager: WindowManagerProtocol {
     // 窗口列表缓存（避免频繁调用 CGWindowListCopyWindowInfo）
     private var cachedWindows: [WindowModel] = []
     private var cacheTimestamp: Date?
-    private let cacheTTL: TimeInterval = 0.1 // 100ms 缓存
+    private let cacheTTL: TimeInterval = 0.3 // 300ms 缓存，支持快速切换
+
+    // 应用信息缓存（PID -> (bundleID, icon, isHidden)）
+    private var appInfoCache: [pid_t: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)] = [:]
+    private let appInfoCacheLock = NSLock()
 
     private init() {}
 
@@ -85,10 +89,10 @@ class WindowManager: WindowManagerProtocol {
             return
         }
 
-        // 快速激活应用（核心方法）
+        // 激活应用
         let activateResult = app.activate(options: .activateIgnoringOtherApps)
         if !activateResult {
-            Logger.warning("NSRunningApplication.activate returned false")
+            Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
         }
 
         // 更新窗口的 lastActiveTime 为当前时间，确保排序正确
@@ -113,13 +117,10 @@ class WindowManager: WindowManagerProtocol {
             cachedWindows = cachedWindows.map { $0.id == window.id ? cachedWindow : $0 }
         }
 
-        // 简化窗口激活：只做必要操作，减少延迟
-        // 直接 raise 窗口，跳过不必要的 AX API 调用
-        DispatchQueue.main.async { [weak self] in
+        // 异步 raise 窗口，不要阻塞主线程
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
             if let win = self?.axWindow(for: window) {
-                // 设置焦点（异步执行，不阻塞）
                 AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                // raise 窗口
                 AXUIElementPerformAction(win, kAXRaiseAction as CFString)
             }
         }
@@ -151,31 +152,9 @@ class WindowManager: WindowManagerProtocol {
         // BUG-003: 先移除旧 observer，防止重复注册
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers.removeAll()
-        let token = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil, queue: .main
-        ) { [weak self] notification in
-            guard let self else { return }
-            // BUG-011: 更新被激活应用的所有窗口的 lastActiveTime
-            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
-                let now = Date()
-                for (id, model) in self.windowCache where model.ownerPID == app.processIdentifier {
-                    // 重建 WindowModel 更新时间戳
-                    let updated = WindowModel(
-                        id: model.id, appName: model.appName,
-                        bundleIdentifier: model.bundleIdentifier,
-                        windowTitle: model.windowTitle, appIcon: model.appIcon,
-                        frame: model.frame, isMinimized: model.isMinimized,
-                        isHidden: model.isHidden, isOnScreen: model.isOnScreen,
-                        lastActiveTime: now, windowLayer: model.windowLayer,
-                        ownerPID: model.ownerPID
-                    )
-                    self.windowCache[id] = updated
-                    handler(.windowStateChanged(updated))
-                }
-            }
-        }
-        observers.append(token)
+
+        // 不再自动更新 lastActiveTime，只保留窗口变化的通知
+        // lastActiveTime 只在通过切换器激活窗口时更新（窗口级别）
     }
 
     private func buildWindowModel(from info: [String: Any]) -> WindowModel? {
@@ -198,13 +177,24 @@ class WindowManager: WindowManagerProtocol {
             height: boundsDict["Height"] ?? 0
         )
 
-        let app = NSRunningApplication(processIdentifier: ownerPID)
-        let bundleID = app?.bundleIdentifier ?? ""
-        let icon = app?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
+        // 使用应用信息缓存，避免重复调用 NSRunningApplication
+        let appInfo: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)
+        if let cached = appInfoCache[ownerPID] {
+            appInfo = cached
+        } else {
+            let app = NSRunningApplication(processIdentifier: ownerPID)
+            let bundleID = app?.bundleIdentifier ?? ""
+            let icon = app?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
+            let isHidden = app?.isHidden ?? false
+            appInfo = (bundleID, icon, isHidden)
+            appInfoCacheLock.lock()
+            appInfoCache[ownerPID] = appInfo
+            appInfoCacheLock.unlock()
+        }
 
         // BUG-001: 通过 AX API 读取最小化状态，降级方案：isOnScreen=false && layer==0
-        let isMinimized = Self.axIsMinimized(pid: ownerPID, windowTitle: windowTitle)
-            ?? (!isOnScreen && layer == 0)
+        // 禁用 AX API 调用以提升性能，使用降级方案
+        let isMinimized = !isOnScreen && layer == 0
 
         // BUG-011: lastActiveTime 始终为 Date()，无法反映真实 LRU 顺序
         // 改用 windowCache 中已有的时间戳，首次出现时才用 Date()
@@ -213,12 +203,12 @@ class WindowManager: WindowManagerProtocol {
         return WindowModel(
             id: windowID,
             appName: appName,
-            bundleIdentifier: bundleID,
+            bundleIdentifier: appInfo.bundleIdentifier,
             windowTitle: windowTitle,
-            appIcon: icon,
+            appIcon: appInfo.icon,
             frame: frame,
             isMinimized: isMinimized,
-            isHidden: app?.isHidden ?? false,
+            isHidden: appInfo.isHidden,
             isOnScreen: isOnScreen,
             lastActiveTime: lastActive,
             windowLayer: layer,
