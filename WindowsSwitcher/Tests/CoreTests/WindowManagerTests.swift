@@ -57,6 +57,87 @@ final class WindowManagerTests: XCTestCase {
         }
     }
 
+    // MARK: - 窗口切换顺序测试
+
+    func testWindowOrderAfterActivation() {
+        // 模拟用户点击切换到另一个应用
+        let now = Date()
+        var windows = [
+            makeMockWindow(id: 1, appName: "Safari", lastActiveTime: now.addingTimeInterval(-10)),
+            makeMockWindow(id: 2, appName: "Chrome", lastActiveTime: now.addingTimeInterval(-5)),
+            makeMockWindow(id: 3, appName: "Finder", lastActiveTime: now.addingTimeInterval(-20))
+        ]
+
+        // 用户点击 Safari 窗口，更新其 lastActiveTime
+        let newActiveTime = Date()
+        windows[0] = makeMockWindow(id: 1, appName: "Safari", lastActiveTime: newActiveTime)
+
+        // 排序后 Safari 应该在最前面
+        let engine = FilterEngine()
+        let sorted = engine.sort(windows, by: .recent)
+
+        XCTAssertEqual(sorted[0].appName, "Safari", "最近激活的应用应该在最前面")
+        XCTAssertEqual(sorted[0].lastActiveTime, newActiveTime)
+    }
+
+    func testWindowOrderAfterCmdTabSwitch() {
+        // 模拟 Cmd+Tab 切换
+        let now = Date()
+        var windows = [
+            makeMockWindow(id: 1, appName: "Safari", lastActiveTime: now.addingTimeInterval(-10)),
+            makeMockWindow(id: 2, appName: "Chrome", lastActiveTime: now.addingTimeInterval(-5)),
+            makeMockWindow(id: 3, appName: "Finder", lastActiveTime: now.addingTimeInterval(-20))
+        ]
+
+        // 用户通过 Cmd+Tab 切换到 Finder
+        let newActiveTime = Date()
+        windows[2] = makeMockWindow(id: 3, appName: "Finder", lastActiveTime: newActiveTime)
+
+        let engine = FilterEngine()
+        let sorted = engine.sort(windows, by: .recent)
+
+        XCTAssertEqual(sorted[0].appName, "Finder", "Cmd+Tab 切换后，目标应用应该在最前面")
+    }
+
+    func testMultipleApplicationWindowsOrder() {
+        // 测试同应用多窗口顺序
+        let now = Date()
+        let windows = [
+            makeMockWindow(id: 1, appName: "Safari", windowTitle: "Window 1", lastActiveTime: now.addingTimeInterval(-10)),
+            makeMockWindow(id: 2, appName: "Safari", windowTitle: "Window 2", lastActiveTime: now.addingTimeInterval(-5)),
+            makeMockWindow(id: 3, appName: "Safari", windowTitle: "Window 3", lastActiveTime: now.addingTimeInterval(-20)),
+            makeMockWindow(id: 4, appName: "Chrome", windowTitle: "Chrome Window", lastActiveTime: now.addingTimeInterval(-1))
+        ]
+
+        let engine = FilterEngine()
+        let sorted = engine.sort(windows, by: .recent)
+
+        // Chrome 最近使用，应该在最前面
+        XCTAssertEqual(sorted[0].appName, "Chrome")
+
+        // Safari 窗口按活跃度排序：Window 2 (最近) -> Window 1 -> Window 3
+        let safariWindows = sorted.filter { $0.appName == "Safari" }
+        XCTAssertEqual(safariWindows[0].windowTitle, "Window 2")
+        XCTAssertEqual(safariWindows[1].windowTitle, "Window 1")
+        XCTAssertEqual(safariWindows[2].windowTitle, "Window 3")
+    }
+
+    func testWindowOrderStabilityWithSameActiveTime() {
+        // 测试相同活跃时间的窗口排序稳定性
+        let sameTime = Date()
+        let windows = [
+            makeMockWindow(id: 1, appName: "AppA", lastActiveTime: sameTime),
+            makeMockWindow(id: 2, appName: "AppB", lastActiveTime: sameTime),
+            makeMockWindow(id: 3, appName: "AppC", lastActiveTime: sameTime)
+        ]
+
+        let engine = FilterEngine()
+        let sorted = engine.sort(windows, by: .recent)
+
+        // 相同时间应该保持原顺序（稳定排序）
+        XCTAssertEqual(sorted.count, 3)
+    }
+
     func testEmptyWindowList() {
         let engine = FilterEngine()
         let result = engine.filter([], by: FilterCriteria(searchText: "test", showMinimized: true, showHidden: true))

@@ -583,7 +583,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let previewSize = ConfigManager.shared.config.appearance.previewSize
         let itemWidth = previewSize.itemDimensions.width
         let itemHeight = previewSize.itemDimensions.height
-        let columnCount = max(3, min(8, (sortedWindows.count + 2) / 3))
+
+        // 计算 columnCount（与 SwitchPanelView 保持一致）
+        let columnCount: Int
+        if ConfigManager.shared.config.appearance.switcherColumns > 0 {
+            columnCount = ConfigManager.shared.config.appearance.switcherColumns
+        } else {
+            let maxPanelWidth: CGFloat = 1400
+            columnCount = max(3, min(8, Int((maxPanelWidth - DesignTokens.Panel.padding * 2) / (itemWidth + 16))))
+        }
+
         let rowCount = max(1, (sortedWindows.count + columnCount - 1) / columnCount)
 
         // 获取屏幕尺寸
@@ -598,9 +607,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + panelPadding * 2
         let panelWidth = min(max(contentWidth, minWidth), maxWidth)
 
-        // 计算高度
+        // 计算高度（屏幕高度的80%，与 SwitchPanelView 保持一致）
         let minHeight: CGFloat = 400
-        let maxHeight = screenSize.height * 0.9
+        let maxHeight = screenSize.height * 0.8
         let contentHeight = CGFloat(rowCount) * (itemHeight + 16) + panelPadding * 2 + bottomBarHeight
         let panelHeight = min(max(contentHeight, minHeight), maxHeight)
 
@@ -608,8 +617,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let newSize = NSSize(width: panelWidth, height: panelHeight)
         panel.setContentSize(newSize)
 
-        // 居中显示
-        panel.center()
+        // 手动计算居中位置
+        if let screen = NSScreen.main {
+            // 使用屏幕完整 frame（不包括 Dock 和菜单栏）
+            let screenFrame = screen.frame
+            // 计算居中位置（macOS Y 坐标从底部开始）
+            let x = (screenFrame.width - panelWidth) / 2
+            let y = (screenFrame.height - panelHeight) / 2
+            Logger.info("==> Panel position: x=\(x), y=\(y), screenFrame=\(screenFrame), panelSize=\(newSize)")
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        }
 
         PanelAnimator.show(panel)
         switchPanelWindow = panel

@@ -97,7 +97,7 @@ final class CompatibilityTests: XCTestCase {
         {"appearance":{"panelOpacity":0.9,"panelCornerRadius":12,"previewWidth":640,
         "previewHeight":360,"previewSize":"中","switcherColumns":0,"theme":"auto","futureField":"ignored"},
         "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
-        "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0},
+        "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0,"defaultSelectSecond":false},
         "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
         "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256},
         "dockPreview":{"enabled":true,"hoverDelay":0.35,"hideDelay":0.2,"maxPreviewCount":4,"previewWidth":104,"previewHeight":58,"showAnimation":true}}
@@ -113,7 +113,7 @@ final class CompatibilityTests: XCTestCase {
         {"appearance":{"panelOpacity":0.95,"panelCornerRadius":12,"previewWidth":640,
         "previewHeight":360,"previewSize":"中","switcherColumns":0,"theme":"auto"},
         "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
-        "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0},
+        "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0,"defaultSelectSecond":false},
         "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
         "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256},
         "dockPreview":{"enabled":true,"hoverDelay":0.35,"hideDelay":0.2,"maxPreviewCount":4,"previewWidth":104,"previewHeight":58,"showAnimation":true}}

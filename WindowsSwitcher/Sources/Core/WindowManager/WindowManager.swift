@@ -153,8 +153,96 @@ class WindowManager: WindowManagerProtocol {
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers.removeAll()
 
-        // 不再自动更新 lastActiveTime，只保留窗口变化的通知
-        // lastActiveTime 只在通过切换器激活窗口时更新（窗口级别）
+        // 监听应用激活事件，追踪外部窗口切换（窗口级别）
+        let token = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self else { return }
+
+            // 获取激活的应用
+            guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+
+            let pid = app.processIdentifier
+            Logger.debug("==> External app activated: \(app.localizedName ?? "unknown"), PID: \(pid)")
+
+            // 使用 AX API 获取当前焦点窗口（窗口级别追踪）
+            let focusedWindowID = self.getFocusedWindowID(pid: pid)
+            let now = Date()
+
+            if let windowID = focusedWindowID, var model = self.windowCache[windowID] {
+                // 只更新焦点窗口的 lastActiveTime
+                model = WindowModel(
+                    id: model.id,
+                    appName: model.appName,
+                    bundleIdentifier: model.bundleIdentifier,
+                    windowTitle: model.windowTitle,
+                    appIcon: model.appIcon,
+                    frame: model.frame,
+                    isMinimized: model.isMinimized,
+                    isHidden: model.isHidden,
+                    isOnScreen: model.isOnScreen,
+                    lastActiveTime: now,
+                    windowLayer: model.windowLayer,
+                    ownerPID: model.ownerPID
+                )
+                self.windowCache[windowID] = model
+                Logger.debug("==> Updated lastActiveTime for focused window: \(model.windowTitle)")
+            } else {
+                // 如果无法获取焦点窗口，更新该应用最新的窗口（降级方案）
+                let appWindows = self.windowCache.filter { $0.value.ownerPID == pid }
+                    .sorted { $0.value.lastActiveTime > $1.value.lastActiveTime }
+                if let first = appWindows.first {
+                    var model = first.value
+                    model = WindowModel(
+                        id: model.id,
+                        appName: model.appName,
+                        bundleIdentifier: model.bundleIdentifier,
+                        windowTitle: model.windowTitle,
+                        appIcon: model.appIcon,
+                        frame: model.frame,
+                        isMinimized: model.isMinimized,
+                        isHidden: model.isHidden,
+                        isOnScreen: model.isOnScreen,
+                        lastActiveTime: now,
+                        windowLayer: model.windowLayer,
+                        ownerPID: model.ownerPID
+                    )
+                    self.windowCache[model.id] = model
+                    Logger.debug("==> Fallback: Updated lastActiveTime for newest window: \(model.windowTitle)")
+                }
+            }
+
+            // 清除缓存以便重新排序
+            self.cacheTimestamp = nil
+        }
+        observers.append(token)
+    }
+
+    /// 获取指定应用的焦点窗口 ID
+    private func getFocusedWindowID(pid: pid_t) -> CGWindowID? {
+        let axApp = AXUIElementCreateApplication(pid)
+
+        // 获取焦点窗口
+        var focusedWindow: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow)
+
+        guard result == .success, let window = focusedWindow else {
+            Logger.debug("==> Failed to get focused window for PID \(pid): \(result.rawValue)")
+            return nil
+        }
+
+        // 通过私有 API 获取 CGWindowID
+        var windowID: CGWindowID = 0
+        let windowResult = _AXUIElementGetWindow(window as! AXUIElement, &windowID)
+
+        guard windowResult == .success else {
+            Logger.debug("==> Failed to get CGWindowID: \(windowResult.rawValue)")
+            return nil
+        }
+
+        return windowID
     }
 
     private func buildWindowModel(from info: [String: Any]) -> WindowModel? {
