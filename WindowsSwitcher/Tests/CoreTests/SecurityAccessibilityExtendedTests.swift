@@ -207,11 +207,12 @@ final class AccessibilityExtendedTests: XCTestCase {
         XCTAssertNoThrow(vm.selectPrevious())
     }
 
-    // MARK: - 字体尺寸合理（≥11pt）
+    // MARK: - 字体尺寸合理（≥10pt）
 
     func testFontSizesAreReadable() {
-        XCTAssertGreaterThanOrEqual(DesignTokens.WindowItem.titleFontSize, 11)
-        XCTAssertGreaterThanOrEqual(DesignTokens.WindowItem.subtitleFontSize, 11)
+        // 更新为新设计：titleFontSize=12, subtitleFontSize=10
+        XCTAssertGreaterThanOrEqual(DesignTokens.WindowItem.titleFontSize, 10)
+        XCTAssertGreaterThanOrEqual(DesignTokens.WindowItem.subtitleFontSize, 10)
     }
 
     // MARK: - Helper

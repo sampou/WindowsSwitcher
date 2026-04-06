@@ -59,13 +59,15 @@ final class CompatibilityTests: XCTestCase {
 
     func testPanelDimensionsAreFixed() {
         // 面板尺寸固定，不随屏幕分辨率变化
-        XCTAssertEqual(DesignTokens.Panel.width, 720)
-        XCTAssertEqual(DesignTokens.Panel.height, 480)
+        // 更新为新设计：1100x550
+        XCTAssertEqual(DesignTokens.Panel.width, 1100)
+        XCTAssertEqual(DesignTokens.Panel.height, 550)
     }
 
     func testWindowItemDimensionsAreFixed() {
-        XCTAssertEqual(DesignTokens.WindowItem.width, 140)
-        XCTAssertEqual(DesignTokens.WindowItem.height, 140)
+        // 更新为新设计：130x130
+        XCTAssertEqual(DesignTokens.WindowItem.width, 130)
+        XCTAssertEqual(DesignTokens.WindowItem.height, 130)
     }
 
     func testPreviewAspectRatioIsConsistent() {
@@ -93,7 +95,7 @@ final class CompatibilityTests: XCTestCase {
         // 模拟未来版本添加了新字段，旧版本应能正常解码
         let json = """
         {"appearance":{"panelOpacity":0.9,"panelCornerRadius":12,"previewWidth":640,
-        "previewHeight":360,"theme":"auto","futureField":"ignored"},
+        "previewHeight":360,"previewSize":"中","switcherColumns":0,"theme":"auto","futureField":"ignored"},
         "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
         "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0},
         "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
@@ -109,7 +111,7 @@ final class CompatibilityTests: XCTestCase {
         // 缺少 appearance/behavior 字段时使用默认值，hotKeys 需提供完整字段
         let json = """
         {"appearance":{"panelOpacity":0.95,"panelCornerRadius":12,"previewWidth":640,
-        "previewHeight":360,"theme":"auto"},
+        "previewHeight":360,"previewSize":"中","switcherColumns":0,"theme":"auto"},
         "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
         "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0},
         "hotKeys":{"switchKeyCode":48,"switchModifiers":256,

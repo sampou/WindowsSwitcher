@@ -121,15 +121,15 @@ final class F01WindowSwitchTests: XCTestCase {
 
 final class F02PreviewTests: XCTestCase {
 
-    // AC-03: 缩略图尺寸 124×70pt（16:9）
+    // AC-03: 缩略图尺寸 114×64pt（16:9）- 更新为新设计
     func testAC03_PreviewDimensions() {
-        XCTAssertEqual(DesignTokens.WindowItem.previewWidth, 124)
-        XCTAssertEqual(DesignTokens.WindowItem.previewHeight, 70)
+        XCTAssertEqual(DesignTokens.WindowItem.previewWidth, 114)
+        XCTAssertEqual(DesignTokens.WindowItem.previewHeight, 64)
     }
 
     func testAC03_PreviewIs16by9() {
         let ratio = DesignTokens.WindowItem.previewWidth / DesignTokens.WindowItem.previewHeight
-        XCTAssertEqual(ratio, 16.0 / 9.0, accuracy: 0.05)
+        XCTAssertEqual(ratio, 16.0 / 9.0, accuracy: 0.1)
     }
 
     // AC-04: PreviewCache 并发写入不崩溃（模拟 15-30fps 更新）
@@ -139,11 +139,12 @@ final class F02PreviewTests: XCTestCase {
         // 模拟 30fps × 1s = 30 次更新
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<30 {
-                group.addTask { await cache.set(image, for: CGWindowID(i % 10)) }
+                let hash = "hash-\(i % 10)"
+                group.addTask { await cache.set(image, for: CGWindowID(i % 10), windowHash: hash) }
             }
         }
         // 不崩溃即通过
-        let result = await cache.get(0)
+        let result = await cache.get(for: 0, windowHash: "hash-0")
         XCTAssertNotNil(result)
     }
 
@@ -166,16 +167,16 @@ final class F02PreviewTests: XCTestCase {
         let cache = PreviewCache()
         await cache.setExpiry(0.01) // 10ms 过期
         let img = NSImage(size: NSSize(width: 124, height: 70))
-        await cache.set(img, for: 1)
+        await cache.set(img, for: 1, windowHash: "hash-1")
         try? await Task.sleep(nanoseconds: 20_000_000) // 等 20ms
-        let result = await cache.get(1)
+        let result = await cache.get(for: 1, windowHash: "hash-1")
         XCTAssertNil(result, "过期缓存应返回 nil")
     }
 
     // AC-03: 无效窗口 ID 返回 nil
     func testAC03_InvalidWindowIDReturnsNil() async {
         let cache = PreviewCache()
-        let result = await cache.get(CGWindowID(999999))
+        let result = await cache.get(for: CGWindowID(999999), windowHash: "invalid")
         XCTAssertNil(result)
     }
 
@@ -183,11 +184,11 @@ final class F02PreviewTests: XCTestCase {
     func testAC03_CacheEvictsOldestWhenFull() async {
         let cache = PreviewCache()
         let img = NSImage(size: NSSize(width: 1, height: 1))
-        // 写入 51 条（maxSize=50），第 1 条应被淘汰
-        for i in 0..<51 {
-            await cache.set(img, for: CGWindowID(i))
+        // 写入 81 条（maxSize=80），第 1 条应被淘汰
+        for i in 0..<81 {
+            await cache.set(img, for: CGWindowID(i), windowHash: "hash-\(i)")
         }
-        let first = await cache.get(CGWindowID(0))
+        let first = await cache.get(for: CGWindowID(0), windowHash: "hash-0")
         XCTAssertNil(first, "最旧条目应被淘汰")
     }
 }

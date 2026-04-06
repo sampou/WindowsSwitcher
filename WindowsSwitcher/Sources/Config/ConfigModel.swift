@@ -56,6 +56,7 @@ struct BehaviorConfig: Codable, Equatable {
     var showHiddenWindows: Bool = false
     var previewUpdateInterval: Double = 0.1
     var panelDisplayDelay: Double = 0.0
+    var defaultSelectSecond: Bool = false  // 打开切换面板时默认选中第二个窗口
 }
 
 struct DockPreviewConfig: Codable, Equatable {

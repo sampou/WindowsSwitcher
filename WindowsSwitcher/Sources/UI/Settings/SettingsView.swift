@@ -114,6 +114,7 @@ struct BehaviorSettingsView: View {
             Section("窗口显示") {
                 Toggle("显示最小化窗口", isOn: $config.config.behavior.showMinimizedWindows)
                 Toggle("显示隐藏窗口", isOn: $config.config.behavior.showHiddenWindows)
+                Toggle("默认选中第二个窗口", isOn: $config.config.behavior.defaultSelectSecond)
             }
 
             Section("程序坞预览") {
@@ -130,23 +131,6 @@ struct BehaviorSettingsView: View {
                         }
                         Slider(value: $config.config.dockPreview.hoverDelay, in: 0.1...1.0, step: 0.05)
                             .tint(DesignTokens.Colors.accent)
-                    }
-
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                        HStack {
-                            Text("最大预览数")
-                            Spacer()
-                            Text("\(config.config.dockPreview.maxPreviewCount)")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                        Picker("最大预览数", selection: $config.config.dockPreview.maxPreviewCount) {
-                            Text("2个").tag(2)
-                            Text("4个").tag(4)
-                            Text("6个").tag(6)
-                            Text("8个").tag(8)
-                        }
-                        .pickerStyle(.segmented)
                     }
                 }
             }

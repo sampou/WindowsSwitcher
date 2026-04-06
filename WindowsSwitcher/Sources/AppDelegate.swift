@@ -452,6 +452,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.info("==> showSwitchPanel START")
         let startTime = CFAbsoluteTimeGetCurrent()
 
+        // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
+        let previousFrontmostApp = NSWorkspace.shared.frontmostApplication
+        let previousPID = previousFrontmostApp?.processIdentifier
+        let previousBundleID = previousFrontmostApp?.bundleIdentifier
+        Logger.info("==> Previous frontmost app: \(previousBundleID ?? "unknown"), PID: \(previousPID ?? -1)")
+
         guard !isPanelVisible else { return }
         isPanelVisible = true
 
@@ -476,11 +482,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 3. 按最近活跃时间排序（所有窗口统一排序，不按应用分组）
         let t1 = CFAbsoluteTimeGetCurrent()
-        let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+
+        // 使用之前记录的前台应用 PID（避免面板显示后 PID 变化）
+        let frontmostPID = previousPID
+        Logger.debug("==> Using previous frontmost PID: \(frontmostPID ?? -1)")
+
+        // 检查是否所有窗口的 lastActiveTime 都相同（首次运行或刚重启）
+        let firstWindowTime = windows.first?.lastActiveTime ?? Date()
+        let allSameTime = windows.allSatisfy { $0.lastActiveTime == firstWindowTime }
+
+        let sortedWindows: [WindowModel]
+        if allSameTime {
+            // 首次运行时：当前台窗口排在最前面，然后按 windowID 降序排序
+            sortedWindows = windows.sorted { w1, w2 in
+                // 如果 w1 是之前的前台应用，w1 排在前面
+                if w1.ownerPID == frontmostPID && w2.ownerPID != frontmostPID {
+                    return true
+                }
+                if w2.ownerPID == frontmostPID && w1.ownerPID != frontmostPID {
+                    return false
+                }
+                // 同属前台应用或都不是，按 windowID 降序
+                return w1.id > w2.id
+            }
+            Logger.debug("==> All windows have same lastActiveTime, using frontmost + windowID for sorting")
+        } else {
+            // 正常按 lastActiveTime 降序排序，但之前的前台窗口优先级更高
+            sortedWindows = windows.sorted { w1, w2 in
+                // 如果 w1 是之前的前台窗口，w1 优先
+                if w1.ownerPID == frontmostPID && w2.ownerPID != frontmostPID {
+                    return true
+                }
+                if w2.ownerPID == frontmostPID && w1.ownerPID != frontmostPID {
+                    return false
+                }
+                // 都不是前台窗口或都是，按 lastActiveTime 排序
+                if w1.lastActiveTime != w2.lastActiveTime {
+                    return w1.lastActiveTime > w2.lastActiveTime
+                }
+                // 如果时间相同，按 windowID 降序排序
+                return w1.id > w2.id
+            }
+        }
 
         // 打印排序结果日志
         let first3 = sortedWindows.prefix(3).map { "\($0.appName):\($0.lastActiveTime.timeIntervalSinceNow)s" }
-        Logger.info("==> sort result by lastActiveTime, first3: \(first3)")
+        Logger.info("==> sort result, first3: \(first3)")
         Logger.info("==> sort windows: \((CFAbsoluteTimeGetCurrent() - t1)*1000)ms")
 
         let t2 = CFAbsoluteTimeGetCurrent()
@@ -491,7 +538,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             filterEngine: filterEngine
         )
         Logger.info("==> SwitchPanelViewModel created: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms")
-        if reversed { vm.selectPrevious() }
+        if reversed {
+            vm.selectPrevious()
+        } else if ConfigManager.shared.config.behavior.defaultSelectSecond && sortedWindows.count > 1 {
+            // 如果启用了"默认选中第二个窗口"选项，且窗口数量大于1
+            vm.selectedIndex = 1
+            Logger.info("==> defaultSelectSecond enabled, selecting index 1")
+        }
 
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口
         self.switchPanelViewModel = vm
@@ -508,7 +561,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 创建面板，使用较大尺寸以适应不同预览大小
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 400),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled],
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -517,6 +570,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
 
         // 先创建 hostingView 并添加到面板
         let hostingView = NSHostingView(rootView: view)
@@ -524,11 +579,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
 
-        // 强制布局后获取正确大小
-        hostingView.layoutSubtreeIfNeeded()
-        let fittingSize = hostingView.fittingSize
-        let newSize = NSSize(width: max(400, fittingSize.width), height: max(300, fittingSize.height))
+        // 计算面板尺寸（与 SwitchPanelView 中的逻辑一致）
+        let previewSize = ConfigManager.shared.config.appearance.previewSize
+        let itemWidth = previewSize.itemDimensions.width
+        let itemHeight = previewSize.itemDimensions.height
+        let columnCount = max(3, min(8, (sortedWindows.count + 2) / 3))
+        let rowCount = max(1, (sortedWindows.count + columnCount - 1) / columnCount)
+
+        // 获取屏幕尺寸
+        let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
+        let desiredSpacing: CGFloat = 16
+        let panelPadding: CGFloat = 12
+        let bottomBarHeight: CGFloat = 40
+
+        // 计算宽度（屏幕宽度的90%）
+        let minWidth: CGFloat = 500
+        let maxWidth = screenSize.width * 0.9
+        let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + panelPadding * 2
+        let panelWidth = min(max(contentWidth, minWidth), maxWidth)
+
+        // 计算高度
+        let minHeight: CGFloat = 400
+        let maxHeight = screenSize.height * 0.9
+        let contentHeight = CGFloat(rowCount) * (itemHeight + 16) + panelPadding * 2 + bottomBarHeight
+        let panelHeight = min(max(contentHeight, minHeight), maxHeight)
+
+        // 设置面板大小
+        let newSize = NSSize(width: panelWidth, height: panelHeight)
         panel.setContentSize(newSize)
+
+        // 居中显示
         panel.center()
 
         PanelAnimator.show(panel)
@@ -569,12 +649,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 先移除旧的监听器
         removeEscKeyMonitor()
 
-        Logger.info("==> Setting up ESC key monitor")
+        Logger.info("==> Setting up ESC and arrow key monitor")
 
-        // 使用全局监听器
+        // 使用全局监听器监听所有键盘事件
         globalEscKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            Logger.info("==> Global keyDown: keyCode=\(event.keyCode)")
-            guard let self, self.isPanelVisible else { return }
+            guard let self else { return }
+            Logger.info("==> Global keyDown: keyCode=\(event.keyCode), isPanelVisible=\(self.isPanelVisible)")
+
+            guard self.isPanelVisible else { return }
 
             // ESC 键的 keyCode 是 53
             if event.keyCode == 53 {
@@ -582,11 +664,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     self.hideSwitchPanel()
                 }
+                return
+            }
+
+            // 处理方向键
+            guard let vm = self.switchPanelViewModel else { return }
+            switch event.specialKey {
+            case .leftArrow:
+                Logger.debug("==> Global left arrow")
+                Task { @MainActor in
+                    vm.selectPrevious()
+                }
+            case .rightArrow:
+                Logger.debug("==> Global right arrow")
+                Task { @MainActor in
+                    vm.selectNext()
+                }
+            case .upArrow:
+                Logger.debug("==> Global up arrow")
+                Task { @MainActor in
+                    vm.selectUp()
+                }
+            case .downArrow:
+                Logger.debug("==> Global down arrow")
+                Task { @MainActor in
+                    vm.selectDown()
+                }
+            default:
+                break
             }
         }
 
         if globalEscKeyMonitor != nil {
-            Logger.info("==> ESC key monitor created successfully")
+            Logger.info("==> ESC and arrow key monitor created successfully")
         } else {
             Logger.warning("==> Failed to create ESC key monitor")
         }
@@ -606,8 +716,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         localEscKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            Logger.info("==> Local keyDown: keyCode=\(event.keyCode)")
-            guard let self, self.isPanelVisible else { return event }
+            guard let self else { return event }
+            Logger.info("==> Local keyDown: keyCode=\(event.keyCode), isPanelVisible=\(self.isPanelVisible)")
+
+            guard self.isPanelVisible else { return event }
 
             // ESC 键的 keyCode 是 53
             if event.keyCode == 53 {
@@ -617,7 +729,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return nil // 阻止事件继续传递
             }
-            return event
+
+            // 处理方向键
+            guard let vm = self.switchPanelViewModel else { return event }
+            switch event.specialKey {
+            case .leftArrow:
+                Task { @MainActor in
+                    vm.selectPrevious()
+                }
+            case .rightArrow:
+                Task { @MainActor in
+                    vm.selectNext()
+                }
+            case .upArrow:
+                Task { @MainActor in
+                    vm.selectUp()
+                }
+            case .downArrow:
+                Task { @MainActor in
+                    vm.selectDown()
+                }
+            default:
+                return event
+            }
+            return nil // 阻止方向键事件继续传递
         }
 
         if localEscKeyMonitor != nil {

@@ -81,10 +81,10 @@ final class PerformanceExtendedTests: XCTestCase {
         let cache = PreviewCache()
         let image = NSImage(size: NSSize(width: 124, height: 70))
         // 预热
-        for i in 0..<10 { await cache.set(image, for: CGWindowID(i)) }
+        for i in 0..<10 { await cache.set(image, for: CGWindowID(i), windowHash: "hash-\(i)") }
         // 测量 100 次读取
         let start = CFAbsoluteTimeGetCurrent()
-        for i in 0..<100 { _ = await cache.get(CGWindowID(i % 10)) }
+        for i in 0..<100 { _ = await cache.get(for: CGWindowID(i % 10), windowHash: "hash-\(i % 10)") }
         let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
         XCTAssertLessThan(ms, 50, "100次缓存读取应 <50ms，实测 \(String(format:"%.2f",ms))ms")
     }

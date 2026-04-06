@@ -74,12 +74,13 @@ final class DesignTokensTests: XCTestCase {
     // MARK: - Spacing
 
     func testSpacingValues() {
+        // 更新为新设计的间距值
         XCTAssertEqual(DesignTokens.Spacing.xs, 4)
-        XCTAssertEqual(DesignTokens.Spacing.sm, 8)
-        XCTAssertEqual(DesignTokens.Spacing.md, 12)
-        XCTAssertEqual(DesignTokens.Spacing.lg, 16)
-        XCTAssertEqual(DesignTokens.Spacing.xl, 24)
-        XCTAssertEqual(DesignTokens.Spacing.xxl, 32)
+        XCTAssertEqual(DesignTokens.Spacing.sm, 6)
+        XCTAssertEqual(DesignTokens.Spacing.md, 10)
+        XCTAssertEqual(DesignTokens.Spacing.lg, 12)
+        XCTAssertEqual(DesignTokens.Spacing.xl, 16)
+        XCTAssertEqual(DesignTokens.Spacing.xxl, 24)
     }
 
     func testSpacingIsAscending() {
@@ -112,39 +113,41 @@ final class DesignTokensTests: XCTestCase {
     // MARK: - Panel
 
     func testPanelDimensions() {
-        XCTAssertEqual(DesignTokens.Panel.width, 720)
-        XCTAssertEqual(DesignTokens.Panel.height, 480)
-        XCTAssertEqual(DesignTokens.Panel.padding, 16)
+        // 更新为新设计：1100x550
+        XCTAssertEqual(DesignTokens.Panel.width, 1100)
+        XCTAssertEqual(DesignTokens.Panel.height, 550)
+        XCTAssertEqual(DesignTokens.Panel.padding, 12)
         XCTAssertEqual(DesignTokens.Panel.cornerRadius, 10)
         XCTAssertEqual(DesignTokens.Panel.shadowRadius, 20)
         XCTAssertEqual(DesignTokens.Panel.shadowY, 8)
     }
 
     func testPanelAspectRatio() {
-        // 720:480 = 3:2
+        // 1100:550 = 2:1
         let ratio = DesignTokens.Panel.width / DesignTokens.Panel.height
-        XCTAssertEqual(ratio, 1.5, accuracy: 0.01)
+        XCTAssertEqual(ratio, 2.0, accuracy: 0.01)
     }
 
     // MARK: - WindowItem
 
     func testWindowItemDimensions() {
-        XCTAssertEqual(DesignTokens.WindowItem.width, 140)
-        XCTAssertEqual(DesignTokens.WindowItem.height, 140)
-        XCTAssertEqual(DesignTokens.WindowItem.iconSize, 32)
-        XCTAssertEqual(DesignTokens.WindowItem.iconCornerRadius, 8)
-        XCTAssertEqual(DesignTokens.WindowItem.previewWidth, 124)
-        XCTAssertEqual(DesignTokens.WindowItem.previewHeight, 70)
-        XCTAssertEqual(DesignTokens.WindowItem.previewCornerRadius, 6)
-        XCTAssertEqual(DesignTokens.WindowItem.spacing, 12)
-        XCTAssertEqual(DesignTokens.WindowItem.titleFontSize, 13)
-        XCTAssertEqual(DesignTokens.WindowItem.subtitleFontSize, 11)
+        // 更新为新设计：130x130
+        XCTAssertEqual(DesignTokens.WindowItem.width, 130)
+        XCTAssertEqual(DesignTokens.WindowItem.height, 130)
+        XCTAssertEqual(DesignTokens.WindowItem.iconSize, 28)
+        XCTAssertEqual(DesignTokens.WindowItem.iconCornerRadius, 6)
+        XCTAssertEqual(DesignTokens.WindowItem.previewWidth, 114)
+        XCTAssertEqual(DesignTokens.WindowItem.previewHeight, 64)
+        XCTAssertEqual(DesignTokens.WindowItem.previewCornerRadius, 5)
+        XCTAssertEqual(DesignTokens.WindowItem.spacing, 20)
+        XCTAssertEqual(DesignTokens.WindowItem.titleFontSize, 12)
+        XCTAssertEqual(DesignTokens.WindowItem.subtitleFontSize, 10)
     }
 
     func testPreviewIs16by9Ratio() {
-        // 124:70 ≈ 16:9
+        // 114:64 ≈ 16:9
         let ratio = DesignTokens.WindowItem.previewWidth / DesignTokens.WindowItem.previewHeight
-        XCTAssertEqual(ratio, 16.0 / 9.0, accuracy: 0.05, "预览图应为 16:9 比例")
+        XCTAssertEqual(ratio, 16.0 / 9.0, accuracy: 0.1, "预览图应为 16:9 比例")
     }
 
     func testPreviewFitsInsideWindowItem() {

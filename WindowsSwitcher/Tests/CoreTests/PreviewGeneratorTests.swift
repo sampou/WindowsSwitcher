@@ -10,29 +10,30 @@ final class PreviewGeneratorTests: XCTestCase {
         let cache = PreviewCache()
         let image = NSImage(size: NSSize(width: 100, height: 100))
         let windowID: CGWindowID = 42
+        let windowHash = "test-hash-42"
 
-        await cache.set(image, for: windowID)
-        let retrieved = await cache.get(windowID)
+        await cache.set(image, for: windowID, windowHash: windowHash)
+        let retrieved = await cache.get(for: windowID, windowHash: windowHash)
 
         XCTAssertNotNil(retrieved, "缓存应能取回已存储的图片")
     }
 
     func testCacheMissReturnsNil() async {
         let cache = PreviewCache()
-        let result = await cache.get(9999)
+        let result = await cache.get(for: 9999, windowHash: "nonexistent")
         XCTAssertNil(result, "未存储的 windowID 应返回 nil")
     }
 
     func testCacheClear() async {
         let cache = PreviewCache()
         let image = NSImage(size: NSSize(width: 100, height: 100))
-        await cache.set(image, for: 1)
-        await cache.set(image, for: 2)
+        await cache.set(image, for: 1, windowHash: "hash1")
+        await cache.set(image, for: 2, windowHash: "hash2")
 
         await cache.clear()
 
-        let r1 = await cache.get(1)
-        let r2 = await cache.get(2)
+        let r1 = await cache.get(for: 1, windowHash: "hash1")
+        let r2 = await cache.get(for: 2, windowHash: "hash2")
         XCTAssertNil(r1, "清除后应返回 nil")
         XCTAssertNil(r2, "清除后应返回 nil")
     }
@@ -41,12 +42,12 @@ final class PreviewGeneratorTests: XCTestCase {
         let cache = PreviewCache()
         let image = NSImage(size: NSSize(width: 10, height: 10))
 
-        // 写入超过 maxSize(50) 个条目
-        for i in 0..<55 {
-            await cache.set(image, for: CGWindowID(i))
+        // 写入超过 maxSize(80) 个条目
+        for i in 0..<85 {
+            await cache.set(image, for: CGWindowID(i), windowHash: "hash-\(i)")
         }
         // 不崩溃即通过，缓存自动淘汰最旧条目
-        let recent = await cache.get(54)
+        let recent = await cache.get(for: 84, windowHash: "hash-84")
         XCTAssertNotNil(recent, "最新写入的条目应仍在缓存中")
     }
 

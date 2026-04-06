@@ -34,12 +34,18 @@ struct SwitchPanelView: View {
         }
     }
 
+    // 获取屏幕尺寸
+    private var screenSize: CGSize {
+        NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
+    }
+
     // 面板自适应宽度
     private var panelWidth: CGFloat {
         let itemWidth = previewSize.itemDimensions.width
         let desiredSpacing: CGFloat = 16
-        let minWidth: CGFloat = 400
-        let maxWidth: CGFloat = 1400
+        let minWidth: CGFloat = 500
+        // 最大宽度为屏幕宽度的 90%
+        let maxWidth = screenSize.width * 0.9
         let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + DesignTokens.Panel.padding * 2
         return min(max(contentWidth, minWidth), maxWidth)
     }
@@ -49,8 +55,9 @@ struct SwitchPanelView: View {
         let itemHeight = previewSize.itemDimensions.height
         let windowCount = viewModel.filteredWindows.count
         let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
-        let minHeight: CGFloat = 300
-        let maxHeight: CGFloat = 800
+        let minHeight: CGFloat = 400
+        // 最大高度为屏幕高度的 80%
+        let maxHeight = screenSize.height * 0.8
         let contentHeight = CGFloat(rowCount) * (itemHeight + 16) + DesignTokens.Panel.padding * 2 + 40 // 40是底部快捷栏
         return min(max(contentHeight, minHeight), maxHeight)
     }
