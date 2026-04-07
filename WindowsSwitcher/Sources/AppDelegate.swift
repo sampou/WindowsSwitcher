@@ -480,7 +480,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let windows = windowManager.getAllWindows()
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
-        // 3. 按最近活跃时间排序（所有窗口统一排序，不按应用分组）
+        // 3. 按最近活跃时间排序（所有窗口统一排序，严格按 lastActiveTime）
         let t1 = CFAbsoluteTimeGetCurrent()
 
         // 使用之前记录的前台应用 PID（避免面板显示后 PID 变化）
@@ -507,16 +507,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             Logger.debug("==> All windows have same lastActiveTime, using frontmost + windowID for sorting")
         } else {
-            // 正常按 lastActiveTime 降序排序，但之前的前台窗口优先级更高
+            // 严格按 lastActiveTime 降序排序（不使用前台应用优先）
             sortedWindows = windows.sorted { w1, w2 in
-                // 如果 w1 是之前的前台窗口，w1 优先
-                if w1.ownerPID == frontmostPID && w2.ownerPID != frontmostPID {
-                    return true
-                }
-                if w2.ownerPID == frontmostPID && w1.ownerPID != frontmostPID {
-                    return false
-                }
-                // 都不是前台窗口或都是，按 lastActiveTime 排序
                 if w1.lastActiveTime != w2.lastActiveTime {
                     return w1.lastActiveTime > w2.lastActiveTime
                 }
