@@ -477,15 +477,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 2. 实时获取所有窗口（包含最新的活跃时间）
         let t0 = CFAbsoluteTimeGetCurrent()
-        let windows = windowManager.getAllWindows()
+        var windows = windowManager.getAllWindows()
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
-        // 3. 按最近活跃时间排序（所有窗口统一排序，严格按 lastActiveTime）
-        let t1 = CFAbsoluteTimeGetCurrent()
+        // 3. 在获取窗口后，立即更新当前前台窗口的 lastActiveTime
+        // 因为 previousPID 已经被切换成 WindowsSwitcher 自己了
+        let now = Date()
+        if let frontmostApp = NSWorkspace.shared.frontmostApplication,
+           frontmostApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+            let frontmostPID = frontmostApp.processIdentifier
+            Logger.info("==> Current frontmost app: \(frontmostApp.localizedName ?? "unknown"), PID: \(frontmostPID)")
 
-        // 使用之前记录的前台应用 PID（避免面板显示后 PID 变化）
-        let frontmostPID = previousPID
-        Logger.debug("==> Using previous frontmost PID: \(frontmostPID ?? -1)")
+            // 找到该应用的所有窗口，更新最早活跃的那个（通常是用户正在使用的）
+            var maxTime: Date = .distantPast
+            var maxIndex: Int = -1
+            for (index, window) in windows.enumerated() where window.ownerPID == frontmostPID {
+                if window.lastActiveTime > maxTime {
+                    maxTime = window.lastActiveTime
+                    maxIndex = index
+                }
+            }
+
+            // 更新最前台的窗口
+            if maxIndex >= 0 {
+                let updatedWindow = WindowModel(
+                    id: windows[maxIndex].id,
+                    appName: windows[maxIndex].appName,
+                    bundleIdentifier: windows[maxIndex].bundleIdentifier,
+                    windowTitle: windows[maxIndex].windowTitle,
+                    appIcon: windows[maxIndex].appIcon,
+                    frame: windows[maxIndex].frame,
+                    isMinimized: windows[maxIndex].isMinimized,
+                    isHidden: windows[maxIndex].isHidden,
+                    isOnScreen: windows[maxIndex].isOnScreen,
+                    lastActiveTime: now,  // 更新为当前时间
+                    windowLayer: windows[maxIndex].windowLayer,
+                    ownerPID: windows[maxIndex].ownerPID
+                )
+                windows[maxIndex] = updatedWindow
+                Logger.info("==> Updated frontmost window lastActiveTime: \(updatedWindow.windowTitle)")
+            }
+        }
+
+        // 4. 按最近活跃时间排序
+        let t1 = CFAbsoluteTimeGetCurrent()
 
         // 检查是否所有窗口的 lastActiveTime 都相同（首次运行或刚重启）
         let firstWindowTime = windows.first?.lastActiveTime ?? Date()
@@ -493,24 +528,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let sortedWindows: [WindowModel]
         if allSameTime {
-            // 首次运行时：当前台窗口排在最前面，然后按 windowID 降序排序
+            // 首次运行时：直接按 windowID 降序排序
             sortedWindows = windows.sorted { w1, w2 in
-                let w1IsFrontmost = w1.ownerPID == frontmostPID
-                let w2IsFrontmost = w2.ownerPID == frontmostPID
-                if w1IsFrontmost && !w2IsFrontmost { return true }
-                if !w1IsFrontmost && w2IsFrontmost { return false }
-                return w1.id > w2.id
+                w1.id > w2.id
             }
-            Logger.debug("==> All windows have same lastActiveTime, using frontmost + windowID for sorting")
+            Logger.debug("==> All windows have same lastActiveTime, using windowID for sorting")
         } else {
-            // 按 lastActiveTime 降序排序，确保当前激活窗口在最前面
+            // 按 lastActiveTime 降序排序（最前台的窗口已经在之前更新为 now，会排在最前面）
             sortedWindows = windows.sorted { w1, w2 in
-                // 当前台应用的窗口优先
-                let w1IsFrontmost = w1.ownerPID == frontmostPID
-                let w2IsFrontmost = w2.ownerPID == frontmostPID
-                if w1IsFrontmost && !w2IsFrontmost { return true }
-                if !w1IsFrontmost && w2IsFrontmost { return false }
-                // 然后按 lastActiveTime 排序
                 if w1.lastActiveTime != w2.lastActiveTime {
                     return w1.lastActiveTime > w2.lastActiveTime
                 }
