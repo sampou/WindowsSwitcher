@@ -495,20 +495,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if allSameTime {
             // 首次运行时：当前台窗口排在最前面，然后按 windowID 降序排序
             sortedWindows = windows.sorted { w1, w2 in
-                // 如果 w1 是之前的前台应用，w1 排在前面
-                if w1.ownerPID == frontmostPID && w2.ownerPID != frontmostPID {
-                    return true
-                }
-                if w2.ownerPID == frontmostPID && w1.ownerPID != frontmostPID {
-                    return false
-                }
-                // 同属前台应用或都不是，按 windowID 降序
+                let w1IsFrontmost = w1.ownerPID == frontmostPID
+                let w2IsFrontmost = w2.ownerPID == frontmostPID
+                if w1IsFrontmost && !w2IsFrontmost { return true }
+                if !w1IsFrontmost && w2IsFrontmost { return false }
                 return w1.id > w2.id
             }
             Logger.debug("==> All windows have same lastActiveTime, using frontmost + windowID for sorting")
         } else {
-            // 严格按 lastActiveTime 降序排序（不使用前台应用优先）
+            // 按 lastActiveTime 降序排序，确保当前激活窗口在最前面
             sortedWindows = windows.sorted { w1, w2 in
+                // 当前台应用的窗口优先
+                let w1IsFrontmost = w1.ownerPID == frontmostPID
+                let w2IsFrontmost = w2.ownerPID == frontmostPID
+                if w1IsFrontmost && !w2IsFrontmost { return true }
+                if !w1IsFrontmost && w2IsFrontmost { return false }
+                // 然后按 lastActiveTime 排序
                 if w1.lastActiveTime != w2.lastActiveTime {
                     return w1.lastActiveTime > w2.lastActiveTime
                 }
