@@ -1,6 +1,65 @@
 import SwiftUI
 import AppKit
 
+// MARK: - 背景预览容器视图
+/// 按窗口实际大小和位置显示预览
+struct BackgroundPreviewContainer: View {
+    let selectedWindow: WindowModel
+    @State private var previewImage: NSImage?
+    @State private var currentWindowID: CGWindowID?
+
+    var body: some View {
+        ZStack {
+            if let image = previewImage {
+                // 获取屏幕和窗口信息
+                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+                let windowFrame = selectedWindow.frame
+
+                // 计算窗口在屏幕上的相对位置和大小
+                let viewWidth = screenFrame.width
+                let viewHeight = screenFrame.height
+
+                // 窗口的相对尺寸
+                let imgWidth = windowFrame.width
+                let imgHeight = windowFrame.height
+                let imgX = windowFrame.origin.x
+                let imgY = windowFrame.origin.y
+
+                // 使用 ZStack 定位
+                ZStack {
+                    Color.clear
+
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(width: imgWidth, height: imgHeight)
+                        .position(x: imgX + imgWidth / 2, y: imgY + imgHeight / 2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            loadPreview()
+        }
+        .onChange(of: selectedWindow.id) { _ in
+            loadPreview()
+        }
+    }
+
+    private func loadPreview() {
+        guard currentWindowID != selectedWindow.id else { return }
+        currentWindowID = selectedWindow.id
+
+        Task {
+            let generator = PreviewGenerator()
+            if let image = await generator.generateFullResolutionPreview(for: selectedWindow) {
+                await MainActor.run {
+                    self.previewImage = image
+                }
+            }
+        }
+    }
+}
+
 struct SwitchPanelView: View {
     @ObservedObject var viewModel: SwitchPanelViewModel
     @ObservedObject private var configManager = ConfigManager.shared

@@ -218,6 +218,19 @@ final class PreviewGenerator: @unchecked Sendable {
 
     func clearCache() async { await cache.clear() }
 
+    /// 生成原始分辨率预览（用于背景预览等需要高质量的场景）
+    func generateFullResolutionPreview(for window: WindowModel) async -> NSImage? {
+        let windowID = window.id
+        let windowFrame = window.frame
+
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let image = Self.captureWindowFullResolution(windowID, windowFrame: windowFrame)
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
     /// 捕获窗口截图 - 优化分辨率（静态方法，可在任意线程调用）
     private static func captureWindowSync(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
@@ -244,5 +257,23 @@ final class PreviewGenerator: @unchecked Sendable {
         resizedImage.unlockFocus()
 
         return resizedImage
+    }
+
+    /// 捕获窗口原始分辨率截图（不缩放，保持最高清晰度）
+    private static func captureWindowFullResolution(_ windowID: CGWindowID, windowFrame: CGRect) -> NSImage? {
+        guard CGPreflightScreenCaptureAccess() else { return nil }
+
+        // 使用 bestResolution 获取最高质量截图
+        guard let cgImage = CGWindowListCreateImage(
+            .null,
+            .optionIncludingWindow,
+            windowID,
+            [.boundsIgnoreFraming, .bestResolution]
+        ) else { return nil }
+
+        // 使用窗口的逻辑尺寸作为 NSImage 的 size
+        // 这样在 Retina 屏幕上能正确显示高分辨率图片
+        let logicalSize = NSSize(width: windowFrame.width, height: windowFrame.height)
+        return NSImage(cgImage: cgImage, size: logicalSize)
     }
 }

@@ -19,6 +19,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var switchPanelViewModel: SwitchPanelViewModel?
     private var dockPreviewWindow: NSWindow?
     private var dockPreviewCancellable: AnyCancellable?
+    private var selectedWindowCancellable: AnyCancellable?  // 监听选中窗口变化
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.info("=== Application starting ===")
@@ -622,7 +623,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .floating
+        panel.level = .popUpMenu  // 使用 popUpMenu 层级，比 floating 更高
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -684,6 +685,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
+        // 先显示背景预览窗口（在切换器面板之前）
+        Logger.info("==> Initial selectedWindow: \(vm.selectedWindow?.appName ?? "nil"), selectedIndex: \(vm.selectedIndex)")
+        showBackgroundPreview(for: vm.selectedWindow, screenFrame: NSScreen.main?.frame ?? .zero, panelFrame: panel.frame)
+
+        // 再显示切换器面板（会覆盖背景预览）
         PanelAnimator.show(panel)
         switchPanelWindow = panel
 
@@ -695,6 +701,90 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 批量预加载所有窗口缩略图
         preloadAllPreviews(windows: sortedWindows, viewModel: vm)
+
+        // 监听选中窗口变化，更新背景预览
+        setupSelectedWindowObserver(for: vm)
+    }
+
+    // MARK: - 背景预览窗口
+    private var backgroundPreviewWindow: NSPanel?
+
+    private func showBackgroundPreview(for window: WindowModel?, screenFrame: CGRect, panelFrame: CGRect) {
+        // 检查是否启用背景预览
+        guard ConfigManager.shared.config.behavior.showBackgroundPreview else { return }
+
+        guard let window = window else { return }
+
+        // 背景预览窗口覆盖整个屏幕
+        let previewFrame = screenFrame
+
+        let previewPanel = NSPanel(
+            contentRect: previewFrame,
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+
+        previewPanel.isFloatingPanel = true
+        previewPanel.level = .floating  // 浮动层级
+        previewPanel.backgroundColor = .clear
+        previewPanel.isOpaque = false
+        previewPanel.hasShadow = false
+        previewPanel.titleVisibility = .hidden
+        previewPanel.titlebarAppearsTransparent = true
+        previewPanel.ignoresMouseEvents = true
+        previewPanel.hidesOnDeactivate = false
+        previewPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+
+        // 创建预览视图
+        let previewView = BackgroundPreviewContainer(selectedWindow: window)
+        let hostingView = NSHostingView(rootView: previewView)
+        hostingView.frame = NSRect(origin: .zero, size: previewFrame.size)
+        previewPanel.contentView = hostingView
+
+        // 显示预览窗口
+        previewPanel.orderFront(nil)
+        backgroundPreviewWindow = previewPanel
+
+        Logger.info("==> Background preview shown for: \(window.appName), frame: \(window.frame)")
+    }
+
+    private func updateBackgroundPreview(for window: WindowModel?) {
+        guard ConfigManager.shared.config.behavior.showBackgroundPreview else { return }
+        guard let window = window else { return }
+
+        Logger.info("==> Updating background preview for: \(window.appName), windowID: \(window.id)")
+
+        // 更新预览内容 - 重新创建整个视图确保更新
+        if let panel = backgroundPreviewWindow {
+            let previewFrame = panel.frame
+            let newView = BackgroundPreviewContainer(selectedWindow: window)
+            let newHostingView = NSHostingView(rootView: newView)
+            newHostingView.frame = NSRect(origin: .zero, size: previewFrame.size)
+            panel.contentView = newHostingView
+        }
+    }
+
+    private func hideBackgroundPreview() {
+        backgroundPreviewWindow?.orderOut(nil)
+        backgroundPreviewWindow = nil
+    }
+
+    @MainActor
+    private func setupSelectedWindowObserver(for vm: SwitchPanelViewModel) {
+        // 取消之前的监听
+        selectedWindowCancellable?.cancel()
+
+        // 监听选中索引变化
+        selectedWindowCancellable = vm.$selectedIndex
+            .sink { [weak self] newIndex in
+                Task { @MainActor in
+                    guard let self = self else { return }
+                    if let selectedWindow = vm.selectedWindow {
+                        self.updateBackgroundPreview(for: selectedWindow)
+                    }
+                }
+            }
     }
 
     // 批量预加载所有窗口缩略图
@@ -864,6 +954,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 移除 ESC 键监听器
         removeEscKeyMonitor()
+
+        // 移除选中窗口监听
+        selectedWindowCancellable?.cancel()
+        selectedWindowCancellable = nil
+
+        // 隐藏背景预览窗口
+        hideBackgroundPreview()
 
         guard let panel = switchPanelWindow else { return }
         PanelAnimator.hide(panel) { [weak self] in

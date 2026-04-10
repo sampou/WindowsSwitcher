@@ -117,6 +117,10 @@ struct BehaviorSettingsView: View {
                 Toggle("默认选中第二个窗口", isOn: $config.config.behavior.defaultSelectSecond)
             }
 
+            Section("切换器背景预览") {
+                Toggle("显示背景预览", isOn: $config.config.behavior.showBackgroundPreview)
+            }
+
             Section("程序坞预览") {
                 Toggle("启用程序坞预览", isOn: $config.config.dockPreview.enabled)
 
