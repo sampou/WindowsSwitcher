@@ -67,8 +67,11 @@ class DockPreviewManager: ObservableObject {
         // 按 lastActiveTime 降序排序，确保最新活跃的窗口在最前面
         let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
 
+        // 从配置读取最大预览数量
+        let maxCount = ConfigManager.shared.config.dockPreview.maxPreviewCount
+
         // 创建预览项（注入共享的 PreviewGenerator）
-        previewItems = sortedWindows.prefix(4).map { windowModel in
+        previewItems = sortedWindows.prefix(maxCount).map { windowModel in
             var item = DockPreviewItem(windowModel: windowModel)
             item.previewGenerator = previewGenerator
             return item
@@ -126,7 +129,10 @@ struct DockPreviewPanelView: View {
     @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
 
-    private let maxItems = 4
+    // 从配置读取最大预览数量
+    private var maxItems: Int {
+        configManager.config.dockPreview.maxPreviewCount
+    }
 
     // 使用切换器的预览尺寸配置
     private var previewSize: PreviewSize {
@@ -182,7 +188,6 @@ struct DockPreviewPanelView: View {
             x: 0,
             y: DesignTokens.Panel.shadowY
         )
-        .position(position)
         .onAppear {
             Logger.info("DockPreviewPanelView appeared")
         }
@@ -193,38 +198,6 @@ struct DockPreviewPanelView: View {
             material: .hudWindow,
             blendingMode: .behindWindow
         )
-    }
-
-    private var position: CGPoint {
-        let screenFrame = NSScreen.main?.frame ?? .zero
-        let dockFrame = DockGeometry.getDockFrame()
-
-        // 根据 Dock 位置和预览项数量动态计算位置
-        let itemCount = min(manager.previewItems.count, maxItems)
-        let totalWidth = CGFloat(itemCount) * itemWidth + CGFloat(itemCount - 1) * itemSpacing
-
-        switch manager.currentDockPosition {
-        case .bottom:
-            return CGPoint(
-                x: screenFrame.midX,
-                y: dockFrame.minY - itemHeight / 2 - 40
-            )
-        case .top:
-            return CGPoint(
-                x: screenFrame.midX,
-                y: dockFrame.maxY + itemHeight / 2 + 40
-            )
-        case .left:
-            return CGPoint(
-                x: dockFrame.maxX + totalWidth / 2 + 20,
-                y: screenFrame.midY
-            )
-        case .right:
-            return CGPoint(
-                x: dockFrame.minX - totalWidth / 2 - 20,
-                y: screenFrame.midY
-            )
-        }
     }
 }
 

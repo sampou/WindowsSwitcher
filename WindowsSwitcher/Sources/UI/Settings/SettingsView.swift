@@ -121,19 +121,50 @@ struct BehaviorSettingsView: View {
                 Toggle("启用程序坞预览", isOn: $config.config.dockPreview.enabled)
 
                 if config.config.dockPreview.enabled {
-                    Toggle("使用切换器预览大小", isOn: $config.config.dockPreview.useGlobalPreviewSize)
-
+                    // 悬停延迟
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                         HStack {
-                            Text("显示延迟")
+                            Text("悬停延迟")
                             Spacer()
                             Text(String(format: "%.0f ms", config.config.dockPreview.hoverDelay * 1000))
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
-                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.05...0.5, step: 0.01)
+                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.1...1.0, step: 0.05)
                             .tint(DesignTokens.Colors.accent)
                     }
+
+                    // 隐藏延迟
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        HStack {
+                            Text("隐藏延迟")
+                            Spacer()
+                            Text(String(format: "%.0f ms", config.config.dockPreview.hideDelay * 1000))
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: $config.config.dockPreview.hideDelay, in: 0.1...1.0, step: 0.05)
+                            .tint(DesignTokens.Colors.accent)
+                    }
+
+                    // 最大预览数量
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
+                        HStack {
+                            Text("最大预览数量")
+                            Spacer()
+                            Text("\(config.config.dockPreview.maxPreviewCount)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { Double(config.config.dockPreview.maxPreviewCount) },
+                            set: { config.config.dockPreview.maxPreviewCount = Int($0) }
+                        ), in: 2...8, step: 1)
+                        .tint(DesignTokens.Colors.accent)
+                    }
+
+                    // 显示动画
+                    Toggle("显示动画效果", isOn: $config.config.dockPreview.showAnimation)
                 }
             }
         }

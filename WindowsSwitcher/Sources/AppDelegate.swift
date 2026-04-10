@@ -78,7 +78,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
     }
 
-    // 显示程序坞预览面板
+    // 显示程序坞预览面板 - 复刻切换器样式
     @MainActor
     private func showDockPreviewPanel() {
         guard dockPreviewWindow == nil else {
@@ -91,113 +91,119 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // 获取预览面板应该显示的位置
+        // 获取配置
+        let config = ConfigManager.shared.config.dockPreview
+        let previewSize = ConfigManager.shared.config.appearance.previewSize
+        let itemWidth = previewSize.itemDimensions.width
+        let itemHeight = previewSize.itemDimensions.height
+        let itemSpacing: CGFloat = 20
+
+        // 计算面板尺寸
+        let itemCount = min(items.count, config.maxPreviewCount)
+        let panelPadding: CGFloat = DesignTokens.Panel.padding
+        let panelWidth = CGFloat(itemCount) * itemWidth + CGFloat(itemCount - 1) * itemSpacing + panelPadding * 2
+        let panelHeight = itemHeight + panelPadding * 2
+
+        // 获取屏幕和 Dock 信息
         let screenFrame = NSScreen.main?.frame ?? .zero
         let dockFrame = DockGeometry.getDockFrame()
+        let dockPosition = DockPreviewManager.shared.currentDockPosition
 
-        let previewPosition = CGPoint(
-            x: screenFrame.midX,
-            y: dockFrame.maxY + 80
-        )
+        // 计算面板位置
+        // macOS 坐标系：y = 0 在屏幕底部，y = screenFrame.height 在屏幕顶部
+        var panelX: CGFloat = screenFrame.midX - panelWidth / 2
+        var panelY: CGFloat = 0
 
-        // 创建简单的预览视图
-        let previewContainer = createPreviewContainer()
+        switch dockPosition {
+        case .bottom:
+            // Dock 在底部：面板显示在 Dock 上方
+            panelY = dockFrame.height + 20
+        case .top:
+            // Dock 在顶部：面板显示在 Dock 下方
+            panelY = screenFrame.height - dockFrame.height - panelHeight - 20
+        case .left:
+            // Dock 在左侧：面板显示在 Dock 右侧
+            panelX = dockFrame.width + 20
+            panelY = screenFrame.midY - panelHeight / 2
+        case .right:
+            // Dock 在右侧：面板显示在 Dock 左侧
+            panelX = screenFrame.width - dockFrame.width - panelWidth - 20
+            panelY = screenFrame.midY - panelHeight / 2
+        }
 
+        // 确保面板不超出屏幕边界
+        panelX = max(10, min(panelX, screenFrame.width - panelWidth - 10))
+        panelY = max(10, min(panelY, screenFrame.height - panelHeight - 10))
+
+        // 创建 SwiftUI 视图
+        let dockPreviewView = DockPreviewPanelView(manager: DockPreviewManager.shared) { [weak self] in
+            self?.hideDockPreviewPanel()
+        }
+
+        // 创建面板
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 150),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless, .titled],
+            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.backgroundColor = NSColor.white
+        panel.level = .popUpMenu  // 使用更高的层级确保显示在最前面
+        panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
-        panel.contentView = previewContainer
+        panel.ignoresMouseEvents = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.acceptsMouseMovedEvents = true
+
+        // 设置 SwiftUI 内容
+        let hostingView = NSHostingView(rootView: dockPreviewView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
+        panel.contentView = hostingView
 
         // 设置窗口位置
-        panel.setFrameOrigin(NSPoint(
-            x: previewPosition.x - 200,
-            y: previewPosition.y - 75
-        ))
+        panel.setFrameOrigin(NSPoint(x: panelX, y: panelY))
 
-        panel.orderFront(nil)
+        // 添加淡入动画
+        if config.showAnimation {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()  // 强制显示在最前面
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            panel.orderFrontRegardless()
+        }
 
         dockPreviewWindow = panel
+        Logger.info("Dock preview panel shown at (\(panelX), \(panelY)), size: \(panelWidth)x\(panelHeight)")
     }
 
     // 隐藏程序坞预览面板
     @MainActor
     private func hideDockPreviewPanel() {
         guard let window = dockPreviewWindow else { return }
-        window.orderOut(nil)
-        dockPreviewWindow = nil
-        Logger.info("Dock preview window hidden")
-    }
 
-    // 创建预览容器视图（使用 NSView 代替 SwiftUI）
-    private func createPreviewContainer() -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 150))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.white.cgColor
-
-        let items = DockPreviewManager.shared.previewItems
-        let spacing: CGFloat = 8
-
-        for (index, item) in items.prefix(4).enumerated() {
-            let x = CGFloat(index) * (104 + spacing)
-            let itemView = createItemView(for: item, index: index)
-            itemView.frame = NSRect(x: x, y: 8, width: 104, height: 134)
-            container.addSubview(itemView)
-        }
-
-        return container
-    }
-
-    // 创建单个预览项视图
-    private func createItemView(for item: DockPreviewItem, index: Int) -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 104, height: 134))
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 8
-        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        view.layer?.borderWidth = 1
-        view.layer?.borderColor = NSColor.separatorColor.cgColor
-
-        // 异步加载预览图
-        Task {
-            let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
-            let size = CGSize(width: 100, height: 70)
-            if let image = await generator.generatePreview(for: item.windowModel, size: size) {
-                await MainActor.run {
-                    self.addImageToView(view, image: image)
-                }
+        let config = ConfigManager.shared.config.dockPreview
+        if config.showAnimation {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.1
+                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+                window.animator().alphaValue = 0
+            } completionHandler: { [weak self] in
+                window.orderOut(nil)
+                self?.dockPreviewWindow = nil
             }
+        } else {
+            window.orderOut(nil)
+            dockPreviewWindow = nil
         }
-
-        // 添加标题
-        let titleLabel = NSTextField(labelWithString: item.windowTitle)
-        titleLabel.frame = NSRect(x: 2, y: 2, width: 100, height: 16)
-        titleLabel.font = NSFont.systemFont(ofSize: 10)
-        titleLabel.textColor = .secondaryLabelColor
-        titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.alignment = .center
-        view.addSubview(titleLabel)
-
-        return view
-    }
-
-    // 将图片添加到视图
-    private func addImageToView(_ view: NSView, image: NSImage) {
-        let imageView = NSImageView(frame: NSRect(x: 2, y: 18, width: 100, height: 70))
-        imageView.image = image
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = 4
-        imageView.layer?.masksToBounds = true
-        view.addSubview(imageView)
+        Logger.info("Dock preview window hidden")
     }
 
     // 监听 Option 键释放 - 使用全局监听器
