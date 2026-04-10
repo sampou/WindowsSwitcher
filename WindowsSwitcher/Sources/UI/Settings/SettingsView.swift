@@ -121,15 +121,17 @@ struct BehaviorSettingsView: View {
                 Toggle("启用程序坞预览", isOn: $config.config.dockPreview.enabled)
 
                 if config.config.dockPreview.enabled {
+                    Toggle("使用切换器预览大小", isOn: $config.config.dockPreview.useGlobalPreviewSize)
+
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
                         HStack {
-                            Text("悬停延迟")
+                            Text("显示延迟")
                             Spacer()
                             Text(String(format: "%.0f ms", config.config.dockPreview.hoverDelay * 1000))
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
-                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.1...1.0, step: 0.05)
+                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.05...0.5, step: 0.01)
                             .tint(DesignTokens.Colors.accent)
                     }
                 }

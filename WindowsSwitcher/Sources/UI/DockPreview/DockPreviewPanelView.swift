@@ -120,13 +120,39 @@ class DockPreviewManager: ObservableObject {
 }
 
 // MARK: - DockPreviewPanelView
-/// 程序坞预览面板主视图
+/// 程序坞预览面板主视图 - 与切换器面板样式一致
 struct DockPreviewPanelView: View {
     @ObservedObject var manager: DockPreviewManager
+    @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
 
     private let maxItems = 4
-    private let itemSpacing: CGFloat = 8
+
+    // 使用切换器的预览尺寸配置
+    private var previewSize: PreviewSize {
+        configManager.config.appearance.previewSize
+    }
+
+    private var itemWidth: CGFloat {
+        previewSize.itemDimensions.width
+    }
+
+    private var itemHeight: CGFloat {
+        previewSize.itemDimensions.height
+    }
+
+    private var previewWidth: CGFloat {
+        previewSize.dimensions.width
+    }
+
+    private var previewHeight: CGFloat {
+        previewSize.dimensions.height
+    }
+
+    // 间距与切换器一致
+    private var itemSpacing: CGFloat {
+        20  // 与 WindowItem.spacing 一致
+    }
 
     var body: some View {
         HStack(spacing: itemSpacing) {
@@ -134,6 +160,10 @@ struct DockPreviewPanelView: View {
                 DockPreviewItemView(
                     item: item,
                     isHovered: manager.hoveredIndex == index,
+                    previewWidth: previewWidth,
+                    previewHeight: previewHeight,
+                    itemWidth: itemWidth,
+                    itemHeight: itemHeight,
                     onTap: {
                         manager.selectItem(item)
                     },
@@ -143,14 +173,14 @@ struct DockPreviewPanelView: View {
                 )
             }
         }
-        .padding(DesignTokens.Spacing.md)
+        .padding(DesignTokens.Panel.padding)
         .background(backgroundView)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.DockPreview.panelCornerRadius))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
         .shadow(
             color: .black.opacity(0.25),
-            radius: DesignTokens.DockPreview.shadowRadius,
+            radius: DesignTokens.Panel.shadowRadius,
             x: 0,
-            y: DesignTokens.DockPreview.shadowY
+            y: DesignTokens.Panel.shadowY
         )
         .position(position)
         .onAppear {
@@ -169,25 +199,29 @@ struct DockPreviewPanelView: View {
         let screenFrame = NSScreen.main?.frame ?? .zero
         let dockFrame = DockGeometry.getDockFrame()
 
+        // 根据 Dock 位置和预览项数量动态计算位置
+        let itemCount = min(manager.previewItems.count, maxItems)
+        let totalWidth = CGFloat(itemCount) * itemWidth + CGFloat(itemCount - 1) * itemSpacing
+
         switch manager.currentDockPosition {
         case .bottom:
             return CGPoint(
                 x: screenFrame.midX,
-                y: dockFrame.minY - 60
+                y: dockFrame.minY - itemHeight / 2 - 40
             )
         case .top:
             return CGPoint(
                 x: screenFrame.midX,
-                y: dockFrame.maxY + 60
+                y: dockFrame.maxY + itemHeight / 2 + 40
             )
         case .left:
             return CGPoint(
-                x: dockFrame.maxX + 60,
+                x: dockFrame.maxX + totalWidth / 2 + 20,
                 y: screenFrame.midY
             )
         case .right:
             return CGPoint(
-                x: dockFrame.minX - 60,
+                x: dockFrame.minX - totalWidth / 2 - 20,
                 y: screenFrame.midY
             )
         }
@@ -195,30 +229,32 @@ struct DockPreviewPanelView: View {
 }
 
 // MARK: - DockPreviewItemView
+/// 程序坞预览项 - 与切换器窗口项样式一致
 struct DockPreviewItemView: View {
     let item: DockPreviewItem
     let isHovered: Bool
+    let previewWidth: CGFloat
+    let previewHeight: CGFloat
+    let itemWidth: CGFloat
+    let itemHeight: CGFloat
     let onTap: () -> Void
     let onHover: (Bool) -> Void
 
     @State private var previewImage: NSImage?
+    @State private var isInternalHovered = false
 
-    // 与切换器面板保持一致的尺寸
-    private var itemWidth: CGFloat { DesignTokens.DockPreview.itemWidth }
-    private var itemHeight: CGFloat { DesignTokens.DockPreview.itemHeight + 36 } // 额外空间给标题
-    private var previewWidth: CGFloat { DesignTokens.DockPreview.previewWidth }
-    private var previewHeight: CGFloat { DesignTokens.DockPreview.previewHeight }
-    private var iconSize: CGFloat { 20 }
-    private var iconCornerRadius: CGFloat { 4 }
+    // 与切换器一致的图标尺寸
+    private var iconSize: CGFloat { DesignTokens.WindowItem.iconSize }
+    private var iconCornerRadius: CGFloat { DesignTokens.WindowItem.iconCornerRadius }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-            // 预览图
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            // 预览图 - 与切换器一致
             previewContent
                 .frame(width: previewWidth, height: previewHeight)
-                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.DockPreview.previewCornerRadius))
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
 
-            // 应用信息（与切换器面板一致）
+            // 应用信息 - 与切换器一致
             HStack(spacing: DesignTokens.Spacing.xs) {
                 Image(nsImage: item.appIcon)
                     .resizable()
@@ -227,34 +263,33 @@ struct DockPreviewItemView: View {
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.appName)
-                        .font(.system(size: DesignTokens.DockPreview.titleFontSize, weight: .semibold))
+                        .font(.system(size: DesignTokens.WindowItem.titleFontSize, weight: .semibold))
                         .foregroundStyle(DesignTokens.Colors.label)
                         .lineLimit(1)
 
                     if !item.windowTitle.isEmpty && item.windowTitle != item.appName {
                         Text(item.windowTitle)
-                            .font(.system(size: DesignTokens.DockPreview.titleFontSize - 1))
+                            .font(.system(size: DesignTokens.WindowItem.subtitleFontSize))
                             .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                             .lineLimit(1)
                     }
                 }
             }
-            .padding(.horizontal, 2)
         }
         .padding(DesignTokens.Spacing.sm)
         .frame(width: itemWidth, height: itemHeight)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.DockPreview.itemCornerRadius)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem)
                 .fill(backgroundColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.DockPreview.itemCornerRadius)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem)
                 .strokeBorder(
-                    isHovered ? DesignTokens.Colors.selectedBorder : Color.clear,
+                    isHovered ? DesignTokens.Colors.accent : Color.clear,
                     lineWidth: 2
                 )
         )
-        .scaleEffect(isHovered ? 1.05 : 1.0)
+        .scaleEffect(isHovered ? 1.03 : 1.0)
         .animation(DesignTokens.Animation.itemHover, value: isHovered)
         .onTapGesture(perform: onTap)
         .onHover(perform: onHover)
@@ -265,18 +300,33 @@ struct DockPreviewItemView: View {
 
     @ViewBuilder
     private var previewContent: some View {
-        if let image = previewImage {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } else {
-            Rectangle()
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .overlay(
-                    ProgressView()
-                        .scaleEffect(0.5)
-                )
+        ZStack {
+            RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
+                .fill(DesignTokens.Colors.secondaryBackground)
+
+            if let image = previewImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
+            } else {
+                Image(nsImage: item.appIcon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 28, height: 28)
+                    .opacity(0.4)
+            }
         }
+        // 使用实际窗口比例
+        .aspectRatio(windowAspectRatio, contentMode: .fit)
+    }
+
+    // 计算实际窗口的宽高比
+    private var windowAspectRatio: CGFloat {
+        let width = item.windowModel.frame.width
+        let height = item.windowModel.frame.height
+        guard width > 0 && height > 0 else { return 16.0 / 9.0 }
+        return width / height
     }
 
     private var backgroundColor: Color {
