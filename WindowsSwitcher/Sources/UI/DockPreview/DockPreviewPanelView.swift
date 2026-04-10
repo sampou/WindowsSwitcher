@@ -64,8 +64,11 @@ class DockPreviewManager: ObservableObject {
             return
         }
 
+        // 按 lastActiveTime 降序排序，确保最新活跃的窗口在最前面
+        let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+
         // 创建预览项（注入共享的 PreviewGenerator）
-        previewItems = windows.prefix(4).map { windowModel in
+        previewItems = sortedWindows.prefix(4).map { windowModel in
             var item = DockPreviewItem(windowModel: windowModel)
             item.previewGenerator = previewGenerator
             return item
