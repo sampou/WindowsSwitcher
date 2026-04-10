@@ -130,7 +130,7 @@ struct BehaviorSettingsView: View {
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
-                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.1...1.0, step: 0.05)
+                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.05...0.5, step: 0.05)
                             .tint(DesignTokens.Colors.accent)
                     }
 
@@ -143,7 +143,7 @@ struct BehaviorSettingsView: View {
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
-                        Slider(value: $config.config.dockPreview.hideDelay, in: 0.1...1.0, step: 0.05)
+                        Slider(value: $config.config.dockPreview.hideDelay, in: 0.05...0.5, step: 0.05)
                             .tint(DesignTokens.Colors.accent)
                     }
 

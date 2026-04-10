@@ -158,7 +158,7 @@ actor PreviewCache {
     }
 }
 
-class PreviewGenerator {
+final class PreviewGenerator: @unchecked Sendable {
     private let cache = PreviewCache()
     // 使用并发队列，支持多线程并行生成缩略图
     private let queue = DispatchQueue(label: "com.windowsswitcher.preview", qos: .userInitiated, attributes: .concurrent)
@@ -178,20 +178,24 @@ class PreviewGenerator {
             return cached
         }
 
+        let windowID = window.id
+        let windowHash = await cache.computeWindowHash(for: window)
+        let cacheRef = self.cache
+        let semaphoreRef = self.semaphore
+        let queueRef = self.queue
+
         return await withCheckedContinuation { continuation in
-            queue.async { [weak self] in
-                guard let self else { return }
-
+            queueRef.async {
                 // 限制并发数量
-                self.semaphore.wait()
-                defer { self.semaphore.signal() }
+                semaphoreRef.wait()
+                defer { semaphoreRef.signal() }
 
-                let image = self.captureWindow(window.id, size: size)
+                let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
 
                 if let image {
                     Task {
-                        await self.cache.set(image, for: window.id, windowHash: await self.cache.computeWindowHash(for: window))
+                        await cacheRef.set(image, for: windowID, windowHash: windowHash)
                     }
                 }
             }
@@ -200,32 +204,22 @@ class PreviewGenerator {
 
     /// 批量生成预览（用于面板打开时）
     func generatePreviews(for windows: [WindowModel], size: CGSize) async -> [CGWindowID: NSImage] {
-        // 简化的批量生成：每次处理一部分，使用信号量限制并发
-        await withTaskGroup(of: (CGWindowID, NSImage?).self) { group in
-            var results: [CGWindowID: NSImage] = [:]
+        var results: [CGWindowID: NSImage] = [:]
 
-            for window in windows {
-                group.addTask {
-                    let image = await self.generatePreview(for: window, size: size)
-                    return (window.id, image)
-                }
+        // 使用简单的顺序处理避免 Sendable 问题
+        for window in windows {
+            if let image = await generatePreview(for: window, size: size) {
+                results[window.id] = image
             }
-
-            // 收集所有结果
-            for await (windowID, image) in group {
-                if let image = image {
-                    results[windowID] = image
-                }
-            }
-
-            return results
         }
+
+        return results
     }
 
     func clearCache() async { await cache.clear() }
 
-    /// 捕获窗口截图 - 优化分辨率
-    private func captureWindow(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
+    /// 捕获窗口截图 - 优化分辨率（静态方法，可在任意线程调用）
+    private static func captureWindowSync(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
 
         // 使用 bestResolution 获取高质量截图，然后缩放到目标尺寸

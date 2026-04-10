@@ -58,14 +58,16 @@ class ConfigManager: ObservableObject {
     func updateDockPreview(_ block: (inout DockPreviewConfig) -> Void) {
         var dockPreview = config.dockPreview
         block(&dockPreview)
-        
+
         // 边界验证
-        dockPreview.hoverDelay = max(0.1, min(1.0, dockPreview.hoverDelay))  // 100ms-1000ms
-        dockPreview.hideDelay = max(0.1, min(1.0, dockPreview.hideDelay))    // 100ms-1000ms
-        dockPreview.maxPreviewCount = max(2, min(8, dockPreview.maxPreviewCount)) // 2-8
-        dockPreview.previewWidth = max(50, min(200, dockPreview.previewWidth))   // 50-200pt
-        dockPreview.previewHeight = max(30, min(120, dockPreview.previewHeight)) // 30-120pt
-        
+        dockPreview.hoverDelay = max(0.05, min(1.0, dockPreview.hoverDelay))
+        dockPreview.hideDelay = max(0.05, min(1.0, dockPreview.hideDelay))
+        dockPreview.maxPreviewCount = max(2, min(8, dockPreview.maxPreviewCount))
+        dockPreview.previewWidth = max(50, min(200, dockPreview.previewWidth))
+        dockPreview.previewHeight = max(30, min(120, dockPreview.previewHeight))
+        dockPreview.verticalSpacing = max(4, min(30, dockPreview.verticalSpacing))    // 4-30px
+        dockPreview.horizontalSpacing = max(4, min(30, dockPreview.horizontalSpacing)) // 4-30px
+
         config.dockPreview = dockPreview
     }
 }

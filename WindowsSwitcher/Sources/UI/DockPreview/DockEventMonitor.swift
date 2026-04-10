@@ -3,20 +3,37 @@ import AppKit
 import ApplicationServices
 import Combine
 
+// MARK: - DockIconInfo
+/// Dock 图标信息结构体
+struct DockIconInfo {
+    let bundleID: String
+    let frame: CGRect  // 图标在屏幕上的位置（macOS 坐标系）
+    let center: CGPoint  // 图标中心点
+}
+
 // MARK: - DockEventMonitor
 /// 程序坞图标事件监听器
 class DockEventMonitor: ObservableObject {
     @Published var hoveredAppBundleID: String?
     @Published var isDockVisible: Bool = true
     @Published var dockPosition: DockPosition = .bottom
+    @Published var hoveredIconInfo: DockIconInfo?
+    @Published var isMouseInPreviewWindow: Bool = false  // 鼠标是否在预览窗口内
+    @Published var mouseLocation: CGPoint = .zero  // 当前鼠标位置
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var hoverTimer: Timer?
+    private var hideTimer: Timer?  // 延迟隐藏计时器
 
-    /// 悬停延迟（从配置读取，默认 350ms）
+    /// 悬停延迟
     private var hoverDelay: TimeInterval {
         ConfigManager.shared.config.dockPreview.hoverDelay
+    }
+
+    /// 隐藏延迟
+    private var hideDelay: TimeInterval {
+        ConfigManager.shared.config.dockPreview.hideDelay
     }
 
     init() {
@@ -30,78 +47,179 @@ class DockEventMonitor: ObservableObject {
 
     // MARK: - Public Methods
 
-    // 使用 NSEvent 全局监听（更简单可靠）
     private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
 
     func startMonitoring() {
         guard globalMouseMonitor == nil else { return }
 
-        Logger.info(">>> DockEventMonitor.startMonitoring called")
-
-        // 检查辅助功能权限
-        let hasAccessibility = AXIsProcessTrusted()
-        Logger.info("Accessibility: \(hasAccessibility)")
-
         // 使用 NSEvent 全局监听鼠标移动
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
             self?.handleMouseMoved(event)
         }
 
-        if globalMouseMonitor != nil {
-            Logger.info("Mouse monitor created OK")
-        } else {
-            Logger.warning("Failed to create mouse monitor")
+        // 本地监听器（用于应用内）
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+            self?.handleMouseMoved(event)
+            return event
         }
     }
 
     private func handleMouseMoved(_ event: NSEvent) {
         let location = NSEvent.mouseLocation
+        mouseLocation = location
+
         let dockFrame = getDockFrame()
-
-        // 调试：打印鼠标位置和 dock 区域
-        Logger.info("鼠标位置: \(location), Dock区域: \(dockFrame)")
-
-        // 检查鼠标是否在 Dock 区域（使用更宽松的检测范围）
-        // 无论是否悬停在具体应用上，只要在 Dock 区域就视为与 Dock 交互
         let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(location)
 
+        // 检查是否在 Dock 区域或预览窗口内
         if isInDockArea {
-            // 鼠标在程序坞上时才打印日志
-            let dockAppsList = getDockAppOrderWithBundleID()
-            let appNames = dockAppsList.map { $0.0 }
-            Logger.info("程序坞: [\(appNames.joined(separator: ", "))]")
-
-            // 尝试检测具体应用
-            if let appBundleID = getAppBundleIDAtScreenLocation(location) {
-                // 获取应用名称
-                let appName = dockAppsList.first { $0.1 == appBundleID }?.0 ?? appBundleID
-                Logger.info("🖱️ 悬停: \(appName)")
-                startHoverTimer(for: appBundleID)
+            // 在 Dock 区域，尝试检测具体应用
+            if let iconInfo = getDockIconInfoAtLocation(location) {
+                startHoverTimer(for: iconInfo)
             } else {
-                // 即使检测不到具体应用，只要在 Dock 区域就触发 timer
-                // 返回 Dock 本身作为占位，表示在 Dock 区域
-                Logger.info("🖱️ 悬停: (Dock区域)")
-                startHoverTimer(for: "com.apple.dock")
+                if let appBundleID = getAppBundleIDAtScreenLocation(location) {
+                    startHoverTimer(for: appBundleID)
+                }
             }
+            // 取消隐藏计时器
+            hideTimer?.invalidate()
+            hideTimer = nil
+        } else if isMouseInPreviewWindow {
+            // 在预览窗口内，保持显示
+            hoverTimer?.invalidate()
+            hideTimer?.invalidate()
+            hideTimer = nil
         } else {
+            // 既不在 Dock 也不在预览窗口，启动隐藏计时器
             cancelHoverTimer()
+            startHideTimer()
         }
+    }
+
+    /// 检查鼠标是否在预览窗口区域内
+    func checkMouseInPreviewWindow(previewFrame: CGRect) {
+        let isInPreview = previewFrame.contains(mouseLocation)
+        isMouseInPreviewWindow = isInPreview
+
+        if isInPreview {
+            // 鼠标进入预览窗口，取消隐藏计时器
+            hideTimer?.invalidate()
+            hideTimer = nil
+        } else {
+            // 鼠标离开预览窗口，检查是否也在 Dock 区域
+            let dockFrame = getDockFrame()
+            let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(mouseLocation)
+
+            if !isInDockArea {
+                // 也不在 Dock 区域，启动隐藏计时器
+                startHideTimer()
+            }
+        }
+    }
+
+    func startHideTimer() {
+        guard hideTimer == nil else { return }
+
+        hideTimer = Timer.scheduledTimer(withTimeInterval: hideDelay, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.hoveredAppBundleID = nil
+                self?.hoveredIconInfo = nil
+                self?.isMouseInPreviewWindow = false
+            }
+        }
+    }
+
+    /// 重置所有状态（在预览窗口被点击后调用）
+    func resetState() {
+        hoverTimer?.invalidate()
+        hoverTimer = nil
+        hideTimer?.invalidate()
+        hideTimer = nil
+        isMouseInPreviewWindow = false
+    }
+
+    // 获取 Dock 图标信息（包含精确位置）
+    private func getDockIconInfoAtLocation(_ location: CGPoint) -> DockIconInfo? {
+        guard let screenHeight = NSScreen.main?.frame.height else { return nil }
+
+        // 转换到 AX 坐标系
+        let axLocation = CGPoint(x: location.x, y: screenHeight - location.y)
+
+        // 找到 Dock 进程
+        guard let dockApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.dock" }) else {
+            return nil
+        }
+
+        let dockPID = dockApp.processIdentifier
+        let dockElement = AXUIElementCreateApplication(dockPID)
+
+        var childrenRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(dockElement, kAXChildrenAttribute as CFString, &childrenRef) == .success,
+              let children = childrenRef as? [AXUIElement] else {
+            return nil
+        }
+
+        for child in children {
+            var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleRef)
+            let role = roleRef as? String ?? ""
+
+            if role == "AXList" || role == "AXScrollArea" || role == "AXGroup" {
+                var listChildrenRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &listChildrenRef) == .success,
+                   let listChildren = listChildrenRef as? [AXUIElement] {
+
+                    for listChild in listChildren {
+                        var positionRef: CFTypeRef?
+                        var sizeRef: CFTypeRef?
+
+                        guard AXUIElementCopyAttributeValue(listChild, kAXPositionAttribute as CFString, &positionRef) == .success,
+                              AXUIElementCopyAttributeValue(listChild, kAXSizeAttribute as CFString, &sizeRef) == .success else {
+                            continue
+                        }
+
+                        var position = CGPoint.zero
+                        var size = CGSize.zero
+                        AXValueGetValue(positionRef as! AXValue, .cgPoint, &position)
+                        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+
+                        let iconRect = CGRect(origin: position, size: size)
+
+                        if iconRect.contains(axLocation) {
+                            // 获取 bundleID
+                            if let bundleID = getBundleIDFromDockIcon(listChild) {
+                                // 转换回 macOS 屏幕坐标系
+                                let macFrame = CGRect(
+                                    x: iconRect.origin.x,
+                                    y: screenHeight - iconRect.origin.y - iconRect.size.height,
+                                    width: iconRect.size.width,
+                                    height: iconRect.size.height
+                                )
+                                let center = CGPoint(x: macFrame.midX, y: macFrame.midY)
+
+                                return DockIconInfo(bundleID: bundleID, frame: macFrame, center: center)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return nil
     }
 
     // 转换屏幕坐标
     private func getAppBundleIDAtScreenLocation(_ location: CGPoint) -> String? {
         // 先尝试 Accessibility API
         if let bundleID = getAppBundleIDViaAccessibility(location) {
-            Logger.info("  [检测] Accessibility: \(bundleID)")
-            // 如果返回的是 Dock 本身，忽略它
             if bundleID != "com.apple.dock" {
                 return bundleID
             }
         }
 
-        // Accessibility 返回 Dock，优先使用位置估算，不使用前台应用
+        // Accessibility 返回 Dock，优先使用位置估算
         if let bundleID = getAppBundleIDViaDockPosition(location) {
-            Logger.info("  [检测] 位置估算: \(bundleID)")
             return bundleID
         }
 
@@ -889,15 +1007,24 @@ class DockEventMonitor: ObservableObject {
         AXIsProcessTrustedWithOptions(options as CFDictionary)
     }
 
-    private func startHoverTimer(for bundleID: String) {
+    private func startHoverTimer(for iconInfo: DockIconInfo) {
         hoverTimer?.invalidate()
-
-        Logger.info(">>> startHoverTimer: \(bundleID), delay: \(hoverDelay)s")
 
         hoverTimer = Timer.scheduledTimer(withTimeInterval: hoverDelay, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
-                Logger.info(">>> Timer fired, setting hoveredAppBundleID: \(bundleID)")
+                self?.hoveredAppBundleID = iconInfo.bundleID
+                self?.hoveredIconInfo = iconInfo
+            }
+        }
+    }
+
+    private func startHoverTimer(for bundleID: String) {
+        hoverTimer?.invalidate()
+
+        hoverTimer = Timer.scheduledTimer(withTimeInterval: hoverDelay, repeats: false) { [weak self] _ in
+            DispatchQueue.main.async {
                 self?.hoveredAppBundleID = bundleID
+                self?.hoveredIconInfo = nil  // 无精确位置信息
             }
         }
     }
@@ -909,6 +1036,7 @@ class DockEventMonitor: ObservableObject {
         if hoveredAppBundleID != nil {
             DispatchQueue.main.async { [weak self] in
                 self?.hoveredAppBundleID = nil
+                self?.hoveredIconInfo = nil
             }
         }
     }

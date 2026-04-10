@@ -3,7 +3,7 @@ import AppKit
 import Combine
 
 // MARK: - DockPreviewManager (Shared Instance)
-/// 程序坞预览管理器 - 单例，复用 PreviewGenerator
+/// 程序坞预览管理器 - 单例，复用 PreviewGenerator，优化性能
 class DockPreviewManager: ObservableObject {
     static let shared = DockPreviewManager()
 
@@ -11,12 +11,15 @@ class DockPreviewManager: ObservableObject {
     @Published var previewItems: [DockPreviewItem] = []
     @Published var currentDockPosition: DockPosition = .bottom
     @Published var hoveredIndex: Int?
+    @Published var previewImages: [CGWindowID: NSImage] = [:]
+    @Published var iconCenter: CGPoint?
+    @Published var previewWindowFrame: CGRect = .zero  // 预览窗口的屏幕位置
 
-    // 共享的 PreviewGenerator 实例
     let previewGenerator = PreviewGenerator()
 
     private let eventMonitor = DockEventMonitor()
     private var cancellables = Set<AnyCancellable>()
+    private var mouseCheckTimer: Timer?
 
     private init() {
         setupBindings()
@@ -24,26 +27,70 @@ class DockPreviewManager: ObservableObject {
 
     func start() {
         eventMonitor.startMonitoring()
-        Logger.info("DockPreviewManager started")
     }
 
     func stop() {
         eventMonitor.stopMonitoring()
+        mouseCheckTimer?.invalidate()
         isPreviewVisible = false
-        Logger.info("DockPreviewManager stopped")
     }
 
     private func setupBindings() {
         // 监听 Dock 图标悬停
         eventMonitor.$hoveredAppBundleID
+            .removeDuplicates()
             .sink { [weak self] bundleID in
                 self?.handleHoverChange(bundleID: bundleID)
+            }
+            .store(in: &cancellables)
+
+        // 监听图标位置变化
+        eventMonitor.$hoveredIconInfo
+            .sink { [weak self] iconInfo in
+                self?.iconCenter = iconInfo?.center
             }
             .store(in: &cancellables)
 
         // 监听 Dock 位置变化
         eventMonitor.$dockPosition
             .assign(to: &$currentDockPosition)
+
+        // 监听鼠标位置变化
+        eventMonitor.$mouseLocation
+            .sink { [weak self] location in
+                self?.checkMouseInPreviewWindow(location)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// 更新预览窗口的 frame（由 AppDelegate 调用）
+    func updatePreviewWindowFrame(_ frame: CGRect) {
+        previewWindowFrame = frame
+    }
+
+    /// 检查鼠标是否在预览窗口内
+    private func checkMouseInPreviewWindow(_ location: CGPoint) {
+        guard isPreviewVisible else { return }
+
+        // 扩大检测区域，增加 10 像素的容差
+        let expandedFrame = previewWindowFrame.insetBy(dx: -10, dy: -10)
+        let isInPreview = expandedFrame.contains(location)
+
+        eventMonitor.isMouseInPreviewWindow = isInPreview
+
+        if isInPreview {
+            // 鼠标在预览窗口内，保持显示
+            mouseCheckTimer?.invalidate()
+        } else {
+            // 鼠标离开预览窗口，检查是否在 Dock 区域
+            let dockFrame = DockGeometry.getDockFrame()
+            let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(location)
+
+            if !isInDockArea {
+                // 也不在 Dock 区域，隐藏预览
+                eventMonitor.startHideTimer()
+            }
+        }
     }
 
     private func handleHoverChange(bundleID: String?) {
@@ -70,14 +117,40 @@ class DockPreviewManager: ObservableObject {
         // 从配置读取最大预览数量
         let maxCount = ConfigManager.shared.config.dockPreview.maxPreviewCount
 
-        // 创建预览项（注入共享的 PreviewGenerator）
+        // 创建预览项
         previewItems = sortedWindows.prefix(maxCount).map { windowModel in
             var item = DockPreviewItem(windowModel: windowModel)
             item.previewGenerator = previewGenerator
             return item
         }
 
+        // 预加载预览图（在显示之前就开始加载）
+        preloadPreviews(for: Array(sortedWindows.prefix(maxCount)))
+
         showPreview()
+    }
+
+    // 预加载预览图
+    private func preloadPreviews(for windows: [WindowModel]) {
+        let previewSize = ConfigManager.shared.config.appearance.previewSize.dimensions
+        let size = CGSize(width: previewSize.width, height: previewSize.height)
+
+        Task(priority: .userInitiated) {
+            await withTaskGroup(of: Void.self) { group in
+                for window in windows {
+                    // 检查是否已有缓存
+                    if self.previewImages[window.id] != nil { continue }
+
+                    group.addTask {
+                        if let image = await self.previewGenerator.generatePreview(for: window, size: size) {
+                            await MainActor.run {
+                                self.previewImages[window.id] = image
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func showPreview() {
@@ -85,15 +158,21 @@ class DockPreviewManager: ObservableObject {
             return
         }
 
-        withAnimation(DesignTokens.Animation.panelShow) {
+        withAnimation(.easeOut(duration: 0.1)) {
             isPreviewVisible = true
         }
     }
 
     private func hidePreview() {
-        withAnimation(DesignTokens.Animation.panelHide) {
+        withAnimation(.easeIn(duration: 0.08)) {
             isPreviewVisible = false
             hoveredIndex = nil
+        }
+        // 重置事件监听器状态，确保下次悬停能正常触发
+        eventMonitor.resetState()
+        // 清空预览图缓存（避免内存泄漏）
+        if previewImages.count > 20 {
+            previewImages.removeAll()
         }
     }
 
@@ -107,7 +186,7 @@ class DockPreviewManager: ObservableObject {
         WindowManager.shared.activateWindow(item.windowModel)
 
         // 延迟隐藏预览（给窗口激活留出时间）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.hidePreview()
         }
 
@@ -117,8 +196,6 @@ class DockPreviewManager: ObservableObject {
             object: nil,
             userInfo: ["windowModel": item.windowModel]
         )
-
-        Logger.info("Activated window: \(item.windowTitle)")
     }
 }
 
@@ -170,6 +247,7 @@ struct DockPreviewPanelView: View {
                     previewHeight: previewHeight,
                     itemWidth: itemWidth,
                     itemHeight: itemHeight,
+                    cachedImage: manager.previewImages[item.id],
                     onTap: {
                         manager.selectItem(item)
                     },
@@ -188,9 +266,6 @@ struct DockPreviewPanelView: View {
             x: 0,
             y: DesignTokens.Panel.shadowY
         )
-        .onAppear {
-            Logger.info("DockPreviewPanelView appeared")
-        }
     }
 
     private var backgroundView: some View {
@@ -210,11 +285,11 @@ struct DockPreviewItemView: View {
     let previewHeight: CGFloat
     let itemWidth: CGFloat
     let itemHeight: CGFloat
+    let cachedImage: NSImage?  // 预加载的缓存图片
     let onTap: () -> Void
     let onHover: (Bool) -> Void
 
     @State private var previewImage: NSImage?
-    @State private var isInternalHovered = false
 
     // 与切换器一致的图标尺寸
     private var iconSize: CGFloat { DesignTokens.WindowItem.iconSize }
@@ -263,11 +338,21 @@ struct DockPreviewItemView: View {
                 )
         )
         .scaleEffect(isHovered ? 1.03 : 1.0)
-        .animation(DesignTokens.Animation.itemHover, value: isHovered)
+        .animation(.easeInOut(duration: 0.1), value: isHovered)
         .onTapGesture(perform: onTap)
         .onHover(perform: onHover)
         .onAppear {
-            loadPreview()
+            // 优先使用缓存图片
+            if let cached = cachedImage {
+                previewImage = cached
+            } else {
+                loadPreview()
+            }
+        }
+        .onChange(of: cachedImage) { newImage in
+            if let image = newImage {
+                previewImage = image
+            }
         }
     }
 
@@ -310,20 +395,23 @@ struct DockPreviewItemView: View {
     }
 
     private func loadPreview() {
-        Task {
-            // 使用共享的 PreviewGenerator 实例
+        Task(priority: .userInitiated) {
             let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
-            previewImage = await generator.generatePreview(
+            if let image = await generator.generatePreview(
                 for: item.windowModel,
                 size: CGSize(width: previewWidth, height: previewHeight)
-            )
+            ) {
+                await MainActor.run {
+                    self.previewImage = image
+                }
+            }
         }
     }
 }
 
 // MARK: - DockPreviewItem
 struct DockPreviewItem: Identifiable {
-    let id: UUID
+    let id: CGWindowID
     let windowModel: WindowModel
     let windowTitle: String
     let appName: String
@@ -333,7 +421,7 @@ struct DockPreviewItem: Identifiable {
     var previewGenerator: PreviewGenerator?
 
     init(windowModel: WindowModel) {
-        self.id = UUID()
+        self.id = windowModel.id
         self.windowModel = windowModel
         self.windowTitle = windowModel.windowTitle.isEmpty ? windowModel.appName : windowModel.windowTitle
         self.appName = windowModel.appName
