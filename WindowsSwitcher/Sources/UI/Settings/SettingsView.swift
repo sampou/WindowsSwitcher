@@ -529,28 +529,40 @@ struct HotKeySettingsView: View {
 
             // 应用内切换快捷键
             SettingsSection(title: "应用内切换", icon: "app.badge") {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                    Text("同应用窗口切换")
-                        .font(FontSystem.bodyMedium)
+                SettingsToggle(
+                    title: "启用同应用窗口切换",
+                    description: "使用快捷键在当前应用的窗口之间切换",
+                    isOn: $config.config.hotKeys.appSwitchEnabled
+                )
 
-                    HotKeyRecorder(
-                        keyCode: $config.config.hotKeys.appSwitchKeyCode,
-                        modifiers: $config.config.hotKeys.appSwitchModifiers,
-                        placeholder: "⌥ `",
-                        onReset: {
-                            config.config.hotKeys.appSwitchKeyCode = 50
-                            config.config.hotKeys.appSwitchModifiers = 2048
-                        },
-                        onConflict: { conflict in
-                            currentConflict = conflict
-                            pendingHotKeyType = "appSwitch"
-                            showConflictAlert = true
-                        },
-                        onBeforeChange: {
-                            previousKeyCode = config.config.hotKeys.appSwitchKeyCode
-                            previousModifiers = config.config.hotKeys.appSwitchModifiers
-                        }
-                    )
+                if config.config.hotKeys.appSwitchEnabled {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                        Text("同应用窗口切换快捷键")
+                            .font(FontSystem.bodyMedium)
+
+                        HotKeyRecorder(
+                            keyCode: $config.config.hotKeys.appSwitchKeyCode,
+                            modifiers: $config.config.hotKeys.appSwitchModifiers,
+                            placeholder: "⌥ `",
+                            onReset: {
+                                config.config.hotKeys.appSwitchKeyCode = 50
+                                config.config.hotKeys.appSwitchModifiers = 2048
+                            },
+                            onConflict: { conflict in
+                                currentConflict = conflict
+                                pendingHotKeyType = "appSwitch"
+                                showConflictAlert = true
+                            },
+                            onBeforeChange: {
+                                previousKeyCode = config.config.hotKeys.appSwitchKeyCode
+                                previousModifiers = config.config.hotKeys.appSwitchModifiers
+                            }
+                        )
+                    }
+
+                    Text("按下快捷键后，切换面板将只显示当前应用的窗口")
+                        .font(FontSystem.captionMedium)
+                        .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                 }
             }
 

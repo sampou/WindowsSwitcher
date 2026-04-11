@@ -532,17 +532,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // 应用内切换快捷键（可自定义）
+        // 应用内切换快捷键（可自定义，可禁用）
         let appSwitchKeyCode = hotKeyConfig.appSwitchKeyCode
         let appSwitchModifiers = hotKeyConfig.appSwitchModifiers
+        let appSwitchEnabled = hotKeyConfig.appSwitchEnabled
 
-        hotKeyManager.register(
-            HotKey(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers, identifier: "appSwitch")
-        ) {
-            NotificationCenter.default.post(name: .appSwitchHotKeyPressed, object: nil)
+        if appSwitchEnabled {
+            hotKeyManager.register(
+                HotKey(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers, identifier: "appSwitch")
+            ) { [weak self] in
+                guard let self else { return }
+                Logger.info("=== AppSwitch hotkey pressed ===")
+                DispatchQueue.main.async {
+                    if self.isPanelVisible {
+                        // 面板已显示，在当前应用内切换窗口
+                        NotificationCenter.default.post(name: .appSwitchHotKeyPressed, object: nil)
+                    } else {
+                        // 面板未显示，显示面板并筛选当前应用的窗口
+                        Task { @MainActor in self.showSwitchPanel(appSwitchMode: true) }
+                    }
+                }
+            }
+            Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers))")
+        } else {
+            Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=DISABLED")
         }
-
-        Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers))")
     }
 
     // MARK: - 快捷键变化监听
@@ -716,8 +730,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - 切换面板
     @MainActor
-    func showSwitchPanel(reversed: Bool = false) {
-        Logger.info("==> showSwitchPanel START")
+    func showSwitchPanel(reversed: Bool = false, appSwitchMode: Bool = false) {
+        Logger.info("==> showSwitchPanel START (reversed=\(reversed), appSwitchMode=\(appSwitchMode))")
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
@@ -747,6 +761,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let t0 = CFAbsoluteTimeGetCurrent()
         var windows = windowManager.getAllWindows()
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
+
+        // 3. 如果是 appSwitchMode，只保留当前应用的窗口
+        if appSwitchMode, let currentApp = previousFrontmostApp?.localizedName {
+            windows = windows.filter { $0.appName == currentApp }
+            Logger.info("==> AppSwitchMode: filtered to \(windows.count) windows for \(currentApp)")
+        }
 
         // 3. 在获取窗口后，立即更新当前前台窗口的 lastActiveTime
         // 因为 previousPID 已经被切换成 WindowsSwitcher 自己了
@@ -825,8 +845,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             filterEngine: filterEngine
         )
         Logger.info("==> SwitchPanelViewModel created: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms")
+
+        // 选中逻辑
         if reversed {
             vm.selectPrevious()
+        } else if appSwitchMode && sortedWindows.count > 1 {
+            // 同应用切换模式：默认选中第二个窗口（下一个要切换的窗口）
+            vm.selectedIndex = 1
+            Logger.info("==> AppSwitchMode: selecting index 1 (next window)")
         } else if ConfigManager.shared.config.behavior.defaultSelectSecond && sortedWindows.count > 1 {
             // 如果启用了"默认选中第二个窗口"选项，且窗口数量大于1
             vm.selectedIndex = 1
