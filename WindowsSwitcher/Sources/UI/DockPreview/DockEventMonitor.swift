@@ -177,6 +177,8 @@ class DockEventMonitor: ObservableObject {
                 if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &listChildrenRef) == .success,
                    let listChildren = listChildrenRef as? [AXUIElement] {
 
+                    Logger.debug("[Dock AX] AX 图标元素总数: \(listChildren.count)")
+
                     for (childIdx, listChild) in listChildren.enumerated() {
                         var positionRef: CFTypeRef?
                         var sizeRef: CFTypeRef?
@@ -203,6 +205,11 @@ class DockEventMonitor: ObservableObject {
                             // 方法2: 通过索引获取（后备方案）
                             if bundleID == nil {
                                 bundleID = getBundleIDByDockIndex(childIdx)
+                            }
+
+                            // 方法3: 通过图标描述匹配运行中的应用（适用于未保留在程序坞的应用）
+                            if bundleID == nil {
+                                bundleID = getBundleIDFromRunningApps(listChild)
                             }
 
                             if let bundleID = bundleID {
@@ -517,15 +524,68 @@ class DockEventMonitor: ObservableObject {
     private func getBundleIDByDockIndex(_ index: Int) -> String? {
         let dockAppsList = getDockAppOrderWithBundleID()
 
+        Logger.debug("[Dock AX] 索引映射: 请求索引=\(index), 列表总数=\(dockAppsList.count)")
+
         guard index >= 0 && index < dockAppsList.count else {
+            Logger.warning("[Dock AX] 索引越界: index=\(index), count=\(dockAppsList.count)")
             return nil
         }
 
-        let (_, bundleID) = dockAppsList[index]
-        Logger.debug("[Dock AX] 通过索引 \(index) 获取到 bundleID: \(bundleID)")
+        let (appName, bundleID) = dockAppsList[index]
+        Logger.debug("[Dock AX] 通过索引 \(index) 获取到: \(appName) -> \(bundleID)")
         return bundleID
     }
-    
+
+    // 通过 AX 图标元素匹配运行中的应用（适用于未保留在程序坞的应用）
+    private func getBundleIDFromRunningApps(_ iconElement: AXUIElement) -> String? {
+        // 获取图标的 title 或 description
+        var titleRef: CFTypeRef?
+        var descRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(iconElement, kAXTitleAttribute as CFString, &titleRef)
+        AXUIElementCopyAttributeValue(iconElement, kAXDescriptionAttribute as CFString, &descRef)
+
+        let title = titleRef as? String
+        let description = descRef as? String
+        let iconName = title ?? description ?? ""
+
+        guard !iconName.isEmpty else {
+            Logger.debug("[Dock AX] 图标无 title/description")
+            return nil
+        }
+
+        Logger.debug("[Dock AX] 尝试匹配运行中应用: iconName=\(iconName)")
+
+        // 获取所有运行中的应用
+        let runningApps = NSWorkspace.shared.runningApplications
+
+        for app in runningApps {
+            // 跳过隐藏的应用和没有 UI 的应用
+            guard app.activationPolicy == .regular else { continue }
+
+            let appName = app.localizedName ?? ""
+
+            // 精确匹配（不区分大小写）
+            if appName.lowercased() == iconName.lowercased() {
+                if let bundleID = app.bundleIdentifier {
+                    Logger.debug("[Dock AX] 匹配到运行中应用: \(appName) -> \(bundleID)")
+                    return bundleID
+                }
+            }
+
+            // 部分匹配
+            if appName.lowercased().contains(iconName.lowercased()) ||
+               iconName.lowercased().contains(appName.lowercased()) {
+                if let bundleID = app.bundleIdentifier {
+                    Logger.debug("[Dock AX] 部分匹配到运行中应用: \(appName) -> \(bundleID)")
+                    return bundleID
+                }
+            }
+        }
+
+        Logger.debug("[Dock AX] 未匹配到运行中应用: \(iconName)")
+        return nil
+    }
+
     // 检查图标元素是否匹配
     private func checkIconElement(_ element: AXUIElement, at point: CGPoint) -> String? {
         var positionRef: CFTypeRef?
@@ -814,11 +874,13 @@ class DockEventMonitor: ObservableObject {
 
         // 先读取 persistent-apps（固定的应用）
         if let persistentApps = getAppsFromDockPlist(key: "persistent-apps") {
+            Logger.debug("[Dock Plist] persistent-apps 数量: \(persistentApps.count)")
             dockAppsList.append(contentsOf: persistentApps)
         }
 
         // 再读取 recent-apps（最近使用的应用）
         if let recentApps = getAppsFromDockPlist(key: "recent-apps") {
+            Logger.debug("[Dock Plist] recent-apps 数量: \(recentApps.count)")
             // 添加最近使用的应用（避免重复）
             for app in recentApps {
                 if !dockAppsList.contains(where: { $0.1 == app.1 }) {
@@ -836,6 +898,7 @@ class DockEventMonitor: ObservableObject {
             }
         }
 
+        Logger.debug("[Dock Plist] 总应用数: \(dockAppsList.count), 列表: \(dockAppsList.map { $0.1 })")
         return dockAppsList
     }
 
