@@ -24,18 +24,16 @@
 		7805487D329D7C4313E07206 /* FilterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443479EAF286E51D759D961E /* FilterEngine.swift */; };
 		94A08668C4A186E1CF922AEB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74BE378AF2CB2C559C33365 /* SettingsView.swift */; };
 		9980E92A9A32D04895F08DF0 /* PanelAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */; };
+		A1B2C3D4E5F6789012345678 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6789012345679 /* Assets.xcassets */; };
 		B7DD439EDD510E98D6C3F66C /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90BB4603BBAE5AC668324947 /* MenuBarView.swift */; };
 		C3EE2F94287F2281C8D7D2D5 /* DesignTokens.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF52C2CEF6664D31AE467C1B /* DesignTokens.swift */; };
+		C998F0B521D9C4F479AAE259 /* LaunchAtLoginManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC61B49F2F3EC92E993EA880 /* LaunchAtLoginManager.swift */; };
 		CA5EBF5C2521A1D748FA93DE /* ConfigModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4FC58D663B3CB8563B3FD1D /* ConfigModel.swift */; };
 		DE486BED21AF2A6C21EF1550 /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F6395992798B47B5D89F76A /* Extensions.swift */; };
 		DE7F31029A4580BEB5FE2B1C /* PreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CC11176E9A1F286871185CB /* PreviewView.swift */; };
 		F807070A205E57B2BE9FC1D8 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D2830A2BFDD6EC96DF6ED1 /* ThemeManager.swift */; };
 		F9B60FF46CDD68A7605EE0E2 /* ConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F823438ED496D6EC5C8A2EA7 /* ConfigManager.swift */; };
 /* End PBXBuildFile section */
-
-/* Begin PBXBuildFile section - Resources */
-			A1B2C3D4E5F6789012345678 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5A6789012345679 /* Assets.xcassets */; };
-/* End PBXBuildFile section - Resources */
 
 /* Begin PBXFileReference section */
 		0F6395992798B47B5D89F76A /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
@@ -46,13 +44,14 @@
 		47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewGenerator.swift; sourceTree = "<group>"; };
 		6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelAnimator.swift; sourceTree = "<group>"; };
 		6CC11176E9A1F286871185CB /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
-		6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "/Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift"; sourceTree = "<absolute>"; };
-		6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "/Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift"; sourceTree = "<absolute>"; };
+		6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift; sourceTree = "<absolute>"; };
+		6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift; sourceTree = "<absolute>"; };
 		903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		90BB4603BBAE5AC668324947 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		9513B6C10514C44B38148757 /* SearchBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarView.swift; sourceTree = "<group>"; };
 		9BC7AB091FE26DE005372983 /* WindowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowModel.swift; sourceTree = "<group>"; };
 		B1C2D3E4F5A6789012345679 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BC61B49F2F3EC92E993EA880 /* LaunchAtLoginManager.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LaunchAtLoginManager.swift; sourceTree = "<group>"; };
 		C3B9FAA7379F76BA0D0EF8C9 /* SwitchPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchPanelView.swift; sourceTree = "<group>"; };
 		C4A42A05F51980AF172E6128 /* WindowsSwitcherApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowsSwitcherApp.swift; sourceTree = "<group>"; };
 		C9B4651E6F7DCCE6EFEBE92C /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
@@ -75,17 +74,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
-
-/* Begin PBXResourcesBuildPhase section */
-		D2E3F4A5B6C7890123456789 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				A1B2C3D4E5F6789012345678 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXGroup section */
 		11CDB6F8D16282B94D7C1E40 /* Config */ = {
@@ -152,6 +140,7 @@
 				34497BB1961D522B58AE24F1 /* HotKeyManager */,
 				2ED91C03B3EF5377110991B5 /* PreviewGenerator */,
 				5ADF54C777259AD5B90B68D7 /* WindowManager */,
+				BC61B49F2F3EC92E993EA880 /* LaunchAtLoginManager.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -192,6 +181,14 @@
 			);
 			sourceTree = "<group>";
 		};
+		AE2A0E9796113B5468783D44 /* FilterEngine */ = {
+			isa = PBXGroup;
+			children = (
+				443479EAF286E51D759D961E /* FilterEngine.swift */,
+			);
+			path = FilterEngine;
+			sourceTree = "<group>";
+		};
 		C1D2E3F4A5B6789012345678 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -199,14 +196,6 @@
 			);
 			name = Resources;
 			path = WindowsSwitcher/Resources;
-			sourceTree = "<group>";
-		};
-		AE2A0E9796113B5468783D44 /* FilterEngine */ = {
-			isa = PBXGroup;
-			children = (
-				443479EAF286E51D759D961E /* FilterEngine.swift */,
-			);
-			path = FilterEngine;
 			sourceTree = "<group>";
 		};
 		CF6F0D7753C22B56BD185EEF /* SwitchPanel */ = {
@@ -282,6 +271,7 @@
 			packageReferences = (
 				4C77DBFBE4EB3C3A60C1B5DE /* XCRemoteSwiftPackageReference "HotKey" */,
 			);
+			productRefGroup = 8205D3D51BDEC57E455DC395 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -289,6 +279,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D2E3F4A5B6C7890123456789 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F6789012345678 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		DD85DCC951F17210847E7370 /* Sources */ = {
@@ -318,6 +319,7 @@
 				17DCE1B58A0FADC6DC6E3374 /* WindowManager.swift in Sources */,
 				25D24BBF4B974DD17F80F03D /* WindowModel.swift in Sources */,
 				29EBA1DF9DDB5AB2CDF978BC /* WindowsSwitcherApp.swift in Sources */,
+				C998F0B521D9C4F479AAE259 /* LaunchAtLoginManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

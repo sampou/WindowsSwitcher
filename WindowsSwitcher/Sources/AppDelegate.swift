@@ -29,23 +29,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.accessory)
         Logger.info("1. Activation policy set")
 
+        // 同步开机启动状态
+        LaunchAtLoginManager.shared.syncStatus()
+        Logger.info("2. Launch at login synced")
+
         setupMenuBar()
-        Logger.info("2. MenuBar setup complete")
+        Logger.info("3. MenuBar setup complete")
 
         requestPermissions()
-        Logger.info("3. Permissions requested")
+        Logger.info("4. Permissions requested")
 
         setupHotKeys()
-        Logger.info("4. HotKeys setup complete")
+        Logger.info("5. HotKeys setup complete")
 
         // 监听 Option 键释放，当面板显示时自动切换并关闭
         setupOptionKeyMonitor()
-        Logger.info("5. Option key monitor setup complete")
+        Logger.info("6. Option key monitor setup complete")
 
         // 启动程序坞预览功能（如果启用）
-        Logger.info("6. Calling setupDockPreview...")
+        Logger.info("7. Calling setupDockPreview...")
         setupDockPreview()
-        Logger.info("7. setupDockPreview complete")
+        Logger.info("8. setupDockPreview complete")
     }
 
     // 启动程序坞预览功能

@@ -58,6 +58,7 @@ struct BehaviorConfig: Codable, Equatable {
     var panelDisplayDelay: Double = 0.0
     var defaultSelectSecond: Bool = false  // 打开切换面板时默认选中第二个窗口
     var showBackgroundPreview: Bool = true  // 是否显示背景预览
+    var launchAtLogin: Bool = false  // 开机自动启动
 }
 
 struct DockPreviewConfig: Codable, Equatable {

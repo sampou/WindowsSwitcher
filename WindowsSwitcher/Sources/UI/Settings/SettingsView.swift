@@ -108,9 +108,14 @@ struct AppearanceSettingsView: View {
 
 struct BehaviorSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
+    @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
 
     var body: some View {
         Form {
+            Section("启动") {
+                Toggle("开机自动启动", isOn: $launchAtLogin.isEnabled)
+            }
+
             Section("窗口显示") {
                 Toggle("显示最小化窗口", isOn: $config.config.behavior.showMinimizedWindows)
                 Toggle("显示隐藏窗口", isOn: $config.config.behavior.showHiddenWindows)
