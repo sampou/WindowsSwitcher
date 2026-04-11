@@ -160,3 +160,97 @@ struct DesignTokens {
         static let bottomPadding: CGFloat = 16
     }
 }
+
+// ============================================
+// 字体层级系统
+// ============================================
+
+struct FontSystem {
+    // 标题层级
+    static let titleLarge = Font.system(size: 18, weight: .semibold)
+    static let titleMedium = Font.system(size: 16, weight: .medium)
+    static let titleSmall = Font.system(size: 14, weight: .medium)
+
+    // 正文层级
+    static let bodyLarge = Font.system(size: 14, weight: .regular)
+    static let bodyMedium = Font.system(size: 13, weight: .regular)
+    static let bodySmall = Font.system(size: 12, weight: .regular)
+
+    // 辅助层级
+    static let captionMedium = Font.system(size: 11, weight: .regular)
+    static let captionSmall = Font.system(size: 10, weight: .regular)
+
+    // 按钮字体
+    static let button = Font.system(size: 13, weight: .medium)
+    static let buttonSmall = Font.system(size: 11, weight: .medium)
+}
+
+// ============================================
+// 响应式尺寸计算
+// ============================================
+
+struct ResponsiveSize {
+    /// 根据屏幕尺寸计算设置窗口大小
+    static func settingsWindowSize() -> CGSize {
+        guard let screen = NSScreen.main else {
+            return CGSize(width: 600, height: 580)
+        }
+
+        let screenWidth = screen.frame.width
+        let screenHeight = screen.frame.height
+
+        // 基准尺寸
+        var width: CGFloat = 600
+        var height: CGFloat = 580
+
+        // 小屏幕适配
+        if screenWidth < 1200 {
+            width = min(550, screenWidth * 0.9)
+            height = min(540, screenHeight * 0.8)
+        } else if screenWidth > 1920 {
+            // 大屏幕适配
+            width = 680
+            height = 640
+        }
+
+        return CGSize(width: width, height: height)
+    }
+
+    /// 计算窗口最小尺寸
+    static let minWindowSize = CGSize(width: 480, height: 480)
+}
+
+// ============================================
+// 设置界面分组枚举
+// ============================================
+
+enum SettingsGroup: String, CaseIterable {
+    case general = "通用"
+    case switcher = "切换器"
+    case preview = "预览"
+    case dock = "程序坞"
+    case hotkey = "快捷键"
+    case about = "关于"
+
+    var icon: String {
+        switch self {
+        case .general: return "gearshape.2"
+        case .switcher: return "rectangle.on.rectangle"
+        case .preview: return "eye"
+        case .dock: return "dock.rectangle"
+        case .hotkey: return "keyboard"
+        case .about: return "info.circle"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .general: return "启动、主题等基础设置"
+        case .switcher: return "窗口切换器行为配置"
+        case .preview: return "预览窗口显示设置"
+        case .dock: return "程序坞悬停预览设置"
+        case .hotkey: return "快捷键自定义配置"
+        case .about: return "版本信息与帮助"
+        }
+    }
+}

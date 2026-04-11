@@ -2,189 +2,487 @@ import SwiftUI
 import Carbon
 import AppKit
 
-/// F07 设置面板：外观 / 行为 / 快捷键，含保存失败提示和重置功能
+// ============================================
+// F07 设置面板 - 响应式设计，统一交互规范
+// ============================================
+
 struct SettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
+    @ObservedObject private var themeManager = ThemeManager.shared
     @State private var showResetConfirm = false
+    @State private var selectedGroup: SettingsGroup = .general
 
     var body: some View {
-        VStack(spacing: 0) {
-            // 保存失败横幅
-            if let error = config.saveError {
-                HStack(spacing: DesignTokens.Spacing.sm) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.yellow)
-                    Text(error)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    Button {
-                        config.saveError = nil
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain)
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                // 左侧导航栏
+                settingsSidebar(width: sidebarWidth(for: geometry.size.width))
+                    .frame(width: sidebarWidth(for: geometry.size.width))
+                    .background(Color(NSColor.controlBackgroundColor))
+
+                Divider()
+
+                // 右侧内容区
+                ScrollView {
+                    settingsContent()
+                        .padding(.horizontal, DesignTokens.Spacing.xl)
+                        .padding(.vertical, DesignTokens.Spacing.lg)
                 }
-                .padding(.horizontal, DesignTokens.Spacing.md)
-                .padding(.vertical, DesignTokens.Spacing.sm)
-                .background(Color.yellow.opacity(0.15))
-            }
-
-            TabView {
-                AppearanceSettingsView()
-                    .tabItem { Label("外观", systemImage: "paintbrush") }
-
-                BehaviorSettingsView()
-                    .tabItem { Label("行为", systemImage: "gearshape") }
-
-                HotKeySettingsView()
-                    .tabItem { Label("快捷键", systemImage: "keyboard") }
-            }
-
-            // 底部重置按钮
-            Divider()
-            HStack {
-                Spacer()
-                Button("恢复默认设置") {
-                    showResetConfirm = true
-                }
-                .foregroundStyle(.red)
-                .buttonStyle(.plain)
-                .font(.system(size: 12))
-                .padding(.horizontal, DesignTokens.Spacing.md)
-                .padding(.vertical, DesignTokens.Spacing.sm)
             }
         }
-        .frame(width: 520, height: 520)
-        .confirmationDialog("确认恢复默认设置？", isPresented: $showResetConfirm, titleVisibility: .visible) {
+        .frame(
+            minWidth: ResponsiveSize.minWindowSize.width,
+            minHeight: ResponsiveSize.minWindowSize.height
+        )
+        .preferredColorScheme(themeManager.effectiveColorScheme)
+        // 保存失败横幅
+        .overlay(alignment: .top) {
+            if let error = config.saveError {
+                saveErrorBanner(error: error)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .confirmationDialog(
+            "确认恢复默认设置？",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
             Button("恢复默认", role: .destructive) { config.reset() }
             Button("取消", role: .cancel) {}
         } message: {
             Text("所有设置将恢复为出厂默认值，此操作不可撤销。")
         }
     }
-}
 
-// MARK: - 外观
+    // MARK: - 响应式侧边栏宽度
 
-struct AppearanceSettingsView: View {
-    @ObservedObject private var config = ConfigManager.shared
+    private func sidebarWidth(for containerWidth: CGFloat) -> CGFloat {
+        max(140, min(180, containerWidth * 0.25))
+    }
 
-    var body: some View {
-        Form {
-            Section("主题") {
-                Picker("主题模式", selection: $config.config.appearance.theme) {
-                    Text("浅色").tag(AppTheme.light)
-                    Text("深色").tag(AppTheme.dark)
-                    Text("跟随系统").tag(AppTheme.auto)
-                }
-                .pickerStyle(.segmented)
+    // MARK: - 侧边栏
+
+    @ViewBuilder
+    private func settingsSidebar(width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 应用标题
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Image(nsImage: NSImage(named: "AppIcon") ?? NSImage())
+                    .resizable()
+                    .frame(width: 28, height: 28)
+                Text("Windows Switcher")
+                    .font(FontSystem.titleSmall)
+            }
+            .padding(.horizontal, DesignTokens.Spacing.lg)
+            .padding(.vertical, DesignTokens.Spacing.xl)
+
+            Divider()
+                .padding(.vertical, DesignTokens.Spacing.sm)
+
+            // 导航列表
+            ForEach(SettingsGroup.allCases, id: \.self) { group in
+                sidebarItem(for: group)
             }
 
-            Section("预览窗口") {
-                Picker("预览大小", selection: $config.config.appearance.previewSize) {
-                    Text("小").tag(PreviewSize.small)
-                    Text("中").tag(PreviewSize.medium)
-                    Text("大").tag(PreviewSize.large)
-                }
-                .pickerStyle(.segmented)
+            Spacer()
 
-                Picker("每行列数", selection: $config.config.appearance.switcherColumns) {
-                    Text("自动").tag(0)
-                    Text("3列").tag(3)
-                    Text("4列").tag(4)
-                    Text("5列").tag(5)
-                    Text("6列").tag(6)
-                    Text("8列").tag(8)
+            // 版本信息
+            VStack(alignment: .leading, spacing: 2) {
+                Text("版本 \(appVersion)")
+                    .font(FontSystem.captionSmall)
+                    .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
+                Text("Build \(buildNumber)")
+                    .font(FontSystem.captionSmall)
+                    .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
+            }
+            .padding(.horizontal, DesignTokens.Spacing.lg)
+            .padding(.bottom, DesignTokens.Spacing.lg)
+        }
+    }
+
+    @ViewBuilder
+    private func sidebarItem(for group: SettingsGroup) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                selectedGroup = group
+            }
+        } label: {
+            HStack(spacing: DesignTokens.Spacing.md) {
+                Image(systemName: group.icon)
+                    .font(.system(size: 14))
+                    .frame(width: 20)
+
+                Text(group.rawValue)
+                    .font(FontSystem.bodyMedium)
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .padding(.horizontal, DesignTokens.Spacing.lg)
+            .padding(.vertical, DesignTokens.Spacing.sm)
+            .background {
+                if selectedGroup == group {
+                    RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.button)
+                        .fill(Color.accentColor.opacity(0.15))
                 }
-                .pickerStyle(.segmented)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(selectedGroup == group ? .primary : DesignTokens.Colors.secondaryLabel)
+    }
+
+    // MARK: - 内容区
+
+    @ViewBuilder
+    private func settingsContent() -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 页面标题
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selectedGroup.rawValue)
+                        .font(FontSystem.titleLarge)
+                    Text(selectedGroup.description)
+                        .font(FontSystem.captionMedium)
+                        .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                }
+                Spacer()
+
+                // 重置按钮
+                Button {
+                    showResetConfirm = true
+                } label: {
+                    Label("恢复默认", systemImage: "arrow.counterclockwise")
+                        .font(FontSystem.buttonSmall)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+            }
+            .padding(.bottom, DesignTokens.Spacing.lg)
+
+            Divider()
+                .padding(.bottom, DesignTokens.Spacing.lg)
+
+            // 具体设置内容
+            switch selectedGroup {
+            case .general:
+                GeneralSettingsView()
+            case .switcher:
+                SwitcherSettingsView()
+            case .preview:
+                PreviewSettingsView()
+            case .dock:
+                DockSettingsView()
+            case .hotkey:
+                HotKeySettingsView()
+            case .about:
+                AboutSettingsView()
             }
         }
-        .formStyle(.grouped)
+    }
+
+    // MARK: - 错误提示横幅
+
+    @ViewBuilder
+    private func saveErrorBanner(error: String) -> some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+            Text(error)
+                .font(FontSystem.bodySmall)
+            Spacer()
+            Button {
+                config.saveError = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.lg)
         .padding(.vertical, DesignTokens.Spacing.sm)
+        .background(Color.yellow.opacity(0.15))
+    }
+
+    // MARK: - 版本信息
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 }
 
-// MARK: - 行为
+// ============================================
+// 通用设置
+// ============================================
 
-struct BehaviorSettingsView: View {
+struct GeneralSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
     @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
 
     var body: some View {
-        Form {
-            Section("启动") {
-                Toggle("开机自动启动", isOn: $launchAtLogin.isEnabled)
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+            // 启动设置
+            SettingsSection(title: "启动", icon: "power") {
+                SettingsToggle(
+                    title: "开机自动启动",
+                    description: "登录后自动在后台运行",
+                    isOn: $launchAtLogin.isEnabled
+                )
             }
 
-            Section("窗口显示") {
-                Toggle("显示最小化窗口", isOn: $config.config.behavior.showMinimizedWindows)
-                Toggle("显示隐藏窗口", isOn: $config.config.behavior.showHiddenWindows)
-                Toggle("默认选中第二个窗口", isOn: $config.config.behavior.defaultSelectSecond)
-            }
+            // 主题设置
+            SettingsSection(title: "主题", icon: "paintbrush") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    Text("外观模式")
+                        .font(FontSystem.bodyMedium)
 
-            Section("切换器背景预览") {
-                Toggle("显示背景预览", isOn: $config.config.behavior.showBackgroundPreview)
-            }
-
-            Section("程序坞预览") {
-                Toggle("启用程序坞预览", isOn: $config.config.dockPreview.enabled)
-
-                if config.config.dockPreview.enabled {
-                    // 悬停延迟
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                        HStack {
-                            Text("悬停延迟")
-                            Spacer()
-                            Text(String(format: "%.0f ms", config.config.dockPreview.hoverDelay * 1000))
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $config.config.dockPreview.hoverDelay, in: 0.05...0.5, step: 0.05)
-                            .tint(DesignTokens.Colors.accent)
+                    Picker("", selection: $config.config.appearance.theme) {
+                        Text("浅色").tag(AppTheme.light)
+                        Text("深色").tag(AppTheme.dark)
+                        Text("跟随系统").tag(AppTheme.auto)
                     }
-
-                    // 隐藏延迟
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                        HStack {
-                            Text("隐藏延迟")
-                            Spacer()
-                            Text(String(format: "%.0f ms", config.config.dockPreview.hideDelay * 1000))
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $config.config.dockPreview.hideDelay, in: 0.05...0.5, step: 0.05)
-                            .tint(DesignTokens.Colors.accent)
-                    }
-
-                    // 最大预览数量
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
-                        HStack {
-                            Text("最大预览数量")
-                            Spacer()
-                            Text("\(config.config.dockPreview.maxPreviewCount)")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: Binding(
-                            get: { Double(config.config.dockPreview.maxPreviewCount) },
-                            set: { config.config.dockPreview.maxPreviewCount = Int($0) }
-                        ), in: 2...16, step: 1)
-                        .tint(DesignTokens.Colors.accent)
-                    }
-
-                    // 显示动画
-                    Toggle("显示动画效果", isOn: $config.config.dockPreview.showAnimation)
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
             }
+
+            Spacer()
         }
-        .formStyle(.grouped)
-        .padding(.vertical, DesignTokens.Spacing.sm)
     }
 }
 
-// MARK: - 快捷键
+// ============================================
+// 切换器设置
+// ============================================
+
+struct SwitcherSettingsView: View {
+    @ObservedObject private var config = ConfigManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+            // 窗口显示
+            SettingsSection(title: "窗口显示", icon: "rectangle.on.rectangle") {
+                SettingsToggle(
+                    title: "显示最小化窗口",
+                    description: "在切换器中显示已最小化的窗口",
+                    isOn: $config.config.behavior.showMinimizedWindows
+                )
+
+                SettingsToggle(
+                    title: "显示隐藏窗口",
+                    description: "在切换器中显示已隐藏的窗口",
+                    isOn: $config.config.behavior.showHiddenWindows
+                )
+
+                SettingsToggle(
+                    title: "默认选中第二个窗口",
+                    description: "打开切换器时自动选中第二近使用的窗口",
+                    isOn: $config.config.behavior.defaultSelectSecond
+                )
+            }
+
+            // 切换器背景预览
+            SettingsSection(title: "背景预览", icon: "rectangle.dashed") {
+                SettingsToggle(
+                    title: "显示背景预览",
+                    description: "切换窗口时在背景显示目标窗口的大预览",
+                    isOn: $config.config.behavior.showBackgroundPreview
+                )
+            }
+
+            Spacer()
+        }
+    }
+}
+
+// ============================================
+// 预览设置
+// ============================================
+
+struct PreviewSettingsView: View {
+    @ObservedObject private var config = ConfigManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+            // 预览大小
+            SettingsSection(title: "预览大小", icon: "rectangle.expand.vertical") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    Text("预览窗口大小")
+                        .font(FontSystem.bodyMedium)
+
+                    Picker("", selection: $config.config.appearance.previewSize) {
+                        Text("小").tag(PreviewSize.small)
+                        Text("中").tag(PreviewSize.medium)
+                        Text("大").tag(PreviewSize.large)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                // 每行列数
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    Text("每行列数")
+                        .font(FontSystem.bodyMedium)
+
+                    Picker("", selection: $config.config.appearance.switcherColumns) {
+                        Text("自动").tag(0)
+                        Text("3列").tag(3)
+                        Text("4列").tag(4)
+                        Text("5列").tag(5)
+                        Text("6列").tag(6)
+                        Text("8列").tag(8)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+            }
+
+            Spacer()
+        }
+    }
+}
+
+// ============================================
+// 程序坞设置
+// ============================================
+
+struct DockSettingsView: View {
+    @ObservedObject private var config = ConfigManager.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+            // 启用开关
+            SettingsSection(title: "程序坞预览", icon: "dock.rectangle") {
+                SettingsToggle(
+                    title: "启用程序坞预览",
+                    description: "鼠标悬停在 Dock 图标上时显示窗口预览",
+                    isOn: $config.config.dockPreview.enabled
+                )
+            }
+
+            if config.config.dockPreview.enabled {
+                // 延迟设置
+                SettingsSection(title: "延迟设置", icon: "clock") {
+                    SettingsSlider(
+                        title: "悬停延迟",
+                        value: $config.config.dockPreview.hoverDelay,
+                        range: 0.05...0.5,
+                        step: 0.05,
+                        unit: "ms",
+                        multiplier: 1000
+                    )
+
+                    SettingsSlider(
+                        title: "隐藏延迟",
+                        value: $config.config.dockPreview.hideDelay,
+                        range: 0.05...0.5,
+                        step: 0.05,
+                        unit: "ms",
+                        multiplier: 1000
+                    )
+                }
+
+                // 显示设置
+                SettingsSection(title: "显示设置", icon: "slider.horizontal.3") {
+                    SettingsSlider(
+                        title: "最大预览数量",
+                        value: Binding(
+                            get: { Double(config.config.dockPreview.maxPreviewCount) },
+                            set: { config.config.dockPreview.maxPreviewCount = Int($0) }
+                        ),
+                        range: 2...16,
+                        step: 1,
+                        unit: "个"
+                    )
+
+                    SettingsToggle(
+                        title: "显示动画效果",
+                        description: "预览窗口显示/隐藏时的渐变动画",
+                        isOn: Binding(
+                            get: { config.config.dockPreview.showAnimation },
+                            set: { config.config.dockPreview.showAnimation = $0 }
+                        )
+                    )
+                }
+
+                // 间距设置
+                SettingsSection(title: "间距设置", icon: "arrow.up.and.down") {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        HStack {
+                            Text("垂直间距")
+                                .font(FontSystem.bodyMedium)
+                            Spacer()
+                            if config.config.dockPreview.verticalSpacing > 0 {
+                                Text("\(Int(config.config.dockPreview.verticalSpacing)) 像素")
+                                    .font(FontSystem.bodySmall)
+                                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                            } else {
+                                Text("自动")
+                                    .font(FontSystem.bodySmall)
+                                    .foregroundStyle(DesignTokens.Colors.accent)
+                            }
+                        }
+
+                        Slider(
+                            value: Binding(
+                                get: { config.config.dockPreview.verticalSpacing },
+                                set: { config.config.dockPreview.verticalSpacing = $0 }
+                            ),
+                            in: 0...32,
+                            step: 2
+                        )
+                        .tint(DesignTokens.Colors.accent)
+
+                        Text("设置为 0 时自动根据屏幕分辨率计算最佳间距")
+                            .font(FontSystem.captionSmall)
+                            .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
+                    }
+
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        HStack {
+                            Text("水平间距")
+                                .font(FontSystem.bodyMedium)
+                            Spacer()
+                            if config.config.dockPreview.horizontalSpacing > 0 {
+                                Text("\(Int(config.config.dockPreview.horizontalSpacing)) 像素")
+                                    .font(FontSystem.bodySmall)
+                                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                            } else {
+                                Text("自动")
+                                    .font(FontSystem.bodySmall)
+                                    .foregroundStyle(DesignTokens.Colors.accent)
+                            }
+                        }
+
+                        Slider(
+                            value: Binding(
+                                get: { config.config.dockPreview.horizontalSpacing },
+                                set: { config.config.dockPreview.horizontalSpacing = $0 }
+                            ),
+                            in: 0...32,
+                            step: 2
+                        )
+                        .tint(DesignTokens.Colors.accent)
+
+                        Text("用于 Dock 位于左侧或右侧时的间距")
+                            .font(FontSystem.captionSmall)
+                            .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
+                    }
+                }
+            }
+
+            Spacer()
+        }
+    }
+}
+
+// ============================================
+// 快捷键设置
+// ============================================
 
 struct HotKeySettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
@@ -192,24 +490,25 @@ struct HotKeySettingsView: View {
     @State private var showResetConfirm = false
     @State private var showConflictAlert = false
     @State private var currentConflict: HotKeyConflictInfo?
-    @State private var pendingHotKeyType: String?  // "switch" or "appSwitch"
-    // 保存冲突前的值，用于取消时恢复
+    @State private var pendingHotKeyType: String?
     @State private var previousKeyCode: UInt32?
     @State private var previousModifiers: UInt32?
 
     var body: some View {
-        Form {
-            Section("窗口切换快捷键") {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+            // 窗口切换快捷键
+            SettingsSection(title: "窗口切换", icon: "rectangle.on.rectangle") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                     Text("显示切换器")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(FontSystem.bodyMedium)
+
                     HotKeyRecorder(
                         keyCode: $config.config.hotKeys.switchKeyCode,
                         modifiers: $config.config.hotKeys.switchModifiers,
                         placeholder: "⌥ Tab",
                         onReset: {
-                            config.config.hotKeys.switchKeyCode = 48  // Tab
-                            config.config.hotKeys.switchModifiers = 2048  // Option
+                            config.config.hotKeys.switchKeyCode = 48
+                            config.config.hotKeys.switchModifiers = 2048
                         },
                         onConflict: { conflict in
                             currentConflict = conflict
@@ -217,7 +516,6 @@ struct HotKeySettingsView: View {
                             showConflictAlert = true
                         },
                         onBeforeChange: {
-                            // 保存变更前的值
                             previousKeyCode = config.config.hotKeys.switchKeyCode
                             previousModifiers = config.config.hotKeys.switchModifiers
                         }
@@ -225,21 +523,23 @@ struct HotKeySettingsView: View {
                 }
 
                 Text("反向切换：按住 Shift 即可反向切换，无需单独设置")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(FontSystem.captionMedium)
+                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
             }
 
-            Section("应用内切换快捷键") {
-                VStack(alignment: .leading, spacing: 4) {
+            // 应用内切换快捷键
+            SettingsSection(title: "应用内切换", icon: "app.badge") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                     Text("同应用窗口切换")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(FontSystem.bodyMedium)
+
                     HotKeyRecorder(
                         keyCode: $config.config.hotKeys.appSwitchKeyCode,
                         modifiers: $config.config.hotKeys.appSwitchModifiers,
                         placeholder: "⌥ `",
                         onReset: {
-                            config.config.hotKeys.appSwitchKeyCode = 50  // `
-                            config.config.hotKeys.appSwitchModifiers = 2048  // Option
+                            config.config.hotKeys.appSwitchKeyCode = 50
+                            config.config.hotKeys.appSwitchModifiers = 2048
                         },
                         onConflict: { conflict in
                             currentConflict = conflict
@@ -247,7 +547,6 @@ struct HotKeySettingsView: View {
                             showConflictAlert = true
                         },
                         onBeforeChange: {
-                            // 保存变更前的值
                             previousKeyCode = config.config.hotKeys.appSwitchKeyCode
                             previousModifiers = config.config.hotKeys.appSwitchModifiers
                         }
@@ -255,47 +554,17 @@ struct HotKeySettingsView: View {
                 }
             }
 
-            if let warning = conflictWarning {
-                Section {
-                    HStack(spacing: DesignTokens.Spacing.sm) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                        Text(warning)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            Section {
+            // 使用说明
+            SettingsSection(title: "使用说明", icon: "info.circle") {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Label("使用说明", systemImage: "info.circle")
-                        .font(.system(size: 12, weight: .medium))
-                    Text("1. 点击修饰键按钮选择需要的修饰键（可多选）")
-                    Text("2. 从下拉菜单选择主键")
-                    Text("3. 修改后立即生效，无需重启")
-                    Text("4. 至少需要一个修饰键")
+                    InstructionRow(number: 1, text: "点击修饰键按钮选择需要的修饰键（可多选）")
+                    InstructionRow(number: 2, text: "从下拉菜单选择主键")
+                    InstructionRow(number: 3, text: "修改后立即生效，无需重启")
+                    InstructionRow(number: 4, text: "至少需要一个修饰键")
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
 
-            Section {
-                Button("恢复所有快捷键默认设置") {
-                    showResetConfirm = true
-                }
-                .foregroundStyle(.red)
-            }
-        }
-        .formStyle(.grouped)
-        .padding(.vertical, DesignTokens.Spacing.sm)
-        .confirmationDialog("确认恢复默认快捷键？", isPresented: $showResetConfirm, titleVisibility: .visible) {
-            Button("恢复默认", role: .destructive) {
-                resetAllHotKeys()
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("所有快捷键将恢复为默认值，此操作不可撤销。")
+            Spacer()
         }
         .alert(
             currentConflict?.isUnoverridable == true ? "快捷键无法使用" : "快捷键冲突",
@@ -305,10 +574,8 @@ struct HotKeySettingsView: View {
                 openSystemKeyboardSettings()
                 cancelPendingHotKey()
             }
-            // 只有可覆盖的快捷键才显示"确定"按钮
             if currentConflict?.isUnoverridable != true {
                 Button("确定", role: .destructive) {
-                    // 强制应用设置
                     currentConflict = nil
                     pendingHotKeyType = nil
                     previousKeyCode = nil
@@ -336,7 +603,6 @@ struct HotKeySettingsView: View {
     }
 
     private func checkConflicts() {
-        // 检查切换器快捷键冲突
         if let conflict = HotKeyConflictChecker.checkSystemConflict(
             keyCode: config.config.hotKeys.switchKeyCode,
             modifiers: config.config.hotKeys.switchModifiers
@@ -345,7 +611,6 @@ struct HotKeySettingsView: View {
             return
         }
 
-        // 检查应用内切换快捷键冲突
         if let conflict = HotKeyConflictChecker.checkSystemConflict(
             keyCode: config.config.hotKeys.appSwitchKeyCode,
             modifiers: config.config.hotKeys.appSwitchModifiers
@@ -357,24 +622,13 @@ struct HotKeySettingsView: View {
         conflictWarning = nil
     }
 
-    private func resetAllHotKeys() {
-        config.config.hotKeys = HotKeyConfig()
-    }
-
     private func openSystemKeyboardSettings() {
-        // 打开系统设置的键盘快捷键界面
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts") {
             NSWorkspace.shared.open(url)
-        } else {
-            // 降级：打开键盘设置
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard") {
-                NSWorkspace.shared.open(url)
-            }
         }
     }
 
     private func cancelPendingHotKey() {
-        // 恢复之前保存的值
         if let keyCode = previousKeyCode, let modifiers = previousModifiers {
             if pendingHotKeyType == "switch" {
                 config.config.hotKeys.switchKeyCode = keyCode
@@ -391,14 +645,227 @@ struct HotKeySettingsView: View {
     }
 }
 
-// MARK: - 快捷键冲突信息
+// ============================================
+// 关于页面
+// ============================================
+
+struct AboutSettingsView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
+            // 应用信息
+            SettingsSection(title: "应用信息", icon: "app.fill") {
+                HStack(spacing: DesignTokens.Spacing.lg) {
+                    Image(nsImage: NSImage(named: "AppIcon") ?? NSImage())
+                        .resizable()
+                        .frame(width: 64, height: 64)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Windows Switcher")
+                            .font(FontSystem.titleMedium)
+                        Text("版本 \(appVersion) (\(buildNumber))")
+                            .font(FontSystem.bodyMedium)
+                            .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                        Text("仿 Windows Alt+Tab 窗口切换器")
+                            .font(FontSystem.captionMedium)
+                            .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
+                    }
+
+                    Spacer()
+                }
+            }
+
+            // 系统要求
+            SettingsSection(title: "系统要求", icon: "desktopcomputer") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    RequirementRow(icon: "checkmark.circle.fill", text: "macOS 13.0 或更高版本")
+                    RequirementRow(icon: "checkmark.circle.fill", text: "辅助功能权限（用于窗口切换）")
+                    RequirementRow(icon: "checkmark.circle.fill", text: "屏幕录制权限（用于窗口预览）")
+                }
+            }
+
+            // 功能特性
+            SettingsSection(title: "功能特性", icon: "star.fill") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    FeatureRow(icon: "rectangle.on.rectangle", text: "类 Windows Alt+Tab 窗口切换体验")
+                    FeatureRow(icon: "dock.rectangle", text: "Dock 图标悬停预览窗口")
+                    FeatureRow(icon: "keyboard", text: "自定义快捷键支持")
+                    FeatureRow(icon: "paintbrush", text: "浅色/深色主题自适应")
+                }
+            }
+
+            Spacer()
+        }
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+    }
+}
+
+// ============================================
+// 组件：设置分组
+// ============================================
+
+struct SettingsSection<Content: View>: View {
+    let title: String
+    var icon: String? = nil
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+            // 分组标题
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                if let icon = icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                Text(title)
+                    .font(FontSystem.titleSmall)
+            }
+
+            // 内容区域
+            content
+                .padding(DesignTokens.Spacing.lg)
+                .background(Color(NSColor.controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.md))
+        }
+    }
+}
+
+// ============================================
+// 组件：开关设置项
+// ============================================
+
+struct SettingsToggle: View {
+    let title: String
+    var description: String? = nil
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(FontSystem.bodyMedium)
+                if let description = description {
+                    Text(description)
+                        .font(FontSystem.captionMedium)
+                        .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+    }
+}
+
+// ============================================
+// 组件：滑块设置项
+// ============================================
+
+struct SettingsSlider: View {
+    let title: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    var unit: String = ""
+    var multiplier: Double = 1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack {
+                Text(title)
+                    .font(FontSystem.bodyMedium)
+                Spacer()
+                Text(String(format: "%.0f \(unit)", value * multiplier))
+                    .font(FontSystem.bodySmall)
+                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                    .monospacedDigit()
+            }
+
+            Slider(value: $value, in: range, step: step)
+                .tint(DesignTokens.Colors.accent)
+        }
+    }
+}
+
+// ============================================
+// 组件：说明行
+// ============================================
+
+struct InstructionRow: View {
+    let number: Int
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
+            Text("\(number).")
+                .font(FontSystem.captionMedium)
+                .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                .frame(width: 16, alignment: .leading)
+
+            Text(text)
+                .font(FontSystem.captionMedium)
+                .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+        }
+    }
+}
+
+// ============================================
+// 组件：需求行
+// ============================================
+
+struct RequirementRow: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(.green)
+            Text(text)
+                .font(FontSystem.captionMedium)
+        }
+    }
+}
+
+// ============================================
+// 组件：功能行
+// ============================================
+
+struct FeatureRow: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Image(systemName: icon)
+                .font(.system(size: 12))
+                .foregroundStyle(DesignTokens.Colors.accent)
+            Text(text)
+                .font(FontSystem.captionMedium)
+        }
+    }
+}
+
+// ============================================
+// 快捷键冲突信息
+// ============================================
+
 struct HotKeyConflictInfo {
     let hotKeyDisplay: String
     let description: String
-    var isUnoverridable: Bool = false  // 是否无法覆盖（系统级限制）
+    var isUnoverridable: Bool = false
 }
 
-// MARK: - 快捷键录制器（分步设置：修饰键 + 主键）
+// ============================================
+// 快捷键录制器（分步设置：修饰键 + 主键）
+// ============================================
+
 struct HotKeyRecorder: View {
     @Binding var keyCode: UInt32
     @Binding var modifiers: UInt32
@@ -534,7 +1001,10 @@ struct HotKeyRecorder: View {
     }
 }
 
-// MARK: - 修饰键开关
+// ============================================
+// 修饰键开关
+// ============================================
+
 struct ModifierKeyToggle: View {
     let symbol: String
     let label: String
@@ -559,7 +1029,10 @@ struct ModifierKeyToggle: View {
     }
 }
 
-// MARK: - 主键选择器
+// ============================================
+// 主键选择器
+// ============================================
+
 struct KeyPicker: View {
     @Binding var keyCode: UInt32
     var onSelectionChange: (() -> Void)? = nil
@@ -647,7 +1120,10 @@ struct KeyPicker: View {
     }
 }
 
-// MARK: - 快捷键格式化器
+// ============================================
+// 快捷键格式化器
+// ============================================
+
 struct HotKeyFormatter {
     /// 将 NSEvent.ModifierFlags 转换为 Carbon 修饰键值
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
@@ -753,10 +1229,12 @@ struct HotKeyFormatter {
     }
 }
 
-// MARK: - 快捷键冲突检测
+// ============================================
+// 快捷键冲突检测
+// ============================================
+
 struct HotKeyConflictChecker {
     /// 无法覆盖的系统快捷键（系统级，应用无法拦截）
-    /// 注：Command+Tab 现在可以通过私有 API 覆盖，已移除
     static let unoverridableSystemKeys: [(UInt32, UInt32, String)] = [
         // 目前没有无法覆盖的快捷键
     ]

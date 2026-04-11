@@ -22,8 +22,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dockPreviewCancellable: AnyCancellable?
     private var selectedWindowCancellable: AnyCancellable?  // 监听选中窗口变化
 
+    // 标记是否已完成延迟初始化
+    private var deferredInitCompleted = false
+    private var dockPreviewConfigCancellable: AnyCancellable?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let startTime = CFAbsoluteTimeGetCurrent()
         Logger.info("=== Application starting ===")
+
+        // === 第一阶段：核心初始化（必须同步完成）===
 
         // 确保作为菜单栏应用运行，不显示 Dock 图标
         NSApp.setActivationPolicy(.accessory)
@@ -33,27 +40,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         LaunchAtLoginManager.shared.syncStatus()
         Logger.info("2. Launch at login synced")
 
+        // 设置菜单栏
         setupMenuBar()
         Logger.info("3. MenuBar setup complete")
-
-        requestPermissions()
-        Logger.info("4. Permissions requested")
-
-        setupHotKeys()
-        Logger.info("5. HotKeys setup complete")
-
-        // 监听快捷键配置变化
-        setupHotKeyChangeListener()
-        Logger.info("5.1 HotKey change listener setup complete")
-
-        // 监听 Option 键释放，当面板显示时自动切换并关闭
-        setupOptionKeyMonitor()
-        Logger.info("6. Option key monitor setup complete")
-
-        // 启动程序坞预览功能（如果启用）
-        Logger.info("7. Calling setupDockPreview...")
-        setupDockPreview()
-        Logger.info("8. setupDockPreview complete")
 
         // 禁用系统 Command+Tab 快捷键（需要辅助功能权限）
         disableSystemHotKeysIfNeeded()
@@ -61,6 +50,56 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 注册退出处理器，确保应用退出时恢复系统快捷键
         atexit_b {
             restoreAllSystemHotKeys()
+        }
+
+        let coreInitTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        Logger.info("=== Core init completed in \(coreInitTime)ms ===")
+
+        // === 第二阶段：自动显示设置界面 ===
+        showSettingsOnLaunch()
+
+        // === 第三阶段：延迟初始化（非必要组件，后台执行）===
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.performDeferredInitialization()
+        }
+    }
+
+    /// 延迟初始化：加载非必要组件
+    private func performDeferredInitialization() {
+        guard !deferredInitCompleted else { return }
+        deferredInitCompleted = true
+
+        Logger.info("=== Starting deferred initialization ===")
+
+        // 请求权限
+        requestPermissions()
+        Logger.info("4. Permissions requested")
+
+        // 设置快捷键
+        setupHotKeys()
+        Logger.info("5. HotKeys setup complete")
+
+        // 监听快捷键配置变化
+        setupHotKeyChangeListener()
+        Logger.info("5.1 HotKey change listener setup complete")
+
+        // 监听 Option 键释放
+        setupOptionKeyMonitor()
+        Logger.info("6. Option key monitor setup complete")
+
+        // 启动程序坞预览功能
+        Logger.info("7. Calling setupDockPreview...")
+        setupDockPreview()
+        Logger.info("8. setupDockPreview complete")
+
+        Logger.info("=== Deferred initialization completed ===")
+    }
+
+    /// 启动时自动显示设置界面
+    private func showSettingsOnLaunch() {
+        // 显示设置窗口
+        DispatchQueue.main.async {
+            self.openSettings()
         }
     }
 
@@ -85,13 +124,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupDockPreview() {
         Logger.info(">>> setupDockPreview called")
 
-        // 检查配置是否启用程序坞预览
-        guard ConfigManager.shared.config.dockPreview.enabled else {
-            Logger.info("Dock preview is DISABLED in config")
-            return
-        }
+        // 监听配置变化，动态启动/停止程序坞预览
+        dockPreviewConfigCancellable = ConfigManager.shared.$config
+            .map(\.dockPreview.enabled)
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                if enabled {
+                    self?.startDockPreview()
+                } else {
+                    self?.stopDockPreview()
+                }
+            }
 
-        Logger.info("Dock preview is ENABLED, starting...")
+        // 初始状态
+        if ConfigManager.shared.config.dockPreview.enabled {
+            startDockPreview()
+        }
+    }
+
+    /// 启动程序坞预览
+    private func startDockPreview() {
+        Logger.info(">>> Starting Dock Preview...")
 
         // 启动 DockPreviewManager
         DockPreviewManager.shared.start()
@@ -111,6 +165,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
+    }
+
+    /// 停止程序坞预览
+    private func stopDockPreview() {
+        Logger.info(">>> Stopping Dock Preview...")
+
+        // 停止 DockPreviewManager
+        DockPreviewManager.shared.stop()
+        Logger.info("DockPreviewManager.stop() called")
+
+        // 取消监听
+        dockPreviewCancellable?.cancel()
+        dockPreviewCancellable = nil
+
+        // 隐藏预览窗口（在主线程）
+        Task { @MainActor in
+            self.hideDockPreviewPanel()
+        }
     }
 
     // 显示程序坞预览面板 - 精确定位在图标上方
@@ -163,9 +235,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let dockPosition = DockPreviewManager.shared.currentDockPosition
         let dockFrame = DockGeometry.getDockFrame()
 
-        // 从配置读取间距
-        let verticalSpacing = CGFloat(config.verticalSpacing)
-        let horizontalSpacing = CGFloat(config.horizontalSpacing)
+        // 获取智能间距（如果用户设置了自定义值则使用自定义值，否则使用系统推荐的智能间距）
+        let recommendedSpacing = DockGeometry.getRecommendedSpacing()
+        let verticalSpacing = config.verticalSpacing > 0 ? CGFloat(config.verticalSpacing) : recommendedSpacing.vertical
+        let horizontalSpacing = config.horizontalSpacing > 0 ? CGFloat(config.horizontalSpacing) : recommendedSpacing.horizontal
 
         // 计算面板位置
         var panelX: CGFloat
@@ -214,8 +287,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         // 确保面板不超出屏幕边界（跨分辨率适配）
-        panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
-        panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
+        // 注意：需要确保不会把面板拉回到覆盖 Dock 的位置
+        switch dockPosition {
+        case .bottom:
+            // Dock 在底部：确保面板底部不低于 Dock 顶部 + 计算的间距
+            let minY = dockFrame.height + verticalSpacing
+            panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
+            panelY = max(minY, min(panelY, screenFrame.height - panelHeight - 5))
+        case .top:
+            // Dock 在顶部：确保面板顶部不高于 Dock 底部 + 计算的间距
+            let maxY = screenFrame.height - dockFrame.height - verticalSpacing - panelHeight
+            panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
+            panelY = max(5, min(panelY, maxY))
+        case .left:
+            // Dock 在左侧：确保面板左边缘不低于 Dock 右边缘 + 计算的间距
+            let minX = dockFrame.width + horizontalSpacing
+            panelX = max(minX, min(panelX, screenFrame.width - panelWidth - 5))
+            panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
+        case .right:
+            // Dock 在右侧：确保面板右边缘不高于 Dock 左边缘 + 计算的间距
+            let maxX = screenFrame.width - dockFrame.width - horizontalSpacing - panelWidth
+            panelX = max(5, min(panelX, maxX))
+            panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
+        }
 
         // 创建 SwiftUI 视图
         let dockPreviewView = DockPreviewPanelView(manager: DockPreviewManager.shared) { [weak self] in
@@ -580,14 +674,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
+        // 计算响应式窗口尺寸
+        let windowSize = ResponsiveSize.settingsWindowSize()
+        let minSize = ResponsiveSize.minWindowSize
+
         // 手动创建并显示设置窗口，不依赖 SwiftUI Settings 场景
+        // SettingsView 内部已通过 @ObservedObject 监听 ThemeManager，自动响应主题变化
         let settingsView = SettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
 
         let window = NSWindow(contentViewController: hostingController)
         window.title = "WindowsSwitcher 设置"
-        window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 520, height: 520))
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.setContentSize(windowSize)
+        window.minSize = minSize
         window.center()
         window.delegate = self  // 设置代理以监听窗口关闭事件
         window.isReleasedWhenClosed = false  // 防止窗口关闭时被释放

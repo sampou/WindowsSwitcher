@@ -571,23 +571,128 @@ enum DockPosition {
 
 // MARK: - DockGeometry
 struct DockGeometry {
+    /// 获取 Dock 的实际位置和尺寸
     static func getDockFrame() -> CGRect {
-        // 获取 Dock 的实际位置和尺寸
-        // macOS 11+ 可以通过 NSDockTile 获取
         guard let screen = NSScreen.main else {
             return CGRect(x: 0, y: 0, width: 800, height: 80)
         }
 
         let screenFrame = screen.frame
-        let dockSize: CGFloat = 80 // 默认 Dock 高度
+        let dockPosition = getDockPosition()
+        let dockSize = getDockSize()
 
-        // 简化实现：假设 Dock 在底部
-        return CGRect(
-            x: 0,
-            y: 0,
-            width: screenFrame.width,
-            height: dockSize
-        )
+        switch dockPosition {
+        case .bottom:
+            return CGRect(
+                x: 0,
+                y: 0,
+                width: screenFrame.width,
+                height: dockSize
+            )
+        case .top:
+            return CGRect(
+                x: 0,
+                y: screenFrame.height - dockSize,
+                width: screenFrame.width,
+                height: dockSize
+            )
+        case .left:
+            return CGRect(
+                x: 0,
+                y: 0,
+                width: dockSize,
+                height: screenFrame.height
+            )
+        case .right:
+            return CGRect(
+                x: screenFrame.width - dockSize,
+                y: 0,
+                width: dockSize,
+                height: screenFrame.height
+            )
+        }
+    }
+
+    /// 获取 Dock 位置
+    static func getDockPosition() -> DockPosition {
+        if let dockPlist = UserDefaults(suiteName: "com.apple.dock")?.dictionaryRepresentation() {
+            let position = dockPlist["orientation"] as? String ?? "bottom"
+            switch position {
+            case "top": return .top
+            case "left": return .left
+            case "right": return .right
+            default: return .bottom
+            }
+        }
+        return .bottom
+    }
+
+    /// 获取 Dock 尺寸（高度或宽度）
+    /// 返回 Dock 占据的屏幕区域大小，包含图标、边距和阴影
+    static func getDockSize() -> CGFloat {
+        let defaults = UserDefaults(suiteName: "com.apple.dock")
+
+        // 获取图标大小设置（默认 48）
+        let iconSize = defaults?.double(forKey: "size") ?? 48
+
+        // Dock 的实际高度组成：
+        // - 图标大小
+        // - 上边距（约 6-8 像素，用于图标上方的空间）
+        // - 下边距（约 6-8 像素，用于图标下方的空间）
+        // - 阴影效果（约 3-5 像素，Dock 下方的阴影）
+
+        let topPadding: CGFloat = 8
+        let bottomPadding: CGFloat = 8
+        let shadowHeight: CGFloat = 4
+
+        // 检查是否启用了放大效果
+        let magnification = defaults?.bool(forKey: "magnification") ?? false
+        // 放大效果会在悬停时让图标变大，预留空间
+        let magnificationBonus: CGFloat = magnification ? 8 : 0
+
+        // 检查是否显示最近使用的应用
+        let showRecents = defaults?.bool(forKey: "show-recents") ?? false
+        let recentsBonus: CGFloat = showRecents ? 4 : 0
+
+        // 计算总高度
+        let totalHeight = CGFloat(iconSize) + topPadding + bottomPadding + shadowHeight + magnificationBonus + recentsBonus
+
+        // 确保合理的范围
+        return max(70, min(140, totalHeight))
+    }
+
+    /// 获取推荐间距（基于屏幕分辨率和 Dock 大小）
+    /// 返回预览窗口与 Dock 之间的安全间距
+    static func getRecommendedSpacing() -> (vertical: CGFloat, horizontal: CGFloat) {
+        guard let screen = NSScreen.main else {
+            return (vertical: 32, horizontal: 32)
+        }
+
+        let screenHeight = screen.frame.height
+        let screenWidth = screen.frame.width
+
+        // 基础间距：确保有足够的视觉分隔，不会覆盖 Dock
+        // 根据屏幕尺寸调整
+        let baseSpacing: CGFloat
+        if screenHeight < 900 {
+            // 小屏幕（MacBook Air 13" 等）
+            baseSpacing = 28
+        } else if screenHeight < 1100 {
+            // 中等屏幕（MacBook Pro 14", iMac 21.5" 等）
+            baseSpacing = 32
+        } else {
+            // 大屏幕（iMac 27", Pro Display XDR 等）
+            baseSpacing = 36
+        }
+
+        // 垂直间距：确保预览窗口不会覆盖 Dock
+        // 添加额外的安全裕度
+        let verticalSpacing = baseSpacing + 12
+
+        // 水平间距：用于侧边 Dock
+        let horizontalSpacing = screenWidth < 1600 ? baseSpacing + 8 : baseSpacing + 12
+
+        return (vertical: verticalSpacing, horizontal: horizontalSpacing)
     }
 }
 
