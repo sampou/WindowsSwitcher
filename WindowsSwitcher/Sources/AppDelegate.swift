@@ -3,9 +3,10 @@ import SwiftUI
 import Carbon
 import Combine
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
+    private var settingsWindow: NSWindow?  // 设置窗口引用
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
     private var globalEscKeyMonitor: Any?  // ESC 键全局监听器
@@ -469,6 +470,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openSettings() {
+        // 如果设置窗口已存在，直接激活
+        if let existingWindow = settingsWindow {
+            NSApp.setActivationPolicy(.regular)  // 确保 Dock 图标显示
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
         // 手动创建并显示设置窗口，不依赖 SwiftUI Settings 场景
         let settingsView = SettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
@@ -478,11 +487,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.setContentSize(NSSize(width: 480, height: 420))
         window.center()
+        window.delegate = self  // 设置代理以监听窗口关闭事件
+        window.isReleasedWhenClosed = false  // 防止窗口关闭时被释放
 
-        // 确保应用激活
+        // 保存窗口引用
+        settingsWindow = window
+
+        // 确保应用激活并显示 Dock 图标
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+
+        // 检查是否是设置窗口关闭
+        if window === settingsWindow {
+            // 切换回 accessory 模式，移除 Dock 图标
+            NSApp.setActivationPolicy(.accessory)
+            Logger.info("设置窗口已关闭，切换回 accessory 模式")
+        }
     }
 
     // MARK: - 切换面板
