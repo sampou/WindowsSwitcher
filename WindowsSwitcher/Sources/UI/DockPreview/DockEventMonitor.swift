@@ -78,8 +78,15 @@ class DockEventMonitor: ObservableObject {
             if let iconInfo = getDockIconInfoAtLocation(location) {
                 startHoverTimer(for: iconInfo)
             } else {
+                // getDockIconInfoAtLocation 失败时，尝试其他方法获取 bundleID
                 if let appBundleID = getAppBundleIDAtScreenLocation(location) {
-                    startHoverTimer(for: appBundleID)
+                    // 如果检测到的应用与当前悬停的应用相同，保留位置信息
+                    if appBundleID == hoveredAppBundleID && hoveredIconInfo != nil {
+                        // 保持当前的 hoveredIconInfo，不清空
+                        Logger.debug("[Dock] 保持位置信息: \(appBundleID)")
+                    } else {
+                        startHoverTimer(for: appBundleID)
+                    }
                 }
             }
             // 取消隐藏计时器
@@ -140,7 +147,7 @@ class DockEventMonitor: ObservableObject {
     }
 
     // 获取 Dock 图标信息（包含精确位置）
-    private func getDockIconInfoAtLocation(_ location: CGPoint) -> DockIconInfo? {
+    func getDockIconInfoAtLocation(_ location: CGPoint) -> DockIconInfo? {
         guard let screenHeight = NSScreen.main?.frame.height else { return nil }
 
         // 转换到 AX 坐标系
@@ -170,7 +177,7 @@ class DockEventMonitor: ObservableObject {
                 if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &listChildrenRef) == .success,
                    let listChildren = listChildrenRef as? [AXUIElement] {
 
-                    for listChild in listChildren {
+                    for (childIdx, listChild) in listChildren.enumerated() {
                         var positionRef: CFTypeRef?
                         var sizeRef: CFTypeRef?
 
@@ -187,8 +194,18 @@ class DockEventMonitor: ObservableObject {
                         let iconRect = CGRect(origin: position, size: size)
 
                         if iconRect.contains(axLocation) {
-                            // 获取 bundleID
-                            if let bundleID = getBundleIDFromDockIcon(listChild) {
+                            // 尝试多种方式获取 bundleID
+                            var bundleID: String?
+
+                            // 方法1: 从图标元素获取
+                            bundleID = getBundleIDFromDockIcon(listChild)
+
+                            // 方法2: 通过索引获取（后备方案）
+                            if bundleID == nil {
+                                bundleID = getBundleIDByDockIndex(childIdx)
+                            }
+
+                            if let bundleID = bundleID {
                                 // 转换回 macOS 屏幕坐标系
                                 let macFrame = CGRect(
                                     x: iconRect.origin.x,
@@ -198,6 +215,7 @@ class DockEventMonitor: ObservableObject {
                                 )
                                 let center = CGPoint(x: macFrame.midX, y: macFrame.midY)
 
+                                Logger.debug("[Dock AX] getDockIconInfoAtLocation 成功: \(bundleID), center=\(center)")
                                 return DockIconInfo(bundleID: bundleID, frame: macFrame, center: center)
                             }
                         }
@@ -1021,10 +1039,20 @@ class DockEventMonitor: ObservableObject {
     private func startHoverTimer(for bundleID: String) {
         hoverTimer?.invalidate()
 
+        // 如果是同一个应用，尝试保留已有的位置信息
+        let currentIconInfo = hoveredIconInfo
+
         hoverTimer = Timer.scheduledTimer(withTimeInterval: hoverDelay, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.hoveredAppBundleID = bundleID
-                self?.hoveredIconInfo = nil  // 无精确位置信息
+                // 如果之前有位置信息且是同一个应用，保留它
+                if let info = currentIconInfo, info.bundleID == bundleID {
+                    self?.hoveredIconInfo = info
+                    Logger.debug("[Dock Timer] 保留位置信息: \(bundleID), center=\(info.center)")
+                } else {
+                    self?.hoveredIconInfo = nil
+                    Logger.debug("[Dock Timer] 无位置信息: \(bundleID)")
+                }
             }
         }
     }

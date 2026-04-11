@@ -118,10 +118,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var panelX: CGFloat
         var panelY: CGFloat
 
-        // 使用图标中心位置进行精确定位
-        if let iconCenter = DockPreviewManager.shared.iconCenter {
+        // 同步获取图标中心位置（避免 Combine 发布延迟问题）
+        if let iconCenter = DockPreviewManager.shared.getCurrentIconCenter() {
             // 精确模式：面板水平居中于图标
             panelX = iconCenter.x - panelWidth / 2
+            Logger.debug("[Dock定位] 精确模式: iconCenter=\(iconCenter), panelWidth=\(panelWidth), panelX=\(panelX)")
 
             switch dockPosition {
             case .bottom:

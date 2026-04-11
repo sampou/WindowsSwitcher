@@ -35,19 +35,36 @@ class DockPreviewManager: ObservableObject {
         isPreviewVisible = false
     }
 
+    /// 同步获取当前悬停图标的中心位置（用于面板定位）
+    func getCurrentIconCenter() -> CGPoint? {
+        // 优先使用已设置的 hoveredIconInfo
+        if let iconInfo = eventMonitor.hoveredIconInfo {
+            Logger.debug("[DockManager] 使用 hoveredIconInfo: \(iconInfo.center)")
+            return iconInfo.center
+        }
+        // 否则通过当前鼠标位置获取
+        let mouseLocation = eventMonitor.mouseLocation
+        if let iconInfo = eventMonitor.getDockIconInfoAtLocation(mouseLocation) {
+            Logger.debug("[DockManager] 通过鼠标位置获取: \(iconInfo.center)")
+            return iconInfo.center
+        }
+        Logger.warning("[DockManager] 无法获取图标位置")
+        return nil
+    }
+
     private func setupBindings() {
-        // 监听 Dock 图标悬停
+        // 监听图标位置变化（先更新 iconCenter）
+        eventMonitor.$hoveredIconInfo
+            .sink { [weak self] iconInfo in
+                self?.iconCenter = iconInfo?.center
+            }
+            .store(in: &cancellables)
+
+        // 监听 Dock 图标悬停（在 iconCenter 更新后再处理）
         eventMonitor.$hoveredAppBundleID
             .removeDuplicates()
             .sink { [weak self] bundleID in
                 self?.handleHoverChange(bundleID: bundleID)
-            }
-            .store(in: &cancellables)
-
-        // 监听图标位置变化
-        eventMonitor.$hoveredIconInfo
-            .sink { [weak self] iconInfo in
-                self?.iconCenter = iconInfo?.center
             }
             .store(in: &cancellables)
 
@@ -97,6 +114,23 @@ class DockPreviewManager: ObservableObject {
         guard let bundleID = bundleID else {
             hidePreview()
             return
+        }
+
+        // 强制同步获取图标中心位置（确保定位正确）
+        // 优先从 eventMonitor 获取已设置的 hoveredIconInfo
+        if let iconInfo = eventMonitor.hoveredIconInfo {
+            self.iconCenter = iconInfo.center
+            Logger.debug("[DockPreview] 使用 hoveredIconInfo: center=\(iconInfo.center), frame=\(iconInfo.frame)")
+        } else {
+            // 如果 hoveredIconInfo 为 nil，尝试通过当前鼠标位置重新获取
+            let mouseLocation = eventMonitor.mouseLocation
+            Logger.debug("[DockPreview] hoveredIconInfo 为 nil, 尝试通过鼠标位置获取: mouseLocation=\(mouseLocation)")
+            if let iconInfo = eventMonitor.getDockIconInfoAtLocation(mouseLocation) {
+                self.iconCenter = iconInfo.center
+                Logger.debug("[DockPreview] 通过鼠标位置获取成功: center=\(iconInfo.center)")
+            } else {
+                Logger.warning("[DockPreview] 无法获取图标位置，iconCenter 保持原值")
+            }
         }
 
         // 获取该应用的所有窗口
