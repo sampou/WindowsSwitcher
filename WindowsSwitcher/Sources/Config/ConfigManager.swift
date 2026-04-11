@@ -1,11 +1,23 @@
 import Foundation
+import Combine
+
+// MARK: - 通知名称扩展
+extension Notification.Name {
+    static let hotKeysDidChange = Notification.Name("hotKeysDidChange")
+}
 
 class ConfigManager: ObservableObject {
     static let shared = ConfigManager()
     private let key = "com.windowsswitcher.config"
 
     @Published var config: ConfigModel {
-        didSet { trySave() }
+        didSet {
+            trySave()
+            // 检查快捷键是否变化
+            if oldValue.hotKeys != config.hotKeys {
+                NotificationCenter.default.post(name: .hotKeysDidChange, object: nil)
+            }
+        }
     }
     @Published var saveError: String? = nil
 
@@ -62,7 +74,7 @@ class ConfigManager: ObservableObject {
         // 边界验证
         dockPreview.hoverDelay = max(0.05, min(1.0, dockPreview.hoverDelay))
         dockPreview.hideDelay = max(0.05, min(1.0, dockPreview.hideDelay))
-        dockPreview.maxPreviewCount = max(2, min(8, dockPreview.maxPreviewCount))
+        dockPreview.maxPreviewCount = max(2, min(16, dockPreview.maxPreviewCount))
         dockPreview.previewWidth = max(50, min(200, dockPreview.previewWidth))
         dockPreview.previewHeight = max(30, min(120, dockPreview.previewHeight))
         dockPreview.verticalSpacing = max(4, min(30, dockPreview.verticalSpacing))    // 4-30px

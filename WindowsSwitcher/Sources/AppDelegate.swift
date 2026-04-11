@@ -42,6 +42,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupHotKeys()
         Logger.info("5. HotKeys setup complete")
 
+        // 监听快捷键配置变化
+        setupHotKeyChangeListener()
+        Logger.info("5.1 HotKey change listener setup complete")
+
         // 监听 Option 键释放，当面板显示时自动切换并关闭
         setupOptionKeyMonitor()
         Logger.info("6. Option key monitor setup complete")
@@ -50,6 +54,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Logger.info("7. Calling setupDockPreview...")
         setupDockPreview()
         Logger.info("8. setupDockPreview complete")
+
+        // 禁用系统 Command+Tab 快捷键（需要辅助功能权限）
+        disableSystemHotKeysIfNeeded()
+
+        // 注册退出处理器，确保应用退出时恢复系统快捷键
+        atexit_b {
+            restoreAllSystemHotKeys()
+        }
+    }
+
+    // 检查权限并禁用系统快捷键
+    private func disableSystemHotKeysIfNeeded() {
+        let hasTrusted = AXIsProcessTrusted()
+        if hasTrusted {
+            Logger.info("Accessibility permission granted, disabling system Command+Tab")
+            disableAllSystemHotKeys()
+        } else {
+            Logger.warning("Accessibility permission not granted, cannot disable system Command+Tab")
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Logger.info("=== Application terminating, restoring system hot keys ===")
+        // 恢复系统快捷键
+        restoreAllSystemHotKeys()
     }
 
     // 启动程序坞预览功能
@@ -103,12 +132,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let itemWidth = previewSize.itemDimensions.width
         let itemHeight = previewSize.itemDimensions.height
         let itemSpacing: CGFloat = 20
+        let panelPadding: CGFloat = DesignTokens.Panel.padding
+
+        // 计算行数（每行最多 maxPreviewCount 个）
+        let maxItemsPerRow = config.maxPreviewCount
+        let totalItems = items.count
+        let rows = (totalItems + maxItemsPerRow - 1) / maxItemsPerRow
+        let displayRows = min(rows, 3)  // 最多显示3行，超过需滚动
+
+        // 计算每行实际数量
+        let firstRowCount = min(totalItems, maxItemsPerRow)
 
         // 计算面板尺寸
-        let itemCount = min(items.count, config.maxPreviewCount)
-        let panelPadding: CGFloat = DesignTokens.Panel.padding
-        let panelWidth = CGFloat(itemCount) * itemWidth + CGFloat(itemCount - 1) * itemSpacing + panelPadding * 2
-        let panelHeight = itemHeight + panelPadding * 2
+        let panelWidth = CGFloat(firstRowCount) * itemWidth + CGFloat(firstRowCount - 1) * itemSpacing + panelPadding * 2
+        let panelHeight: CGFloat
+
+        // 滚动提示高度
+        let scrollIndicatorHeight: CGFloat = rows > 3 ? 24 : 0
+
+        if rows <= 3 {
+            // 不需要滚动，直接计算高度
+            panelHeight = CGFloat(rows) * itemHeight + CGFloat(rows - 1) * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
+        } else {
+            // 需要滚动，固定高度显示3行
+            panelHeight = 3 * itemHeight + 2 * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
+        }
 
         // 获取屏幕信息
         let screenFrame = NSScreen.main?.frame ?? .zero
@@ -333,13 +381,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - 快捷键注册
     private func setupHotKeys() {
-        // Option+Tab: 显示/下一个
+        // 从配置读取快捷键设置
+        let hotKeyConfig = configManager.config.hotKeys
+
+        // 注销所有旧快捷键
+        hotKeyManager.unregister("switch")
+        hotKeyManager.unregister("reverseSwitch")
+        hotKeyManager.unregister("appSwitch")
+
+        // 切换器快捷键（可自定义）
+        let switchKeyCode = hotKeyConfig.switchKeyCode
+        let switchModifiers = hotKeyConfig.switchModifiers
+
+        // 注册切换器快捷键：显示/下一个
         hotKeyManager.register(
-            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey), identifier: "switch")
+            HotKey(keyCode: switchKeyCode, modifiers: switchModifiers, identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
             let t0 = CFAbsoluteTimeGetCurrent()
-            Logger.info("=== Option+Tab pressed ===")
+            Logger.info("=== Switch hotkey pressed ===")
             // 移除节流限制，允许最快速度切换
             let now = Date()
             guard now.timeIntervalSince(self.lastHotKeyTime) > 0.005 else { return }  // 5ms 节流
@@ -360,13 +420,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Option+Shift+Tab: 反向切换
+        // 反向切换：Shift + 切换器快捷键
         hotKeyManager.register(
-            HotKey(keyCode: UInt32(kVK_Tab), modifiers: UInt32(optionKey | shiftKey), identifier: "reverseSwitch")
+            HotKey(keyCode: switchKeyCode, modifiers: switchModifiers | UInt32(shiftKey), identifier: "reverseSwitch")
         ) { [weak self] in
             guard let self else { return }
-            Logger.info("=== Option+Shift+Tab pressed ===")
-            // 快速切换：20ms 延迟（从100ms减少，大幅提升切换速度）
+            Logger.info("=== Reverse switch hotkey pressed ===")
             let now = Date()
             guard now.timeIntervalSince(self.lastHotKeyTime) > 0.02 else { return }
             self.lastHotKeyTime = now
@@ -379,11 +438,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // Option+`: 应用内切换
+        // 应用内切换快捷键（可自定义）
+        let appSwitchKeyCode = hotKeyConfig.appSwitchKeyCode
+        let appSwitchModifiers = hotKeyConfig.appSwitchModifiers
+
         hotKeyManager.register(
-            HotKey(keyCode: UInt32(kVK_ANSI_Grave), modifiers: UInt32(optionKey), identifier: "appSwitch")
+            HotKey(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers, identifier: "appSwitch")
         ) {
             NotificationCenter.default.post(name: .appSwitchHotKeyPressed, object: nil)
+        }
+
+        Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers))")
+    }
+
+    // MARK: - 快捷键变化监听
+    private var hotKeyChangeObserver: NSObjectProtocol?
+
+    private func setupHotKeyChangeListener() {
+        // 监听快捷键配置变化
+        hotKeyChangeObserver = NotificationCenter.default.addObserver(
+            forName: .hotKeysDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Logger.info("=== HotKeys config changed, re-registering ===")
+            self?.setupHotKeys()
         }
     }
 
@@ -508,7 +587,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let window = NSWindow(contentViewController: hostingController)
         window.title = "WindowsSwitcher 设置"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 480, height: 420))
+        window.setContentSize(NSSize(width: 520, height: 520))
         window.center()
         window.delegate = self  // 设置代理以监听窗口关闭事件
         window.isReleasedWhenClosed = false  // 防止窗口关闭时被释放

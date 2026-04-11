@@ -1,6 +1,55 @@
 import AppKit
 import Carbon
 
+// MARK: - SkyLight 私有 API
+/// 用于禁用/启用系统级快捷键
+/// 参考：AltTab 实现 (https://github.com/lwouis/alt-tab-macos)
+
+/// 系统快捷键标识符
+enum CGSSymbolicHotKey: Int, CaseIterable {
+    case commandTab = 1        // Command+Tab (应用切换器)
+    case commandShiftTab = 2   // Command+Shift+Tab (反向应用切换)
+    case commandKeyAboveTab = 6  // Command+` (同应用窗口切换)
+}
+
+/// 私有 API：启用/禁用系统快捷键
+@_silgen_name("CGSSetSymbolicHotKeyEnabled")
+@discardableResult
+func CGSSymbolicHotKeyEnabled(_ hotKey: Int, _ isEnabled: Bool) -> CGError
+
+/// 禁用或启用系统的 Command+Tab 快捷键
+func setNativeCommandTabEnabled(_ isEnabled: Bool) {
+    print("[SkyLight] Setting native Command+Tab enabled: \(isEnabled)")
+    let result1 = CGSSymbolicHotKeyEnabled(CGSSymbolicHotKey.commandTab.rawValue, isEnabled)
+    let result2 = CGSSymbolicHotKeyEnabled(CGSSymbolicHotKey.commandShiftTab.rawValue, isEnabled)
+    if result1 != .success || result2 != .success {
+        print("[SkyLight] Warning: Failed to set native Command+Tab: \(result1.rawValue), \(result2.rawValue)")
+    }
+}
+
+/// 禁用或启用系统的 Command+` 快捷键
+func setNativeCommandGraveEnabled(_ isEnabled: Bool) {
+    print("[SkyLight] Setting native Command+` enabled: \(isEnabled)")
+    let result = CGSSymbolicHotKeyEnabled(CGSSymbolicHotKey.commandKeyAboveTab.rawValue, isEnabled)
+    if result != .success {
+        print("[SkyLight] Warning: Failed to set native Command+`: \(result.rawValue)")
+    }
+}
+
+/// 禁用所有系统快捷键（在应用激活时调用）
+func disableAllSystemHotKeys() {
+    setNativeCommandTabEnabled(false)
+    setNativeCommandGraveEnabled(false)
+}
+
+/// 恢复所有系统快捷键（在应用退出时调用）
+func restoreAllSystemHotKeys() {
+    setNativeCommandTabEnabled(true)
+    setNativeCommandGraveEnabled(true)
+}
+
+// MARK: - HotKey
+
 struct HotKey {
     let keyCode: UInt32
     let modifiers: UInt32
@@ -30,9 +79,11 @@ class HotKeyManager {
 
         let eventID = EventHotKeyID(signature: signature, id: currentID)
         var ref: EventHotKeyRef?
+        // 使用 GetEventDispatcherTarget() 替代 GetApplicationEventTarget()
+        // 这样可以在系统调度器级别注册快捷键，能够拦截系统快捷键如 Command+Tab
         let status = RegisterEventHotKey(
             hotKey.keyCode, hotKey.modifiers,
-            eventID, GetApplicationEventTarget(), 0, &ref
+            eventID, GetEventDispatcherTarget(), 0, &ref
         )
         guard status == noErr, let ref else {
             Logger.error("Failed to register hotkey: \(hotKey.identifier)")
@@ -58,7 +109,7 @@ class HotKeyManager {
             eventKind: UInt32(kEventHotKeyPressed)
         )
         InstallEventHandler(
-            GetApplicationEventTarget(),
+            GetEventDispatcherTarget(),
             { _, event, userData -> OSStatus in
                 guard let userData, let event else { return noErr }
                 let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()

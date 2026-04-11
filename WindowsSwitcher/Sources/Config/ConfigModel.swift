@@ -34,10 +34,10 @@ enum PreviewSize: String, Codable, Equatable, CaseIterable {
 
 struct HotKeyConfig: Codable, Equatable {
     var switchKeyCode: UInt32 = 48       // Tab
-    var switchModifiers: UInt32 = 256    // Cmd
-    var reverseSwitchModifiers: UInt32 = 131072 // Cmd+Shift
-    var appSwitchKeyCode: UInt32 = 50    // `
-    var appSwitchModifiers: UInt32 = 256
+    var switchModifiers: UInt32 = 2048   // Option (optionKey = 2048)
+    var reverseSwitchModifiers: UInt32 = 2560 // Option+Shift (2048 + 512)
+    var appSwitchKeyCode: UInt32 = 50    // ` (Grave)
+    var appSwitchModifiers: UInt32 = 2048 // Option
 }
 
 struct AppearanceConfig: Codable, Equatable {

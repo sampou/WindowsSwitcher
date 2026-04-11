@@ -89,12 +89,6 @@ class WindowManager: WindowManagerProtocol {
             return
         }
 
-        // 激活应用
-        let activateResult = app.activate(options: .activateIgnoringOtherApps)
-        if !activateResult {
-            Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
-        }
-
         // 更新窗口的 lastActiveTime 为当前时间，确保排序正确
         let now = Date()
         if var cachedWindow = windowCache[window.id] {
@@ -117,12 +111,24 @@ class WindowManager: WindowManagerProtocol {
             cachedWindows = cachedWindows.map { $0.id == window.id ? cachedWindow : $0 }
         }
 
-        // 异步 raise 窗口，不要阻塞主线程
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            if let win = self?.axWindow(for: window) {
-                AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-            }
+        // 第一步：先通过 AXUIElement raise 窗口（在应用激活之前）
+        // 这样可以确保窗口在应用内的层级最高
+        if let win = axWindow(for: window) {
+            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        }
+
+        // 第二步：激活应用（将应用带到前台）
+        let activateResult = app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+        if !activateResult {
+            Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
+        }
+
+        // 第三步：再次确保窗口焦点（有时应用激活后会重置焦点）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self = self, let win = self.axWindow(for: window) else { return }
+            AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
         }
 
         Logger.info("Activated window: \(window.appName) - \(window.windowTitle)")
