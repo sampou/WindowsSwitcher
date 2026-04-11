@@ -26,6 +26,18 @@ class DockEventMonitor: ObservableObject {
     private var hoverTimer: Timer?
     private var hideTimer: Timer?  // 延迟隐藏计时器
 
+    // MARK: - 缓存
+    private var dockAppsListCache: [(String, String)]?
+    private var dockAppsListCacheTime: Date?
+    private let cacheExpiryInterval: TimeInterval = 2.0  // 缓存 2 秒过期（更及时更新）
+
+    // 运行中应用的快速查找字典（名称 -> bundleID）
+    private var runningAppsLookup: [String: String] = [:]
+    private var runningAppsLookupTime: Date?
+
+    // 追踪之前是否在 Dock 区域
+    private var wasInDockArea: Bool = false
+
     /// 悬停延迟
     private var hoverDelay: TimeInterval {
         ConfigManager.shared.config.dockPreview.hoverDelay
@@ -72,6 +84,19 @@ class DockEventMonitor: ObservableObject {
         let dockFrame = getDockFrame()
         let expandedDockFrame = dockFrame.insetBy(dx: -30, dy: -30)
         let isInDockArea = expandedDockFrame.contains(location)
+
+        // 检测进入/离开 Dock 区域状态变化
+        if isInDockArea && !wasInDockArea {
+            // 刚进入 Dock 区域，预先构建缓存
+            _ = getDockAppOrderWithBundleID()
+            _ = getRunningAppsLookup()
+            Logger.debug("[Dock] 进入 Dock 区域，缓存已构建")
+        } else if !isInDockArea && wasInDockArea {
+            // 刚离开 Dock 区域，清除缓存
+            invalidateCaches()
+            Logger.debug("[Dock] 离开 Dock 区域，缓存已清除")
+        }
+        wasInDockArea = isInDockArea
 
         // 检查是否在 Dock 区域或预览窗口内
         if isInDockArea {
@@ -128,6 +153,8 @@ class DockEventMonitor: ObservableObject {
                 self?.hoveredAppBundleID = nil
                 self?.hoveredIconInfo = nil
                 self?.isMouseInPreviewWindow = false
+                // 隐藏时清除缓存，确保下次获取最新数据
+                self?.invalidateCaches()
             }
         }
     }
@@ -142,6 +169,16 @@ class DockEventMonitor: ObservableObject {
         // 重置所有悬停状态
         hoveredAppBundleID = nil
         hoveredIconInfo = nil
+        // 清除缓存，确保下次获取最新数据
+        invalidateCaches()
+    }
+
+    /// 清除所有缓存
+    private func invalidateCaches() {
+        dockAppsListCache = nil
+        dockAppsListCacheTime = nil
+        runningAppsLookup = [:]
+        runningAppsLookupTime = nil
     }
 
     // 获取 Dock 图标信息（包含精确位置）
@@ -547,41 +584,56 @@ class DockEventMonitor: ObservableObject {
         let iconName = title ?? description ?? ""
 
         guard !iconName.isEmpty else {
-            Logger.debug("[Dock AX] 图标无 title/description")
             return nil
         }
 
-        Logger.debug("[Dock AX] 尝试匹配运行中应用: iconName=\(iconName)")
+        // 使用缓存的快速查找字典
+        let lookup = getRunningAppsLookup()
 
-        // 获取所有运行中的应用
-        let runningApps = NSWorkspace.shared.runningApplications
+        // 精确匹配（不区分大小写）
+        let lowercasedName = iconName.lowercased()
+        if let bundleID = lookup[lowercasedName] {
+            return bundleID
+        }
 
-        for app in runningApps {
-            // 跳过隐藏的应用和没有 UI 的应用
-            guard app.activationPolicy == .regular else { continue }
-
-            let appName = app.localizedName ?? ""
-
-            // 精确匹配（不区分大小写）
-            if appName.lowercased() == iconName.lowercased() {
-                if let bundleID = app.bundleIdentifier {
-                    Logger.debug("[Dock AX] 匹配到运行中应用: \(appName) -> \(bundleID)")
-                    return bundleID
-                }
-            }
-
-            // 部分匹配
-            if appName.lowercased().contains(iconName.lowercased()) ||
-               iconName.lowercased().contains(appName.lowercased()) {
-                if let bundleID = app.bundleIdentifier {
-                    Logger.debug("[Dock AX] 部分匹配到运行中应用: \(appName) -> \(bundleID)")
-                    return bundleID
-                }
+        // 部分匹配（遍历查找字典）
+        for (appName, bundleID) in lookup {
+            if appName.contains(lowercasedName) || lowercasedName.contains(appName) {
+                return bundleID
             }
         }
 
         Logger.debug("[Dock AX] 未匹配到运行中应用: \(iconName)")
         return nil
+    }
+
+    // 获取运行中应用的快速查找字典（带缓存）
+    private func getRunningAppsLookup() -> [String: String] {
+        // 检查缓存是否有效
+        if let cacheTime = runningAppsLookupTime,
+           Date().timeIntervalSince(cacheTime) < cacheExpiryInterval,
+           !runningAppsLookup.isEmpty {
+            return runningAppsLookup
+        }
+
+        // 重建查找字典
+        var lookup: [String: String] = [:]
+        let runningApps = NSWorkspace.shared.runningApplications
+
+        for app in runningApps {
+            guard app.activationPolicy == .regular,
+                  let name = app.localizedName,
+                  let bundleID = app.bundleIdentifier else { continue }
+
+            lookup[name.lowercased()] = bundleID
+        }
+
+        // 更新缓存
+        runningAppsLookup = lookup
+        runningAppsLookupTime = Date()
+
+        Logger.debug("[Dock] 运行中应用查找字典已更新, 数量: \(lookup.count)")
+        return lookup
     }
 
     // 检查图标元素是否匹配
@@ -868,17 +920,22 @@ class DockEventMonitor: ObservableObject {
 
     // 获取 Dock 的应用列表（有序数组：[(应用名, Bundle ID)]）
     private func getDockAppOrderWithBundleID() -> [(String, String)] {
+        // 检查缓存是否有效
+        if let cache = dockAppsListCache,
+           let cacheTime = dockAppsListCacheTime,
+           Date().timeIntervalSince(cacheTime) < cacheExpiryInterval {
+            return cache
+        }
+
         var dockAppsList: [(String, String)] = []
 
         // 先读取 persistent-apps（固定的应用）
         if let persistentApps = getAppsFromDockPlist(key: "persistent-apps") {
-            Logger.debug("[Dock Plist] persistent-apps 数量: \(persistentApps.count)")
             dockAppsList.append(contentsOf: persistentApps)
         }
 
         // 再读取 recent-apps（最近使用的应用）
         if let recentApps = getAppsFromDockPlist(key: "recent-apps") {
-            Logger.debug("[Dock Plist] recent-apps 数量: \(recentApps.count)")
             // 添加最近使用的应用（避免重复）
             for app in recentApps {
                 if !dockAppsList.contains(where: { $0.1 == app.1 }) {
@@ -896,7 +953,11 @@ class DockEventMonitor: ObservableObject {
             }
         }
 
-        Logger.debug("[Dock Plist] 总应用数: \(dockAppsList.count), 列表: \(dockAppsList.map { $0.1 })")
+        // 更新缓存
+        dockAppsListCache = dockAppsList
+        dockAppsListCacheTime = Date()
+
+        Logger.debug("[Dock Plist] 列表已缓存, 总数: \(dockAppsList.count)")
         return dockAppsList
     }
 

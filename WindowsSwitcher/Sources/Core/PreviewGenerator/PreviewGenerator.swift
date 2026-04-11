@@ -231,6 +231,21 @@ final class PreviewGenerator: @unchecked Sendable {
         }
     }
 
+    /// 生成实时预览（不使用缓存，用于 Dock 预览等需要最新内容的场景）
+    func generateRealtimePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
+        let windowID = window.id
+
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                self.semaphore.wait()
+                defer { self.semaphore.signal() }
+
+                let image = Self.captureWindowSync(windowID, size: size)
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
     /// 捕获窗口截图 - 优化分辨率（静态方法，可在任意线程调用）
     private static func captureWindowSync(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }

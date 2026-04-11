@@ -120,18 +120,16 @@ class DockPreviewManager: ObservableObject {
         // 优先从 eventMonitor 获取已设置的 hoveredIconInfo
         if let iconInfo = eventMonitor.hoveredIconInfo {
             self.iconCenter = iconInfo.center
-            Logger.debug("[DockPreview] 使用 hoveredIconInfo: center=\(iconInfo.center), frame=\(iconInfo.frame)")
         } else {
             // 如果 hoveredIconInfo 为 nil，尝试通过当前鼠标位置重新获取
             let mouseLocation = eventMonitor.mouseLocation
-            Logger.debug("[DockPreview] hoveredIconInfo 为 nil, 尝试通过鼠标位置获取: mouseLocation=\(mouseLocation)")
             if let iconInfo = eventMonitor.getDockIconInfoAtLocation(mouseLocation) {
                 self.iconCenter = iconInfo.center
-                Logger.debug("[DockPreview] 通过鼠标位置获取成功: center=\(iconInfo.center)")
-            } else {
-                Logger.warning("[DockPreview] 无法获取图标位置，iconCenter 保持原值")
             }
         }
+
+        // 强制刷新窗口缓存，确保获取最新的窗口列表
+        WindowManager.shared.refreshCache()
 
         // 获取该应用的所有窗口
         let allWindows = WindowManager.shared.windows
@@ -164,7 +162,7 @@ class DockPreviewManager: ObservableObject {
         showPreview()
     }
 
-    // 预加载预览图
+    // 预加载预览图（实时获取最新内容，不使用缓存）
     private func preloadPreviews(for windows: [WindowModel]) {
         let previewSize = ConfigManager.shared.config.appearance.previewSize.dimensions
         let size = CGSize(width: previewSize.width, height: previewSize.height)
@@ -172,11 +170,9 @@ class DockPreviewManager: ObservableObject {
         Task(priority: .userInitiated) {
             await withTaskGroup(of: Void.self) { group in
                 for window in windows {
-                    // 检查是否已有缓存
-                    if self.previewImages[window.id] != nil { continue }
-
                     group.addTask {
-                        if let image = await self.previewGenerator.generatePreview(for: window, size: size) {
+                        // 使用实时预览方法，不使用缓存
+                        if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size) {
                             await MainActor.run {
                                 self.previewImages[window.id] = image
                             }
@@ -204,10 +200,8 @@ class DockPreviewManager: ObservableObject {
         }
         // 重置事件监听器状态，确保下次悬停能正常触发
         eventMonitor.resetState()
-        // 清空预览图缓存（避免内存泄漏）
-        if previewImages.count > 20 {
-            previewImages.removeAll()
-        }
+        // 清空预览图缓存，确保下次获取最新窗口内容
+        previewImages.removeAll()
     }
 
     // 公开方法，供外部调用隐藏预览
@@ -376,17 +370,8 @@ struct DockPreviewItemView: View {
         .onTapGesture(perform: onTap)
         .onHover(perform: onHover)
         .onAppear {
-            // 优先使用缓存图片
-            if let cached = cachedImage {
-                previewImage = cached
-            } else {
-                loadPreview()
-            }
-        }
-        .onChange(of: cachedImage) { newImage in
-            if let image = newImage {
-                previewImage = image
-            }
+            // 始终重新加载预览，确保获取最新内容
+            loadPreview()
         }
     }
 
