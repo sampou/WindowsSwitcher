@@ -112,12 +112,14 @@ struct SwitchPanelView: View {
     // 面板自适应高度
     private var panelHeight: CGFloat {
         let itemHeight = previewSize.itemDimensions.height
+        // WindowItemView 有 .padding(8)，所以实际每个窗口项高度是 itemHeight + 16
+        let actualItemHeight = itemHeight + 16
         let windowCount = viewModel.filteredWindows.count
         let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
         let minHeight: CGFloat = 400
         // 最大高度为屏幕高度的 80%
         let maxHeight = screenSize.height * 0.8
-        let contentHeight = CGFloat(rowCount) * (itemHeight + 16) + DesignTokens.Panel.padding * 2 + 40 // 40是底部快捷栏
+        let contentHeight = CGFloat(rowCount) * actualItemHeight + DesignTokens.Panel.padding * 2 + 40 // 40是底部快捷栏
         return min(max(contentHeight, minHeight), maxHeight)
     }
 

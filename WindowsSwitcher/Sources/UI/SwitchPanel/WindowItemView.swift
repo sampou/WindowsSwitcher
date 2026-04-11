@@ -49,7 +49,7 @@ struct WindowItemView: View {
                 RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.windowItem)
                     .stroke(isSelected ? DesignTokens.Colors.accent : Color.clear, lineWidth: 2)
             )
-            .padding(20)
+            .padding(8)
             // 禁用 hover 动画
             .animation(.none, value: isHovered)
 

@@ -146,18 +146,15 @@ class DockPreviewManager: ObservableObject {
         // 按 lastActiveTime 降序排序，确保最新活跃的窗口在最前面
         let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
 
-        // 从配置读取最大预览数量
-        let maxCount = ConfigManager.shared.config.dockPreview.maxPreviewCount
-
-        // 创建预览项
-        previewItems = sortedWindows.prefix(maxCount).map { windowModel in
+        // 创建预览项 - 显示所有窗口，不再限制数量
+        previewItems = sortedWindows.map { windowModel in
             var item = DockPreviewItem(windowModel: windowModel)
             item.previewGenerator = previewGenerator
             return item
         }
 
         // 预加载预览图（在显示之前就开始加载）
-        preloadPreviews(for: Array(sortedWindows.prefix(maxCount)))
+        preloadPreviews(for: sortedWindows)
 
         showPreview()
     }
@@ -234,8 +231,8 @@ struct DockPreviewPanelView: View {
     @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
 
-    // 从配置读取最大预览数量
-    private var maxItems: Int {
+    // 每行最多显示的窗口数量
+    private var itemsPerRow: Int {
         configManager.config.dockPreview.maxPreviewCount
     }
 
@@ -260,17 +257,77 @@ struct DockPreviewPanelView: View {
         previewSize.dimensions.height
     }
 
-    // 间距与切换器一致
-    private var itemSpacing: CGFloat {
-        20  // 与 WindowItem.spacing 一致
+    // 间距
+    private var itemSpacing: CGFloat { 16 }  // 行间距
+    private var itemPadding: CGFloat { 8 }   // 窗口项外部 padding
+    private var panelPadding: CGFloat { DesignTokens.Panel.padding }
+
+    // 计算总行数
+    private var totalRows: Int {
+        let count = manager.previewItems.count
+        return (count + itemsPerRow - 1) / itemsPerRow
+    }
+
+    // 最多显示的行数（超过需要滚动）
+    private var maxDisplayRows: Int { 3 }
+
+    // 是否需要显示滚动条（两行及以上才显示）
+    private var needsScroll: Bool {
+        totalRows >= 2
+    }
+
+    // 是否需要滚动功能（内容超出显示区域）
+    private var needsScrolling: Bool {
+        totalRows > maxDisplayRows
     }
 
     var body: some View {
-        HStack(spacing: itemSpacing) {
-            ForEach(Array(manager.previewItems.prefix(maxItems).enumerated()), id: \.element.id) { index, item in
+        VStack(spacing: 8) {
+            // 滚动区域
+            ScrollView(.vertical, showsIndicators: needsScroll) {
+                VStack(spacing: itemSpacing) {
+                    // 按行显示窗口
+                    ForEach(0..<totalRows, id: \.self) { rowIndex in
+                        rowView(for: rowIndex)
+                            .frame(height: itemHeight + itemPadding * 2)
+                    }
+                }
+                .padding(.horizontal, panelPadding)
+                .padding(.vertical, panelPadding)
+            }
+            .frame(maxHeight: contentHeight)
+
+            // 滚动提示（仅当内容超出显示区域时显示）
+            if needsScrolling {
+                scrollIndicator
+                    .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+            }
+        }
+        .frame(width: panelWidth, height: totalPanelHeight)
+        .background(backgroundView)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
+        .shadow(
+            color: .black.opacity(0.25),
+            radius: DesignTokens.Panel.shadowRadius,
+            x: 0,
+            y: DesignTokens.Panel.shadowY
+        )
+        .animation(.easeInOut(duration: 0.2), value: totalRows)
+    }
+
+    // 每行视图
+    @ViewBuilder
+    private func rowView(for rowIndex: Int) -> some View {
+        let startIndex = rowIndex * itemsPerRow
+        let endIndex = min(startIndex + itemsPerRow, manager.previewItems.count)
+        let rowItems = Array(manager.previewItems[startIndex..<endIndex])
+
+        HStack(spacing: 0) {
+            ForEach(Array(rowItems.enumerated()), id: \.element.id) { index, item in
+                let globalIndex = startIndex + index
                 DockPreviewItemView(
                     item: item,
-                    isHovered: manager.hoveredIndex == index,
+                    isHovered: manager.hoveredIndex == globalIndex,
                     previewWidth: previewWidth,
                     previewHeight: previewHeight,
                     itemWidth: itemWidth,
@@ -280,20 +337,58 @@ struct DockPreviewPanelView: View {
                         manager.selectItem(item)
                     },
                     onHover: { isHovered in
-                        manager.hoveredIndex = isHovered ? index : nil
+                        manager.hoveredIndex = isHovered ? globalIndex : nil
                     }
                 )
+                .padding(itemPadding)
             }
         }
-        .padding(DesignTokens.Panel.padding)
-        .background(backgroundView)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
-        .shadow(
-            color: .black.opacity(0.25),
-            radius: DesignTokens.Panel.shadowRadius,
-            x: 0,
-            y: DesignTokens.Panel.shadowY
-        )
+    }
+
+    // 面板宽度（自适应，基于实际窗口数量）
+    private var panelWidth: CGFloat {
+        // 窗口项实际宽度 = itemWidth + 左右 padding
+        let actualItemWidth = itemWidth + itemPadding * 2
+        // 第一行实际显示的窗口数（不超过 itemsPerRow）
+        let firstRowCount = min(manager.previewItems.count, itemsPerRow)
+        return CGFloat(firstRowCount) * actualItemWidth + panelPadding * 2
+    }
+
+    // 内容高度（每行高度 = itemHeight + 上下 padding）
+    private var contentHeight: CGFloat {
+        let actualRowHeight = itemHeight + itemPadding * 2
+        if needsScrolling {
+            // 内容超出显示区域时，显示固定高度（允许滚动）
+            return CGFloat(maxDisplayRows) * actualRowHeight + CGFloat(maxDisplayRows - 1) * itemSpacing
+        } else {
+            // 不需要滚动时，显示实际内容高度
+            return CGFloat(totalRows) * actualRowHeight + CGFloat(totalRows - 1) * itemSpacing
+        }
+    }
+
+    // 总面板高度
+    private var totalPanelHeight: CGFloat {
+        var height = contentHeight + panelPadding * 2 // 上下 padding
+        if needsScrolling {
+            height += 32 // 滚动提示高度
+        }
+        return height
+    }
+
+    // 滚动提示
+    private var scrollIndicator: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "chevron.up")
+                .font(.system(size: 10))
+                .opacity(0.5)
+            Text("滚动查看更多")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10))
+                .opacity(0.5)
+        }
+        .padding(.bottom, 8)
     }
 
     private var backgroundView: some View {
@@ -301,6 +396,17 @@ struct DockPreviewPanelView: View {
             material: .hudWindow,
             blendingMode: .behindWindow
         )
+    }
+}
+
+// MARK: - Array Extension
+extension Array {
+    /// 将数组分割成指定大小的子数组
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
     }
 }
 
