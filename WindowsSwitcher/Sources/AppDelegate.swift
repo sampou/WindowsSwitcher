@@ -387,12 +387,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "Window Switcher")
+            // 使用自定义图标，与应用图标风格一致
+            button.image = loadStatusBarIcon()
             // 左键单击直接显示切换面板
             button.action = #selector(statusBarButtonClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.target = self
         }
+    }
+
+    /// 加载状态栏图标
+    private func loadStatusBarIcon() -> NSImage? {
+        // 使用应用图标作为状态栏图标
+        if let image = NSImage(named: "AppIcon") {
+            let resizedImage = NSImage(size: NSSize(width: 18, height: 18))
+            resizedImage.lockFocus()
+            image.draw(in: NSRect(x: 0, y: 0, width: 18, height: 18))
+            resizedImage.unlockFocus()
+            // 不设置为模板图像，保持原图标彩色样式
+            return resizedImage
+        }
+        // 降级到 SF Symbols
+        return NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "Window Switcher")
     }
 
     @MainActor @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
@@ -465,8 +481,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func updateMenuBarIcon(hasPermissions: Bool) {
-        let iconName = hasPermissions ? "rectangle.on.rectangle" : "rectangle.on.rectangle.slash"
-        statusItem?.button?.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
+        if let image = loadStatusBarIcon() {
+            // 权限缺失时降低透明度
+            statusItem?.button?.alphaValue = hasPermissions ? 1.0 : 0.5
+            statusItem?.button?.image = image
+        }
     }
 
     @objc private func openSettings() {
