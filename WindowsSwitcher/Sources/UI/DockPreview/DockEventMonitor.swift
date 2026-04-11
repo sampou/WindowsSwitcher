@@ -70,24 +70,19 @@ class DockEventMonitor: ObservableObject {
         mouseLocation = location
 
         let dockFrame = getDockFrame()
-        let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(location)
+        let expandedDockFrame = dockFrame.insetBy(dx: -30, dy: -30)
+        let isInDockArea = expandedDockFrame.contains(location)
 
         // 检查是否在 Dock 区域或预览窗口内
         if isInDockArea {
-            // 在 Dock 区域，尝试检测具体应用
+            // 在 Dock 区域，尝试检测具体应用图标
             if let iconInfo = getDockIconInfoAtLocation(location) {
+                // 成功检测到图标，启动悬停计时器
                 startHoverTimer(for: iconInfo)
             } else {
-                // getDockIconInfoAtLocation 失败时，尝试其他方法获取 bundleID
-                if let appBundleID = getAppBundleIDAtScreenLocation(location) {
-                    // 如果检测到的应用与当前悬停的应用相同，保留位置信息
-                    if appBundleID == hoveredAppBundleID && hoveredIconInfo != nil {
-                        // 保持当前的 hoveredIconInfo，不清空
-                        Logger.debug("[Dock] 保持位置信息: \(appBundleID)")
-                    } else {
-                        startHoverTimer(for: appBundleID)
-                    }
-                }
+                // 未检测到图标（可能在 Dock 的空白区域），清除状态
+                cancelHoverTimer()
+                startHideTimer()
             }
             // 取消隐藏计时器
             hideTimer?.invalidate()
@@ -144,6 +139,9 @@ class DockEventMonitor: ObservableObject {
         hideTimer?.invalidate()
         hideTimer = nil
         isMouseInPreviewWindow = false
+        // 重置所有悬停状态
+        hoveredAppBundleID = nil
+        hoveredIconInfo = nil
     }
 
     // 获取 Dock 图标信息（包含精确位置）
