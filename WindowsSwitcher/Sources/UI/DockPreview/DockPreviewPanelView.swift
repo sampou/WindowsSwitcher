@@ -21,8 +21,8 @@ class DockPreviewManager: ObservableObject {
     let previewGenerator = PreviewGenerator()
 
     // 大预览窗口尺寸
-    let largePreviewWidth: CGFloat = 600
-    let largePreviewHeight: CGFloat = 400  // 3:2 比例，更大更清晰
+    var largePreviewWidth: CGFloat = 600
+    var largePreviewHeight: CGFloat = 400  // 3:2 比例，更大更清晰
 
     private let eventMonitor = DockEventMonitor()
     private var cancellables = Set<AnyCancellable>()
@@ -107,29 +107,58 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
-    /// 计算大预览窗口的位置
+    /// 计算大预览窗口的位置和尺寸 - 根据实际窗口大小自适应
     private func calculateLargePreviewPosition(for item: DockPreviewItem, at index: Int) {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
-        let previewWidth = largePreviewWidth
-        let previewHeight = largePreviewHeight
 
-        // 计算基础位置（居中于屏幕）
+        // 获取实际窗口的尺寸
+        let windowFrame = item.windowModel.frame
+
+        // 根据窗口实际尺寸计算预览窗口尺寸，保持比例
+        let windowWidth = windowFrame.width
+        let windowHeight = windowFrame.height
+
+        // 最大尺寸限制（不超过屏幕的一半）
+        let maxWidth = screenFrame.width * 0.45
+        let maxHeight = screenFrame.height * 0.45
+
+        // 最小尺寸限制
+        let minWidth: CGFloat = 300
+        let minHeight: CGFloat = 200
+
+        // 计算缩放后的尺寸，保持窗口原始比例
+        let aspectRatio = windowWidth / max(windowHeight, 1)
+        var previewWidth: CGFloat
+        var previewHeight: CGFloat
+
+        if aspectRatio > 1 {
+            // 宽窗口
+            previewWidth = min(windowWidth * 0.8, maxWidth)
+            previewHeight = previewWidth / aspectRatio
+        } else {
+            // 高窗口
+            previewHeight = min(windowHeight * 0.8, maxHeight)
+            previewWidth = previewHeight * aspectRatio
+        }
+
+        // 应用尺寸限制
+        previewWidth = max(minWidth, min(previewWidth, maxWidth))
+        previewHeight = max(minHeight, min(previewHeight, maxHeight))
+
+        // 计算居中位置
         var x = screenFrame.midX - previewWidth / 2
         var y = screenFrame.midY - previewHeight / 2
 
-        // 根据 Dock 位置调整
-        let dockSize = DockGeometry.getDockSize()
-        let spacing = DockGeometry.getRecommendedSpacing()
-
+        // 根据 Dock 位置调整，避免被 Dock 遮挡
         switch currentDockPosition {
         case .bottom:
-            // 预览窗口显示在屏幕中央上方
-            y = screenFrame.maxY - previewHeight - 100
+            // 预览窗口显示在屏幕中央上方区域
+            y = screenFrame.maxY - previewHeight - 80
         case .top:
-            // 预览窗口显示在屏幕中央下方
-            y = screenFrame.minY + 100
+            // 预览窗口显示在屏幕中央下方区域
+            y = screenFrame.minY + 80
         case .left:
             // 预览窗口显示在屏幕中央右侧
             x = screenFrame.midX + 50
@@ -143,6 +172,10 @@ class DockPreviewManager: ObservableObject {
         y = max(screenFrame.minY + 10, min(y, screenFrame.maxY - previewHeight - 10))
 
         largePreviewFrame = CGRect(x: x, y: y, width: previewWidth, height: previewHeight)
+
+        // 更新大预览尺寸以匹配实际窗口比例
+        largePreviewWidth = previewWidth
+        largePreviewHeight = previewHeight
     }
 
     /// 更新预览窗口的 frame（由 AppDelegate 调用）
