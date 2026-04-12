@@ -700,51 +700,50 @@ struct DockGeometry {
         // 获取图标大小设置（默认 48）
         let iconSize = defaults?.double(forKey: "size") ?? 48
 
-        // 精简的边距和阴影
-        let topPadding: CGFloat = 5
-        let bottomPadding: CGFloat = 5
-        let shadowHeight: CGFloat = 3
+        // 边距和阴影 - 适度增加以确保安全
+        let topPadding: CGFloat = 8
+        let bottomPadding: CGFloat = 8
+        let shadowHeight: CGFloat = 5
 
         // 放大效果预留空间
         let magnification = defaults?.bool(forKey: "magnification") ?? false
-        let magnificationBonus: CGFloat = magnification ? 6 : 0
+        let magnificationBonus: CGFloat = magnification ? 8 : 0
 
         // 最近使用应用预留
         let showRecents = defaults?.bool(forKey: "show-recents") ?? false
-        let recentsBonus: CGFloat = showRecents ? 3 : 0
+        let recentsBonus: CGFloat = showRecents ? 4 : 0
 
         // 计算总高度
         let totalHeight = CGFloat(iconSize) + topPadding + bottomPadding + shadowHeight + magnificationBonus + recentsBonus
 
         // 确保合理的范围
-        return max(60, min(120, totalHeight))
+        return max(70, min(140, totalHeight))
     }
 
     /// 获取推荐间距（基于屏幕分辨率和 Dock 大小）
-    /// 返回预览窗口与 Dock 之间的安全间距，精简美观
+    /// 返回预览窗口与 Dock 之间的安全间距，确保不遮挡程序坞
     static func getRecommendedSpacing() -> (vertical: CGFloat, horizontal: CGFloat) {
         guard let screen = NSScreen.main else {
-            return (vertical: 24, horizontal: 20)
+            return (vertical: 36, horizontal: 28)
         }
 
         let screenHeight = screen.frame.height
-        let screenWidth = screen.frame.width
 
-        // 基础间距：根据屏幕尺寸调整
+        // 基础间距：根据屏幕尺寸调整，确保不遮挡 Dock
         let baseSpacing: CGFloat
         if screenHeight < 900 {
             // 小屏幕（MacBook Air 13" 等）
-            baseSpacing = 20
+            baseSpacing = 28
         } else if screenHeight < 1100 {
             // 中等屏幕（MacBook Pro 14", iMac 21.5" 等）
-            baseSpacing = 24
+            baseSpacing = 32
         } else {
             // 大屏幕（iMac 27", Pro Display XDR 等）
-            baseSpacing = 28
+            baseSpacing = 36
         }
 
-        // 垂直间距：精简安全裕度
-        let verticalSpacing = baseSpacing + 4
+        // 垂直间距：额外确保不遮挡 Dock
+        let verticalSpacing = baseSpacing + 8
 
         // 水平间距：用于侧边 Dock
         let horizontalSpacing = baseSpacing
