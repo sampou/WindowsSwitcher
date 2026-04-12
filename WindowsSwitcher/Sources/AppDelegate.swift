@@ -206,25 +206,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let itemSpacing: CGFloat = 20
         let panelPadding: CGFloat = DesignTokens.Panel.padding
 
-        // 计算行数（每行最多 maxPreviewCount 个）
+        // 计算行数和列数
         let maxItemsPerRow = config.maxPreviewCount
         let totalItems = items.count
         let rows = (totalItems + maxItemsPerRow - 1) / maxItemsPerRow
         let displayRows = min(rows, 3)  // 最多显示3行，超过需滚动
 
-        // 计算每行实际数量
-        let firstRowCount = min(totalItems, maxItemsPerRow)
-
-        // 计算面板尺寸
-        let panelWidth = CGFloat(firstRowCount) * itemWidth + CGFloat(firstRowCount - 1) * itemSpacing + panelPadding * 2
-        let panelHeight: CGFloat
+        // 自适应宽度计算：根据实际显示的列数计算宽度
+        // 使用实际第一行显示的数量，但最少显示1列
+        let actualColumns = min(totalItems, maxItemsPerRow)
+        let panelWidth = CGFloat(actualColumns) * itemWidth + CGFloat(actualColumns - 1) * itemSpacing + panelPadding * 2
 
         // 滚动提示高度
         let scrollIndicatorHeight: CGFloat = rows > 3 ? 24 : 0
 
+        // 自适应高度计算：根据实际显示的行数计算高度
+        let panelHeight: CGFloat
         if rows <= 3 {
-            // 不需要滚动，直接计算高度
-            panelHeight = CGFloat(rows) * itemHeight + CGFloat(rows - 1) * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
+            // 不需要滚动，高度 = 行数 * 项目高度 + (行数-1) * 间距 + 内边距 * 2 + 滚动指示器
+            panelHeight = CGFloat(displayRows) * itemHeight + CGFloat(displayRows - 1) * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
         } else {
             // 需要滚动，固定高度显示3行
             panelHeight = 3 * itemHeight + 2 * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
@@ -482,6 +482,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hotKeyManager.unregister("switch")
         hotKeyManager.unregister("reverseSwitch")
         hotKeyManager.unregister("appSwitch")
+        hotKeyManager.unregister("appSwitchReverse")
 
         // 切换器快捷键（可自定义）
         let switchKeyCode = hotKeyConfig.switchKeyCode
@@ -535,9 +536,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 应用内切换快捷键（可自定义，可禁用）
         let appSwitchKeyCode = hotKeyConfig.appSwitchKeyCode
         let appSwitchModifiers = hotKeyConfig.appSwitchModifiers
+        let appSwitchReverseModifiers = hotKeyConfig.appSwitchReverseModifiers
         let appSwitchEnabled = hotKeyConfig.appSwitchEnabled
 
         if appSwitchEnabled {
+            // 正向切换：Option+`
             hotKeyManager.register(
                 HotKey(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers, identifier: "appSwitch")
             ) { [weak self] in
@@ -553,7 +556,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
-            Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers))")
+
+            // 反向切换：Option+Shift+`
+            let appSwitchReverseKeyCode = hotKeyConfig.appSwitchReverseKeyCode
+            let appSwitchReverseModifiers = hotKeyConfig.appSwitchReverseModifiers
+            hotKeyManager.register(
+                HotKey(keyCode: appSwitchReverseKeyCode, modifiers: appSwitchReverseModifiers, identifier: "appSwitchReverse")
+            ) { [weak self] in
+                guard let self else { return }
+                Logger.info("=== AppSwitch Reverse hotkey pressed ===")
+                DispatchQueue.main.async {
+                    if self.isPanelVisible {
+                        // 面板已显示，反向切换当前应用的窗口
+                        NotificationCenter.default.post(name: .appSwitchReverseHotKeyPressed, object: nil)
+                    } else {
+                        // 面板未显示，显示面板并筛选当前应用的窗口（反向）
+                        Task { @MainActor in self.showSwitchPanel(reversed: true, appSwitchMode: true) }
+                    }
+                }
+            }
+
+            Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers)), appSwitchReverse=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchReverseModifiers))")
         } else {
             Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=DISABLED")
         }
@@ -892,38 +915,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
 
-        // 计算面板尺寸（与 SwitchPanelView 中的逻辑一致）
+        // 计算面板尺寸 - 自适应内容
         let previewSize = ConfigManager.shared.config.appearance.previewSize
         let itemWidth = previewSize.itemDimensions.width
         let itemHeight = previewSize.itemDimensions.height
 
-        // 计算 columnCount（与 SwitchPanelView 保持一致）
+        // 自适应列数：根据窗口数量动态计算
+        let windowCount = sortedWindows.count
+        let desiredSpacing: CGFloat = 16
+        let panelPadding: CGFloat = 8  // 减小内边距
+        let bottomBarHeight: CGFloat = 20  // 精简底部栏
+
+        // 根据窗口数量动态计算合适的列数
         let columnCount: Int
         if ConfigManager.shared.config.appearance.switcherColumns > 0 {
             columnCount = ConfigManager.shared.config.appearance.switcherColumns
         } else {
             let maxPanelWidth: CGFloat = 1400
-            columnCount = max(3, min(8, Int((maxPanelWidth - DesignTokens.Panel.padding * 2) / (itemWidth + 16))))
+            let maxPossibleColumns = Int((maxPanelWidth - panelPadding * 2 + desiredSpacing) / (itemWidth + desiredSpacing))
+            columnCount = max(1, min(8, min(windowCount, maxPossibleColumns)))
         }
 
-        let rowCount = max(1, (sortedWindows.count + columnCount - 1) / columnCount)
+        let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
 
         // 获取屏幕尺寸
         let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
-        let desiredSpacing: CGFloat = 16
-        let panelPadding: CGFloat = 12
-        let bottomBarHeight: CGFloat = 40
 
-        // 计算宽度（屏幕宽度的90%）
-        let minWidth: CGFloat = 500
-        let maxWidth = screenSize.width * 0.9
+        // 计算内容所需尺寸（无额外空白）
+        let itemSpacing: CGFloat = 4  // 紧凑间距
         let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + panelPadding * 2
-        let panelWidth = min(max(contentWidth, minWidth), maxWidth)
+        let contentHeight = CGFloat(rowCount) * (itemHeight + itemSpacing) + panelPadding * 2 + bottomBarHeight
 
-        // 计算高度（屏幕高度的80%，与 SwitchPanelView 保持一致）
-        let minHeight: CGFloat = 400
+        // 最小面板尺寸
+        let minWidth: CGFloat
+        let minHeight: CGFloat
+
+        switch windowCount {
+        case 1:
+            minWidth = itemWidth + panelPadding * 2 + 8
+            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
+        case 2:
+            minWidth = itemWidth * 2 + desiredSpacing + panelPadding * 2 + 8
+            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
+        case 3, 4:
+            let cols = min(windowCount, columnCount)
+            minWidth = itemWidth * CGFloat(cols) + desiredSpacing * CGFloat(cols - 1) + panelPadding * 2 + 8
+            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
+        default:
+            minWidth = 350
+            minHeight = 200
+        }
+
+        let maxWidth = screenSize.width * 0.9
         let maxHeight = screenSize.height * 0.8
-        let contentHeight = CGFloat(rowCount) * (itemHeight + 16) + panelPadding * 2 + bottomBarHeight
+
+        // 最终面板尺寸 - 完全贴合内容
+        let panelWidth = min(max(contentWidth, minWidth), maxWidth)
         let panelHeight = min(max(contentHeight, minHeight), maxHeight)
 
         // 设置面板大小

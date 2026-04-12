@@ -70,19 +70,25 @@ struct SwitchPanelView: View {
         configManager.config.appearance.previewSize
     }
 
-    // 每行显示的窗口数 - 自适应
+    // 每行显示的窗口数 - 根据窗口数量自适应
     private var columnCount: Int {
+        let windowCount = viewModel.filteredWindows.count
+
         // 如果用户设置了固定列数，使用设置值
         if configManager.config.appearance.switcherColumns > 0 {
-            return configManager.config.appearance.switcherColumns
+            return min(configManager.config.appearance.switcherColumns, windowCount)
         }
 
-        // 自动计算
+        // 自动计算：根据窗口数量动态调整
         let itemWidth = previewSize.itemDimensions.width
         let desiredSpacing: CGFloat = 16
         let maxPanelWidth: CGFloat = 1400
 
-        return max(3, min(8, Int((maxPanelWidth - DesignTokens.Panel.padding * 2) / (itemWidth + desiredSpacing))))
+        // 基础列数计算
+        let calculatedColumns = max(1, min(8, Int((maxPanelWidth - DesignTokens.Panel.padding * 2) / (itemWidth + desiredSpacing))))
+
+        // 根据窗口数量调整：不超过窗口数量
+        return min(calculatedColumns, windowCount)
     }
 
     private var columns: [GridItem] {
@@ -98,28 +104,57 @@ struct SwitchPanelView: View {
         NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
     }
 
-    // 面板自适应宽度
+    // 面板自适应宽度 - 完全贴合内容
     private var panelWidth: CGFloat {
         let itemWidth = previewSize.itemDimensions.width
         let desiredSpacing: CGFloat = 16
-        let minWidth: CGFloat = 500
-        // 最大宽度为屏幕宽度的 90%
+        let windowCount = viewModel.filteredWindows.count
+        let panelPadding: CGFloat = 8
+
+        // 内容所需宽度
+        let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + panelPadding * 2
+
+        // 最小宽度
+        let minWidth: CGFloat
+        switch windowCount {
+        case 1:
+            minWidth = itemWidth + panelPadding * 2 + 8
+        case 2:
+            minWidth = itemWidth * 2 + desiredSpacing + panelPadding * 2 + 8
+        case 3, 4:
+            let cols = min(windowCount, columnCount)
+            minWidth = itemWidth * CGFloat(cols) + desiredSpacing * CGFloat(cols - 1) + panelPadding * 2 + 8
+        default:
+            minWidth = 300
+        }
+
         let maxWidth = screenSize.width * 0.9
-        let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + DesignTokens.Panel.padding * 2
         return min(max(contentWidth, minWidth), maxWidth)
     }
 
-    // 面板自适应高度
+    // 面板自适应高度 - 完全贴合内容
     private var panelHeight: CGFloat {
         let itemHeight = previewSize.itemDimensions.height
-        // WindowItemView 有 .padding(8)，所以实际每个窗口项高度是 itemHeight + 16
-        let actualItemHeight = itemHeight + 16
+        let actualItemHeight = itemHeight + 8  // 紧凑间距
         let windowCount = viewModel.filteredWindows.count
         let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
-        let minHeight: CGFloat = 400
-        // 最大高度为屏幕高度的 80%
+
+        let bottomBarHeight: CGFloat = 20  // 精简底部栏
+        let panelPadding: CGFloat = 8
+
+        // 内容所需高度
+        let contentHeight = CGFloat(rowCount) * actualItemHeight + panelPadding * 2 + bottomBarHeight
+
+        // 最小高度
+        let minHeight: CGFloat
+        switch windowCount {
+        case 1, 2, 3, 4:
+            minHeight = actualItemHeight + panelPadding * 2 + bottomBarHeight
+        default:
+            minHeight = 180
+        }
+
         let maxHeight = screenSize.height * 0.8
-        let contentHeight = CGFloat(rowCount) * actualItemHeight + DesignTokens.Panel.padding * 2 + 40 // 40是底部快捷栏
         return min(max(contentHeight, minHeight), maxHeight)
     }
 

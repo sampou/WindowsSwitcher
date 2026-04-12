@@ -564,6 +564,35 @@ struct HotKeySettingsView: View {
                         .font(FontSystem.captionMedium)
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                 }
+
+                // 反向切换快捷键
+                HStack {
+                    Text("反向切换快捷键")
+                        .font(FontSystem.bodyMedium)
+
+                    HotKeyRecorder(
+                        keyCode: $config.config.hotKeys.appSwitchReverseKeyCode,
+                        modifiers: $config.config.hotKeys.appSwitchReverseModifiers,
+                        placeholder: "⌥⇧ `",
+                        onReset: {
+                            config.config.hotKeys.appSwitchReverseKeyCode = 50
+                            config.config.hotKeys.appSwitchReverseModifiers = 2560
+                        },
+                        onConflict: { conflict in
+                            currentConflict = conflict
+                            pendingHotKeyType = "appSwitchReverse"
+                            showConflictAlert = true
+                        },
+                        onBeforeChange: {
+                            previousKeyCode = config.config.hotKeys.appSwitchReverseKeyCode
+                            previousModifiers = config.config.hotKeys.appSwitchReverseModifiers
+                        }
+                    )
+                }
+
+                Text("反向切换同应用的窗口（从后往前）")
+                    .font(FontSystem.captionMedium)
+                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
             }
 
             // 使用说明
@@ -612,6 +641,8 @@ struct HotKeySettingsView: View {
         .onChange(of: config.config.hotKeys.switchModifiers) { _ in checkConflicts() }
         .onChange(of: config.config.hotKeys.appSwitchKeyCode) { _ in checkConflicts() }
         .onChange(of: config.config.hotKeys.appSwitchModifiers) { _ in checkConflicts() }
+        .onChange(of: config.config.hotKeys.appSwitchReverseKeyCode) { _ in checkConflicts() }
+        .onChange(of: config.config.hotKeys.appSwitchReverseModifiers) { _ in checkConflicts() }
     }
 
     private func checkConflicts() {
@@ -626,6 +657,14 @@ struct HotKeySettingsView: View {
         if let conflict = HotKeyConflictChecker.checkSystemConflict(
             keyCode: config.config.hotKeys.appSwitchKeyCode,
             modifiers: config.config.hotKeys.appSwitchModifiers
+        ) {
+            conflictWarning = conflict.description
+            return
+        }
+
+        if let conflict = HotKeyConflictChecker.checkSystemConflict(
+            keyCode: config.config.hotKeys.appSwitchReverseKeyCode,
+            modifiers: config.config.hotKeys.appSwitchReverseModifiers
         ) {
             conflictWarning = conflict.description
             return

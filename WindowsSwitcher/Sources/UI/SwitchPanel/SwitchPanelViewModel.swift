@@ -78,6 +78,11 @@ class SwitchPanelViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.switchWithinCurrentApp() }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .appSwitchReverseHotKeyPressed)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.switchWithinCurrentAppReverse() }
+            .store(in: &cancellables)
     }
 
     func switchWithinCurrentApp() {
@@ -87,6 +92,18 @@ class SwitchPanelViewModel: ObservableObject {
         if let currentIdx = appWindows.firstIndex(where: { $0.id == selectedWindow?.id }) {
             let nextIdx = (currentIdx + 1) % appWindows.count
             if let globalIdx = filteredWindows.firstIndex(where: { $0.id == appWindows[nextIdx].id }) {
+                selectedIndex = globalIdx
+            }
+        }
+    }
+
+    func switchWithinCurrentAppReverse() {
+        guard let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName else { return }
+        let appWindows = windows.filter { $0.appName == frontApp }
+        guard appWindows.count > 1 else { return }
+        if let currentIdx = appWindows.firstIndex(where: { $0.id == selectedWindow?.id }) {
+            let prevIdx = (currentIdx - 1 + appWindows.count) % appWindows.count
+            if let globalIdx = filteredWindows.firstIndex(where: { $0.id == appWindows[prevIdx].id }) {
                 selectedIndex = globalIdx
             }
         }

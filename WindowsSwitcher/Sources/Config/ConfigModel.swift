@@ -38,6 +38,8 @@ struct HotKeyConfig: Codable, Equatable {
     var reverseSwitchModifiers: UInt32 = 2560 // Option+Shift (2048 + 512)
     var appSwitchKeyCode: UInt32 = 50    // ` (Grave)
     var appSwitchModifiers: UInt32 = 2048 // Option
+    var appSwitchReverseKeyCode: UInt32 = 50  // ` (Grave)
+    var appSwitchReverseModifiers: UInt32 = 2560 // Option+Shift
     var appSwitchEnabled: Bool = true    // 是否启用同应用窗口切换快捷键
 }
 
