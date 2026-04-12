@@ -761,65 +761,114 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func requestPermissions() {
-        // 使用 AXIsProcessTrusted() 检测辅助功能权限，不会弹出系统对话框
-        let hasTrusted = AXIsProcessTrusted()
-        // 检测屏幕录制权限
-        let hasScreen = CGPreflightScreenCaptureAccess()
+        // 使用权限管理器检查状态
+        let permissionManager = PermissionManager.shared
 
-        Logger.info("Permission check - Accessibility: \(hasTrusted), Screen Recording: \(hasScreen)")
+        // 初始检查权限状态
+        permissionManager.checkAllPermissions()
 
-        // 检查屏幕录制权限 - 只有在没有权限时才提示
+        Logger.info("Permission check - Accessibility: \(permissionManager.accessibilityStatus.rawValue), Screen Recording: \(permissionManager.screenRecordingStatus.rawValue)")
+
+        // 检查屏幕录制权限 - 只有在没有权限且未请求过时才提示
         let screenPermissionKey = "hasRequestedScreenPermission"
         let hasRequestedScreen = UserDefaults.standard.bool(forKey: screenPermissionKey)
 
-        if !hasScreen && !hasRequestedScreen {
-            // 没有屏幕录制权限且未请求过，显示提示
-            showPermissionAlert(for: "屏幕录制", permissionKey: screenPermissionKey)
-        } else if hasScreen {
-            // 已经有权限，重置状态
+        if !permissionManager.screenRecordingStatus.isAuthorized && !hasRequestedScreen {
+            showDetailedPermissionAlert(
+                for: "屏幕录制",
+                description: permissionManager.getScreenRecordingPermissionDescription(),
+                permissionKey: screenPermissionKey,
+                openSettingsAction: { permissionManager.openScreenRecordingSettings() }
+            )
+        } else if permissionManager.screenRecordingStatus.isAuthorized {
             UserDefaults.standard.set(false, forKey: screenPermissionKey)
             Logger.info("Screen recording permission granted")
         }
 
-        // 辅助功能权限检查 - 只有在没有权限时才提示
+        // 辅助功能权限检查 - 只有在没有权限且未请求过时才提示
         let accessibilityPermissionKey = "hasRequestedAccessibilityPermission"
         let hasRequestedAccessibility = UserDefaults.standard.bool(forKey: accessibilityPermissionKey)
 
-        if !hasTrusted && !hasRequestedAccessibility {
-            showPermissionAlert(for: "辅助功能", permissionKey: accessibilityPermissionKey)
-        } else if hasTrusted {
+        if !permissionManager.accessibilityStatus.isAuthorized && !hasRequestedAccessibility {
+            showDetailedPermissionAlert(
+                for: "辅助功能",
+                description: permissionManager.getAccessibilityPermissionDescription(),
+                permissionKey: accessibilityPermissionKey,
+                openSettingsAction: { permissionManager.openAccessibilitySettings() }
+            )
+        } else if permissionManager.accessibilityStatus.isAuthorized {
             UserDefaults.standard.set(false, forKey: accessibilityPermissionKey)
             Logger.info("Accessibility permission granted")
         }
 
+        // 启动权限状态监测
+        permissionManager.startMonitoring()
+
+        // 监听权限变更通知
+        setupPermissionChangeListener()
+
         // 更新菜单栏图标状态
-        if !hasTrusted || !hasScreen {
-            updateMenuBarIcon(hasPermissions: false)
-        } else {
-            updateMenuBarIcon(hasPermissions: true)
+        updateMenuBarIcon(hasPermissions: permissionManager.hasAllRequiredPermissions)
+    }
+
+    private func setupPermissionChangeListener() {
+        NotificationCenter.default.addObserver(
+            forName: .permissionStatusChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            let pm = PermissionManager.shared
+            let hasPermissions = pm.hasAllRequiredPermissions
+            self?.updateMenuBarIcon(hasPermissions: hasPermissions)
+
+            if hasPermissions {
+                Logger.info("All permissions granted - UI updated")
+            }
         }
     }
 
-    private func showPermissionAlert(for permission: String, permissionKey: String) {
+    /// 显示详细的权限提示对话框
+    private func showDetailedPermissionAlert(
+        for permission: String,
+        description: (title: String, description: String),
+        permissionKey: String,
+        openSettingsAction: @escaping () -> Void
+    ) {
         let alert = NSAlert()
         alert.messageText = "需要\(permission)权限"
-        alert.informativeText = "WindowsSwitcher 需要\(permission)权限来显示窗口预览。请在系统设置中开启该权限。"
+        alert.informativeText = description.description
         alert.alertStyle = .warning
+
+        // 添加详细说明
+        let infoText = """
+        请在系统设置中开启权限，以启用以下功能：
+        • 窗口预览和切换
+        • 快捷键响应
+        • 程序坞预览
+
+        点击"打开系统设置"前往授权，或点击"稍后"稍后再设置。
+        """
+
+        alert.informativeText = description.description + "\n\n" + infoText
+
         alert.addButton(withTitle: "打开系统设置")
+        alert.addButton(withTitle: "不再提示")
         alert.addButton(withTitle: "稍后")
 
-        if alert.runModal() == .alertFirstButtonReturn {
-            // 用户点击"打开系统设置"，标记为已请求，下次启动不再提示
-            UserDefaults.standard.set(true, forKey: permissionKey)
-            openPrivacySettings()
-        } else {
-            // 用户点击"稍后"，不改变状态，下次启动仍会提示
-        }
-    }
+        let response = alert.runModal()
 
-    private func openPrivacySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-            NSWorkspace.shared.open(url)
+        switch response {
+        case .alertFirstButtonReturn:
+            // 用户点击"打开系统设置"
+            UserDefaults.standard.set(true, forKey: permissionKey)
+            openSettingsAction()
+        case .alertSecondButtonReturn:
+            // 用户点击"不再提示"
+            UserDefaults.standard.set(true, forKey: permissionKey)
+            Logger.info("User chose not to be prompted for \(permission) permission again")
+        default:
+            // 用户点击"稍后"，不改变状态
+            break
         }
     }
 

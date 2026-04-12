@@ -2,7 +2,7 @@ import Foundation
 import os.log
 
 class Logger {
-    private static let subsystem = "com.windowsswitcher.app"
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.moeasy.windowsswitcher"
 
     private static let core = OSLog(subsystem: subsystem, category: "Core")
     private static let ui = OSLog(subsystem: subsystem, category: "UI")
