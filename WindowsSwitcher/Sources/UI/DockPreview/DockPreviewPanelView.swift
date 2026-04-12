@@ -775,17 +775,12 @@ struct LargeDockPreviewView: View {
                 .fill(DesignTokens.Colors.secondaryBackground)
 
             if let image = previewImage {
-                // 与窗口切换器背景预览一致的显示方式
-                let windowFrame = item.windowModel.frame
-                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
-
-                // 按窗口实际大小和位置显示
+                // 只显示窗口内容，去掉空白区域
+                // 使用 aspectFit 模式，确保内容完整显示
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: windowFrame.width, height: windowFrame.height)
-                    .position(x: windowFrame.origin.x + windowFrame.width / 2,
-                             y: screenFrame.height - windowFrame.origin.y - windowFrame.height / 2)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             } else if isLoading {
                 ProgressView()
                     .scaleEffect(1.5)

@@ -449,7 +449,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             previewGenerator: manager.previewGenerator
         )
 
-        // 创建面板
+        // 创建面板 - 层级设置为 floating，低于 popUpMenu
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: frame.width, height: frame.height),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
@@ -457,7 +457,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             defer: false
         )
         panel.isFloatingPanel = true
-        panel.level = .popUpMenu
+        panel.level = .floating  // 低于 popUpMenu，确保预览面板在上层
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
