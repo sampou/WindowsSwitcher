@@ -17,8 +17,8 @@
 		29EBA1DF9DDB5AB2CDF978BC /* WindowsSwitcherApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4A42A05F51980AF172E6128 /* WindowsSwitcherApp.swift */; };
 		2A622C0E50A7AAF9B80B0B1D /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9B4651E6F7DCCE6EFEBE92C /* Logger.swift */; };
 		6964AC9C47196DBEE6D0A3B9 /* SearchBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9513B6C10514C44B38148757 /* SearchBarView.swift */; };
-		6D5225932F73D9CC0071DF03 /* DockPreviewPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */; };
-		6D5225952F73D9F10071DF03 /* DockEventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */; };
+		6D5225932F73D9CC0071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D5225922F73D9CC0071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift */; };
+		6D5225952F73D9F10071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D5225942F73D9F10071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift */; };
 		7017CD893FDDC5DD49FF8AE0 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A0F070F39D7A2AF099617C /* HotKeyManager.swift */; };
 		74028FE34D99EC425A507242 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */; };
 		7805487D329D7C4313E07206 /* FilterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443479EAF286E51D759D961E /* FilterEngine.swift */; };
@@ -44,8 +44,8 @@
 		47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewGenerator.swift; sourceTree = "<group>"; };
 		6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelAnimator.swift; sourceTree = "<group>"; };
 		6CC11176E9A1F286871185CB /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
-		6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift; sourceTree = "<absolute>"; };
-		6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift; sourceTree = "<absolute>"; };
+		6D5225922F73D9CC0071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift; sourceTree = "<absolute>"; };
+		6D5225942F73D9F10071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift; sourceTree = "<absolute>"; };
 		903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		90BB4603BBAE5AC668324947 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		9513B6C10514C44B38148757 /* SearchBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchBarView.swift; sourceTree = "<group>"; };
@@ -104,7 +104,7 @@
 		369ACC0A6EB25627872307A9 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
-				6D5225922F73D9CC0071DF03 /* DockPreviewPanelView.swift */,
+				6D5225922F73D9CC0071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift */,
 				903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */,
 				C4A42A05F51980AF172E6128 /* WindowsSwitcherApp.swift */,
 				11CDB6F8D16282B94D7C1E40 /* Config */,
@@ -174,7 +174,7 @@
 		AA40B625EECA21940B6B661F = {
 			isa = PBXGroup;
 			children = (
-				6D5225942F73D9F10071DF03 /* DockEventMonitor.swift */,
+				6D5225942F73D9F10071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift */,
 				369ACC0A6EB25627872307A9 /* Sources */,
 				C1D2E3F4A5B6789012345678 /* Resources */,
 				8205D3D51BDEC57E455DC395 /* Products */,
@@ -259,7 +259,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "WindowsSwitcher" */;
+			buildConfigurationList = 8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "	" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -296,13 +296,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				6D5225952F73D9F10071DF03 /* DockEventMonitor.swift in Sources */,
+				6D5225952F73D9F10071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift in Sources */,
 				74028FE34D99EC425A507242 /* AppDelegate.swift in Sources */,
 				F9B60FF46CDD68A7605EE0E2 /* ConfigManager.swift in Sources */,
 				CA5EBF5C2521A1D748FA93DE /* ConfigModel.swift in Sources */,
 				C3EE2F94287F2281C8D7D2D5 /* DesignTokens.swift in Sources */,
 				DE486BED21AF2A6C21EF1550 /* Extensions.swift in Sources */,
-				6D5225932F73D9CC0071DF03 /* DockPreviewPanelView.swift in Sources */,
+				6D5225932F73D9CC0071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockPreviewPanelView.swift in Sources */,
 				7805487D329D7C4313E07206 /* FilterEngine.swift in Sources */,
 				7017CD893FDDC5DD49FF8AE0 /* HotKeyManager.swift in Sources */,
 				2A622C0E50A7AAF9B80B0B1D /* Logger.swift in Sources */,
@@ -406,7 +406,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.windowsswitcher.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moeasy.windowsswitcher;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
 			};
@@ -428,7 +428,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.windowsswitcher.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.moeasy.windowsswitcher;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
 			};
@@ -494,7 +494,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "WindowsSwitcher" */ = {
+		8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "	" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				6ACBE4AB9024D0A3CBD90E6A /* Debug */,

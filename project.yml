@@ -27,7 +27,7 @@ targets:
       - package: HotKey
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.windowsswitcher.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.moeasy.windowsswitcher
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "13.0"
         INFOPLIST_FILE: WindowsSwitcher/Sources/Info.plist
