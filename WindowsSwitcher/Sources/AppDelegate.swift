@@ -763,42 +763,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func requestPermissions() {
         // 使用 AXIsProcessTrusted() 检测辅助功能权限，不会弹出系统对话框
         let hasTrusted = AXIsProcessTrusted()
+        // 检测屏幕录制权限
         let hasScreen = CGPreflightScreenCaptureAccess()
 
-        // 检查屏幕录制权限
-        // 使用 UserDefaults 记录是否已显示过提示，避免重复弹窗
+        Logger.info("Permission check - Accessibility: \(hasTrusted), Screen Recording: \(hasScreen)")
+
+        // 检查屏幕录制权限 - 只有在没有权限时才提示
         let screenPermissionKey = "hasRequestedScreenPermission"
         let hasRequestedScreen = UserDefaults.standard.bool(forKey: screenPermissionKey)
 
-        if !hasScreen {
-            // 如果还没有请求过权限，或者用户点击过"打开系统设置"按钮，则显示提示
-            if !hasRequestedScreen {
-                // 提示用户手动开启
-                showPermissionAlert(for: "屏幕录制", permissionKey: screenPermissionKey)
-            }
-        } else {
-            // 已经有权限，重置状态以便下次提示
+        if !hasScreen && !hasRequestedScreen {
+            // 没有屏幕录制权限且未请求过，显示提示
+            showPermissionAlert(for: "屏幕录制", permissionKey: screenPermissionKey)
+        } else if hasScreen {
+            // 已经有权限，重置状态
             UserDefaults.standard.set(false, forKey: screenPermissionKey)
+            Logger.info("Screen recording permission granted")
         }
 
-        // 辅助功能权限检查
+        // 辅助功能权限检查 - 只有在没有权限时才提示
         let accessibilityPermissionKey = "hasRequestedAccessibilityPermission"
         let hasRequestedAccessibility = UserDefaults.standard.bool(forKey: accessibilityPermissionKey)
 
-        if !hasTrusted {
-            if !hasRequestedAccessibility {
-                showPermissionAlert(for: "辅助功能", permissionKey: accessibilityPermissionKey)
-            }
-        } else {
+        if !hasTrusted && !hasRequestedAccessibility {
+            showPermissionAlert(for: "辅助功能", permissionKey: accessibilityPermissionKey)
+        } else if hasTrusted {
             UserDefaults.standard.set(false, forKey: accessibilityPermissionKey)
+            Logger.info("Accessibility permission granted")
         }
 
+        // 更新菜单栏图标状态
         if !hasTrusted || !hasScreen {
             updateMenuBarIcon(hasPermissions: false)
-            Logger.warning("Missing permissions - Accessibility: \(hasTrusted), Screen Recording: \(hasScreen)")
         } else {
             updateMenuBarIcon(hasPermissions: true)
-            Logger.info("All permissions granted")
         }
     }
 
