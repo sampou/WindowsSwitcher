@@ -107,44 +107,28 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
-    /// 计算大预览窗口的位置和尺寸 - 根据实际窗口大小，不限制最大尺寸
+    /// 计算大预览窗口的位置和尺寸 - 屏幕居中显示，尺寸更大
     private func calculateLargePreviewPosition(for item: DockPreviewItem, at index: Int) {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
 
-        // 获取实际窗口的尺寸，直接使用不限制
+        // 获取实际窗口的尺寸
         let windowFrame = item.windowModel.frame
 
-        // 直接使用窗口的实际尺寸，或者稍微缩小一点（90%）
-        let previewWidth = windowFrame.width * 0.9
-        let previewHeight = windowFrame.height * 0.9
+        // 使用窗口实际尺寸的 95%，稍微大一点
+        let previewWidth = windowFrame.width * 0.95
+        let previewHeight = windowFrame.height * 0.95
 
-        // 计算居中位置
-        var x = screenFrame.midX - previewWidth / 2
-        var y = screenFrame.midY - previewHeight / 2
-
-        // 根据 Dock 位置调整，避免被 Dock 遮挡
-        switch currentDockPosition {
-        case .bottom:
-            // 预览窗口显示在屏幕中央上方区域
-            y = screenFrame.maxY - previewHeight - 100
-        case .top:
-            // 预览窗口显示在屏幕中央下方区域
-            y = screenFrame.minY + 100
-        case .left:
-            // 预览窗口显示在屏幕中央右侧
-            x = screenFrame.midX + 60
-        case .right:
-            // 预览窗口显示在屏幕中央左侧
-            x = screenFrame.midX - previewWidth - 60
-        }
+        // 屏幕完全居中显示
+        let x = screenFrame.midX - previewWidth / 2
+        let y = screenFrame.midY - previewHeight / 2
 
         // 确保不超出屏幕边界
-        x = max(screenFrame.minX + 10, min(x, screenFrame.maxX - previewWidth - 10))
-        y = max(screenFrame.minY + 10, min(y, screenFrame.maxY - previewHeight - 10))
+        let finalX = max(screenFrame.minX + 10, min(x, screenFrame.maxX - previewWidth - 10))
+        let finalY = max(screenFrame.minY + 10, min(y, screenFrame.maxY - previewHeight - 10))
 
-        largePreviewFrame = CGRect(x: x, y: y, width: previewWidth, height: previewHeight)
+        largePreviewFrame = CGRect(x: finalX, y: finalY, width: previewWidth, height: previewHeight)
 
         // 更新大预览尺寸
         largePreviewWidth = previewWidth
@@ -775,8 +759,7 @@ struct LargeDockPreviewView: View {
                 .fill(DesignTokens.Colors.secondaryBackground)
 
             if let image = previewImage {
-                // 只显示窗口内容，去掉空白区域
-                // 使用 aspectFit 模式，确保内容完整显示
+                // 居中显示，去掉空白区域
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
