@@ -765,15 +765,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hasTrusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
         let hasScreen = CGPreflightScreenCaptureAccess()
 
+        // 检查屏幕录制权限
+        // 使用 UserDefaults 记录是否已显示过提示，避免重复弹窗
+        let screenPermissionKey = "hasRequestedScreenPermission"
+        let hasRequestedScreen = UserDefaults.standard.bool(forKey: screenPermissionKey)
+
         if !hasScreen {
-            // 请求屏幕录制权限
-            CGRequestScreenCaptureAccess()
-            // 提示用户手动开启
-            showPermissionAlert(for: "屏幕录制")
+            // 如果还没有请求过权限，或者用户点击过"打开系统设置"按钮，则显示提示
+            if !hasRequestedScreen {
+                // 提示用户手动开启
+                showPermissionAlert(for: "屏幕录制", permissionKey: screenPermissionKey)
+            }
+        } else {
+            // 已经有权限，重置状态以便下次提示
+            UserDefaults.standard.set(false, forKey: screenPermissionKey)
         }
 
+        // 辅助功能权限检查
+        let accessibilityPermissionKey = "hasRequestedAccessibilityPermission"
+        let hasRequestedAccessibility = UserDefaults.standard.bool(forKey: accessibilityPermissionKey)
+
         if !hasTrusted {
-            showPermissionAlert(for: "辅助功能")
+            if !hasRequestedAccessibility {
+                showPermissionAlert(for: "辅助功能", permissionKey: accessibilityPermissionKey)
+            }
+        } else {
+            UserDefaults.standard.set(false, forKey: accessibilityPermissionKey)
         }
 
         if !hasTrusted || !hasScreen {
@@ -785,7 +802,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func showPermissionAlert(for permission: String) {
+    private func showPermissionAlert(for permission: String, permissionKey: String) {
         let alert = NSAlert()
         alert.messageText = "需要\(permission)权限"
         alert.informativeText = "WindowsSwitcher 需要\(permission)权限来显示窗口预览。请在系统设置中开启该权限。"
@@ -794,7 +811,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.addButton(withTitle: "稍后")
 
         if alert.runModal() == .alertFirstButtonReturn {
+            // 用户点击"打开系统设置"，标记为已请求，下次启动不再提示
+            UserDefaults.standard.set(true, forKey: permissionKey)
             openPrivacySettings()
+        } else {
+            // 用户点击"稍后"，不改变状态，下次启动仍会提示
         }
     }
 
