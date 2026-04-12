@@ -107,45 +107,18 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
-    /// 计算大预览窗口的位置和尺寸 - 根据实际窗口大小自适应
+    /// 计算大预览窗口的位置和尺寸 - 根据实际窗口大小，不限制最大尺寸
     private func calculateLargePreviewPosition(for item: DockPreviewItem, at index: Int) {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
 
-        // 获取实际窗口的尺寸
+        // 获取实际窗口的尺寸，直接使用不限制
         let windowFrame = item.windowModel.frame
 
-        // 根据窗口实际尺寸计算预览窗口尺寸，保持比例
-        let windowWidth = windowFrame.width
-        let windowHeight = windowFrame.height
-
-        // 最大尺寸限制（不超过屏幕的一半）
-        let maxWidth = screenFrame.width * 0.45
-        let maxHeight = screenFrame.height * 0.45
-
-        // 最小尺寸限制
-        let minWidth: CGFloat = 300
-        let minHeight: CGFloat = 200
-
-        // 计算缩放后的尺寸，保持窗口原始比例
-        let aspectRatio = windowWidth / max(windowHeight, 1)
-        var previewWidth: CGFloat
-        var previewHeight: CGFloat
-
-        if aspectRatio > 1 {
-            // 宽窗口
-            previewWidth = min(windowWidth * 0.8, maxWidth)
-            previewHeight = previewWidth / aspectRatio
-        } else {
-            // 高窗口
-            previewHeight = min(windowHeight * 0.8, maxHeight)
-            previewWidth = previewHeight * aspectRatio
-        }
-
-        // 应用尺寸限制
-        previewWidth = max(minWidth, min(previewWidth, maxWidth))
-        previewHeight = max(minHeight, min(previewHeight, maxHeight))
+        // 直接使用窗口的实际尺寸，或者稍微缩小一点（90%）
+        let previewWidth = windowFrame.width * 0.9
+        let previewHeight = windowFrame.height * 0.9
 
         // 计算居中位置
         var x = screenFrame.midX - previewWidth / 2
@@ -155,16 +128,16 @@ class DockPreviewManager: ObservableObject {
         switch currentDockPosition {
         case .bottom:
             // 预览窗口显示在屏幕中央上方区域
-            y = screenFrame.maxY - previewHeight - 80
+            y = screenFrame.maxY - previewHeight - 100
         case .top:
             // 预览窗口显示在屏幕中央下方区域
-            y = screenFrame.minY + 80
+            y = screenFrame.minY + 100
         case .left:
             // 预览窗口显示在屏幕中央右侧
-            x = screenFrame.midX + 50
+            x = screenFrame.midX + 60
         case .right:
             // 预览窗口显示在屏幕中央左侧
-            x = screenFrame.midX - previewWidth - 50
+            x = screenFrame.midX - previewWidth - 60
         }
 
         // 确保不超出屏幕边界
@@ -173,7 +146,7 @@ class DockPreviewManager: ObservableObject {
 
         largePreviewFrame = CGRect(x: x, y: y, width: previewWidth, height: previewHeight)
 
-        // 更新大预览尺寸以匹配实际窗口比例
+        // 更新大预览尺寸
         largePreviewWidth = previewWidth
         largePreviewHeight = previewHeight
     }
@@ -785,7 +758,7 @@ struct DockGeometry {
     }
 }
 
-// MARK: - 大预览窗口视图
+// MARK: - 大预览窗口视图 - 复用窗口切换器的背景预览逻辑
 struct LargeDockPreviewView: View {
     let item: DockPreviewItem
     let previewWidth: CGFloat
@@ -795,53 +768,65 @@ struct LargeDockPreviewView: View {
     @State private var previewImage: NSImage?
     @State private var isLoading = true
 
-    private let padding: CGFloat = 12  // 预览图四周的内边距
-
     var body: some View {
         ZStack {
             // 背景
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(DesignTokens.Colors.secondaryBackground)
 
             if let image = previewImage {
+                // 与窗口切换器背景预览一致的显示方式
+                let windowFrame = item.windowModel.frame
+                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+
+                // 按窗口实际大小和位置显示
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .padding(padding)  // 添加内边距
+                    .frame(width: windowFrame.width, height: windowFrame.height)
+                    .position(x: windowFrame.origin.x + windowFrame.width / 2,
+                             y: screenFrame.height - windowFrame.origin.y - windowFrame.height / 2)
             } else if isLoading {
                 ProgressView()
                     .scaleEffect(1.5)
             }
         }
         .frame(width: previewWidth, height: previewHeight)
-        .shadow(color: .black.opacity(0.4), radius: 25, x: 0, y: 15)
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
         .onAppear {
-            loadRealTimePreview()
+            loadFullResolutionPreview()
         }
     }
 
-    private func loadRealTimePreview() {
-        // 使用更大的尺寸生成预览图，确保清晰度
-        let targetSize = CGSize(
-            width: previewWidth * 2,  // 2倍尺寸以获得更高清晰度
-            height: previewHeight * 2
-        )
-
+    /// 使用全分辨率预览，类似于窗口切换器的背景预览
+    private func loadFullResolutionPreview() {
         Task(priority: .userInitiated) {
-            // 使用实时预览生成器获取最新内容
-            if let image = await previewGenerator?.generateRealtimePreview(
-                for: item.windowModel,
-                size: targetSize
-            ) {
+            // 使用全分辨率预览生成器
+            if let image = await previewGenerator?.generateFullResolutionPreview(for: item.windowModel) {
                 await MainActor.run {
                     self.previewImage = image
                     self.isLoading = false
                 }
             } else {
-                await MainActor.run {
-                    self.isLoading = false
-                }
+                // 降级使用实时预览
+                await loadRealTimePreview()
+            }
+        }
+    }
+
+    private func loadRealTimePreview() async {
+        let targetSize = CGSize(width: previewWidth * 2, height: previewHeight * 2)
+        if let image = await previewGenerator?.generateRealtimePreview(
+            for: item.windowModel,
+            size: targetSize
+        ) {
+            await MainActor.run {
+                self.previewImage = image
+                self.isLoading = false
+            }
+        } else {
+            await MainActor.run {
+                self.isLoading = false
             }
         }
     }
