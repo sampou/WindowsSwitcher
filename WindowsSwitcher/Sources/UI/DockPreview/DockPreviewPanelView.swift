@@ -635,62 +635,54 @@ struct DockGeometry {
         // 获取图标大小设置（默认 48）
         let iconSize = defaults?.double(forKey: "size") ?? 48
 
-        // Dock 的实际高度组成：
-        // - 图标大小
-        // - 上边距（约 6-8 像素，用于图标上方的空间）
-        // - 下边距（约 6-8 像素，用于图标下方的空间）
-        // - 阴影效果（约 3-5 像素，Dock 下方的阴影）
+        // 精简的边距和阴影
+        let topPadding: CGFloat = 5
+        let bottomPadding: CGFloat = 5
+        let shadowHeight: CGFloat = 3
 
-        let topPadding: CGFloat = 8
-        let bottomPadding: CGFloat = 8
-        let shadowHeight: CGFloat = 4
-
-        // 检查是否启用了放大效果
+        // 放大效果预留空间
         let magnification = defaults?.bool(forKey: "magnification") ?? false
-        // 放大效果会在悬停时让图标变大，预留空间
-        let magnificationBonus: CGFloat = magnification ? 8 : 0
+        let magnificationBonus: CGFloat = magnification ? 6 : 0
 
-        // 检查是否显示最近使用的应用
+        // 最近使用应用预留
         let showRecents = defaults?.bool(forKey: "show-recents") ?? false
-        let recentsBonus: CGFloat = showRecents ? 4 : 0
+        let recentsBonus: CGFloat = showRecents ? 3 : 0
 
         // 计算总高度
         let totalHeight = CGFloat(iconSize) + topPadding + bottomPadding + shadowHeight + magnificationBonus + recentsBonus
 
         // 确保合理的范围
-        return max(70, min(140, totalHeight))
+        return max(60, min(120, totalHeight))
     }
 
     /// 获取推荐间距（基于屏幕分辨率和 Dock 大小）
-    /// 返回预览窗口与 Dock 之间的安全间距
+    /// 返回预览窗口与 Dock 之间的安全间距，精简美观
     static func getRecommendedSpacing() -> (vertical: CGFloat, horizontal: CGFloat) {
         guard let screen = NSScreen.main else {
-            return (vertical: 32, horizontal: 32)
+            return (vertical: 24, horizontal: 20)
         }
 
         let screenHeight = screen.frame.height
         let screenWidth = screen.frame.width
 
-        // 基础间距：确保有足够的视觉分隔，不会覆盖 Dock
-        // 根据屏幕尺寸调整
+        // 基础间距：根据屏幕尺寸调整
         let baseSpacing: CGFloat
         if screenHeight < 900 {
             // 小屏幕（MacBook Air 13" 等）
-            baseSpacing = 28
+            baseSpacing = 20
         } else if screenHeight < 1100 {
             // 中等屏幕（MacBook Pro 14", iMac 21.5" 等）
-            baseSpacing = 32
+            baseSpacing = 24
         } else {
             // 大屏幕（iMac 27", Pro Display XDR 等）
-            baseSpacing = 36
+            baseSpacing = 28
         }
 
-        // 垂直间距：确保预览窗口不会覆盖 Dock
-        // 添加额外的安全裕度
-        let verticalSpacing = baseSpacing + 12
+        // 垂直间距：精简安全裕度
+        let verticalSpacing = baseSpacing + 4
 
         // 水平间距：用于侧边 Dock
-        let horizontalSpacing = screenWidth < 1600 ? baseSpacing + 8 : baseSpacing + 12
+        let horizontalSpacing = baseSpacing
 
         return (vertical: verticalSpacing, horizontal: horizontalSpacing)
     }
