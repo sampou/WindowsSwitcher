@@ -761,8 +761,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func requestPermissions() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-        let hasTrusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        // 使用 AXIsProcessTrusted() 检测辅助功能权限，不会弹出系统对话框
+        let hasTrusted = AXIsProcessTrusted()
         let hasScreen = CGPreflightScreenCaptureAccess()
 
         // 检查屏幕录制权限
