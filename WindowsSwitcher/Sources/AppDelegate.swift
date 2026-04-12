@@ -20,6 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var switchPanelViewModel: SwitchPanelViewModel?
     private var dockPreviewWindow: NSWindow?
     private var dockPreviewCancellable: AnyCancellable?
+    private var largePreviewCancellable: AnyCancellable?
     private var selectedWindowCancellable: AnyCancellable?  // 监听选中窗口变化
 
     // 标记是否已完成延迟初始化
@@ -191,7 +192,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     Task { @MainActor in
                         self?.hideDockPreviewPanel()
+                        self?.hideLargePreview()
                     }
+                }
+            }
+
+        // 监听大预览项目变化
+        largePreviewCancellable = DockPreviewManager.shared.$largePreviewItem
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] item in
+                if let item = item {
+                    self?.showLargePreview(for: item)
+                } else {
+                    self?.hideLargePreview()
                 }
             }
     }
@@ -207,12 +220,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 取消监听
         dockPreviewCancellable?.cancel()
         dockPreviewCancellable = nil
+        largePreviewCancellable?.cancel()
+        largePreviewCancellable = nil
 
         // 隐藏预览窗口（在主线程）
         Task { @MainActor in
             self.hideDockPreviewPanel()
         }
     }
+
+    // MARK: - 大预览窗口
+    private var largePreviewWindow: NSPanel?
 
     // 显示程序坞预览面板 - 精确定位在图标上方
     @MainActor
@@ -413,6 +431,69 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.orderOut(nil)
             dockPreviewWindow = nil
         }
+    }
+
+    // MARK: - 大预览窗口
+    private func showLargePreview(for item: DockPreviewItem) {
+        // 隐藏已有的大预览窗口
+        hideLargePreview()
+
+        let frame = DockPreviewManager.shared.largePreviewFrame
+        let manager = DockPreviewManager.shared
+
+        // 创建大预览视图
+        let largePreviewView = LargeDockPreviewView(
+            item: item,
+            previewWidth: manager.largePreviewWidth,
+            previewHeight: manager.largePreviewHeight,
+            previewGenerator: manager.previewGenerator
+        )
+
+        // 创建面板
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: frame.width, height: frame.height),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+
+        let hostingView = NSHostingView(rootView: largePreviewView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: frame.width, height: frame.height)
+        panel.contentView = hostingView
+        panel.setFrameOrigin(NSPoint(x: frame.origin.x, y: frame.origin.y))
+
+        // 显示（带动画）
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
+
+        largePreviewWindow = panel
+    }
+
+    private func hideLargePreview() {
+        guard let window = largePreviewWindow else { return }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.1
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            window.animator().alphaValue = 0
+        } completionHandler: {
+            window.orderOut(nil)
+        }
+
+        largePreviewWindow = nil
     }
 
     // 监听 Option 键释放 - 使用全局监听器

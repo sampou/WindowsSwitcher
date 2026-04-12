@@ -14,8 +14,15 @@ class DockPreviewManager: ObservableObject {
     @Published var previewImages: [CGWindowID: NSImage] = [:]
     @Published var iconCenter: CGPoint?
     @Published var previewWindowFrame: CGRect = .zero  // 预览窗口的屏幕位置
+    @Published var largePreviewItem: DockPreviewItem?  // 悬停时显示的大预览项目
+    @Published var largePreviewFrame: CGRect = .zero    // 大预览窗口的 frame
+    @Published var isLargePreviewVisible: Bool = false // 大预览窗口是否可见
 
     let previewGenerator = PreviewGenerator()
+
+    // 大预览窗口尺寸
+    let largePreviewWidth: CGFloat = 400
+    let largePreviewHeight: CGFloat = 225  // 16:9 比例
 
     private let eventMonitor = DockEventMonitor()
     private var cancellables = Set<AnyCancellable>()
@@ -78,6 +85,64 @@ class DockPreviewManager: ObservableObject {
                 self?.checkMouseInPreviewWindow(location)
             }
             .store(in: &cancellables)
+
+        // 监听悬停索引变化，显示/隐藏大预览窗口
+        $hoveredIndex
+            .sink { [weak self] index in
+                self?.handleHoveredIndexChange(index)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// 处理悬停索引变化
+    private func handleHoveredIndexChange(_ index: Int?) {
+        if let index = index, index < previewItems.count {
+            let item = previewItems[index]
+            largePreviewItem = item
+            calculateLargePreviewPosition(for: item, at: index)
+            isLargePreviewVisible = true
+        } else {
+            isLargePreviewVisible = false
+            largePreviewItem = nil
+        }
+    }
+
+    /// 计算大预览窗口的位置
+    private func calculateLargePreviewPosition(for item: DockPreviewItem, at index: Int) {
+        guard let screen = NSScreen.main else { return }
+
+        let screenFrame = screen.visibleFrame
+        let previewWidth = largePreviewWidth
+        let previewHeight = largePreviewHeight
+
+        // 计算基础位置（居中于屏幕）
+        var x = screenFrame.midX - previewWidth / 2
+        var y = screenFrame.midY - previewHeight / 2
+
+        // 根据 Dock 位置调整
+        let dockSize = DockGeometry.getDockSize()
+        let spacing = DockGeometry.getRecommendedSpacing()
+
+        switch currentDockPosition {
+        case .bottom:
+            // 预览窗口显示在屏幕中央上方
+            y = screenFrame.maxY - previewHeight - 100
+        case .top:
+            // 预览窗口显示在屏幕中央下方
+            y = screenFrame.minY + 100
+        case .left:
+            // 预览窗口显示在屏幕中央右侧
+            x = screenFrame.midX + 50
+        case .right:
+            // 预览窗口显示在屏幕中央左侧
+            x = screenFrame.midX - previewWidth - 50
+        }
+
+        // 确保不超出屏幕边界
+        x = max(screenFrame.minX + 10, min(x, screenFrame.maxX - previewWidth - 10))
+        y = max(screenFrame.minY + 10, min(y, screenFrame.maxY - previewHeight - 10))
+
+        largePreviewFrame = CGRect(x: x, y: y, width: previewWidth, height: previewHeight)
     }
 
     /// 更新预览窗口的 frame（由 AppDelegate 调用）
@@ -685,6 +750,112 @@ struct DockGeometry {
         let horizontalSpacing = baseSpacing
 
         return (vertical: verticalSpacing, horizontal: horizontalSpacing)
+    }
+}
+
+// MARK: - 大预览窗口视图
+struct LargeDockPreviewView: View {
+    let item: DockPreviewItem
+    let previewWidth: CGFloat
+    let previewHeight: CGFloat
+    let previewGenerator: PreviewGenerator?
+
+    @State private var previewImage: NSImage?
+    @State private var isLoading = true
+
+    var body: some View {
+        ZStack {
+            // 背景
+            RoundedRectangle(cornerRadius: 12)
+                .fill(DesignTokens.Colors.secondaryBackground)
+
+            if let image = previewImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else if isLoading {
+                ProgressView()
+                    .scaleEffect(1.5)
+            }
+        }
+        .frame(width: previewWidth, height: previewHeight)
+        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+        .onAppear {
+            loadRealTimePreview()
+        }
+    }
+
+    private func loadRealTimePreview() {
+        Task(priority: .userInitiated) {
+            // 使用实时预览生成器获取最新内容
+            if let image = await previewGenerator?.generateRealtimePreview(
+                for: item.windowModel,
+                size: CGSize(width: previewWidth, height: previewHeight)
+            ) {
+                await MainActor.run {
+                    self.previewImage = image
+                    self.isLoading = false
+                }
+            } else {
+                await MainActor.run {
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 实时预览窗口模型
+struct RealtimePreviewModel: Identifiable {
+    let id: CGWindowID
+    let windowModel: WindowModel
+    let previewGenerator: PreviewGenerator?
+
+    init(windowModel: WindowModel, previewGenerator: PreviewGenerator?) {
+        self.id = windowModel.id
+        self.windowModel = windowModel
+        self.previewGenerator = previewGenerator
+    }
+}
+
+// MARK: - 实时预览视图（可被 Command+Tab 和 Dock 预览共用）
+struct RealtimePreviewContainer: View {
+    let windowModel: WindowModel
+    let previewGenerator: PreviewGenerator?
+    let targetSize: CGSize
+
+    @State private var previewImage: NSImage?
+
+    var body: some View {
+        ZStack {
+            if let image = previewImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(nsImage: windowModel.appIcon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .opacity(0.3)
+            }
+        }
+        .onAppear {
+            loadPreview()
+        }
+    }
+
+    private func loadPreview() {
+        Task(priority: .userInitiated) {
+            if let image = await previewGenerator?.generateRealtimePreview(
+                for: windowModel,
+                size: targetSize
+            ) {
+                await MainActor.run {
+                    self.previewImage = image
+                }
+            }
+        }
     }
 }
 
