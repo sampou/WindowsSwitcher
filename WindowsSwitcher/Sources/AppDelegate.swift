@@ -47,6 +47,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 禁用系统 Command+Tab 快捷键（需要辅助功能权限）
         disableSystemHotKeysIfNeeded()
 
+        // 注册信号处理器，捕获异常退出并恢复系统快捷键
+        setupSignalHandlers()
+
         // 注册退出处理器，确保应用退出时恢复系统快捷键
         atexit_b {
             restoreAllSystemHotKeys()
@@ -118,6 +121,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Logger.info("=== Application terminating, restoring system hot keys ===")
         // 恢复系统快捷键
         restoreAllSystemHotKeys()
+    }
+
+    // 设置信号处理器，捕获异常退出信号并恢复系统快捷键
+    private func setupSignalHandlers() {
+        // 捕获 SIGTERM（优雅终止，如 kill -15）
+        signal(SIGTERM) { _ in
+            restoreAllSystemHotKeys()
+            Logger.info("=== Caught SIGTERM, restored system hot keys ===")
+            exit(0)
+        }
+
+        // 捕获 SIGINT（Ctrl+C 终止）
+        signal(SIGINT) { _ in
+            restoreAllSystemHotKeys()
+            Logger.info("=== Caught SIGINT, restored system hot keys ===")
+            exit(0)
+        }
+
+        // 捕获 SIGHUP（终端关闭）
+        signal(SIGHUP) { _ in
+            restoreAllSystemHotKeys()
+            Logger.info("=== Caught SIGHUP, restored system hot keys ===")
+            exit(0)
+        }
+
+        Logger.info("Signal handlers registered for cleanup on异常 exit")
     }
 
     // 启动程序坞预览功能
