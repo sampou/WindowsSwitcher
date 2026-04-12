@@ -21,8 +21,8 @@ class DockPreviewManager: ObservableObject {
     let previewGenerator = PreviewGenerator()
 
     // 大预览窗口尺寸
-    let largePreviewWidth: CGFloat = 400
-    let largePreviewHeight: CGFloat = 225  // 16:9 比例
+    let largePreviewWidth: CGFloat = 600
+    let largePreviewHeight: CGFloat = 400  // 3:2 比例，更大更清晰
 
     private let eventMonitor = DockEventMonitor()
     private var cancellables = Set<AnyCancellable>()
@@ -762,35 +762,44 @@ struct LargeDockPreviewView: View {
     @State private var previewImage: NSImage?
     @State private var isLoading = true
 
+    private let padding: CGFloat = 12  // 预览图四周的内边距
+
     var body: some View {
         ZStack {
             // 背景
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(DesignTokens.Colors.secondaryBackground)
 
             if let image = previewImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(padding)  // 添加内边距
             } else if isLoading {
                 ProgressView()
                     .scaleEffect(1.5)
             }
         }
         .frame(width: previewWidth, height: previewHeight)
-        .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
+        .shadow(color: .black.opacity(0.4), radius: 25, x: 0, y: 15)
         .onAppear {
             loadRealTimePreview()
         }
     }
 
     private func loadRealTimePreview() {
+        // 使用更大的尺寸生成预览图，确保清晰度
+        let targetSize = CGSize(
+            width: previewWidth * 2,  // 2倍尺寸以获得更高清晰度
+            height: previewHeight * 2
+        )
+
         Task(priority: .userInitiated) {
             // 使用实时预览生成器获取最新内容
             if let image = await previewGenerator?.generateRealtimePreview(
                 for: item.windowModel,
-                size: CGSize(width: previewWidth, height: previewHeight)
+                size: targetSize
             ) {
                 await MainActor.run {
                     self.previewImage = image
