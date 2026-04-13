@@ -107,18 +107,16 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
-    /// 计算大预览窗口的位置和尺寸 - 屏幕居中显示，尺寸更大
+    /// 计算大预览窗口的位置和尺寸 - 按照原窗口尺寸，不缩放
     private func calculateLargePreviewPosition(for item: DockPreviewItem, at index: Int) {
         guard let screen = NSScreen.main else { return }
 
         let screenFrame = screen.visibleFrame
 
-        // 获取实际窗口的尺寸
+        // 获取实际窗口的尺寸，原尺寸展示
         let windowFrame = item.windowModel.frame
-
-        // 使用窗口实际尺寸的 95%，稍微大一点
-        let previewWidth = windowFrame.width * 0.95
-        let previewHeight = windowFrame.height * 0.95
+        let previewWidth = windowFrame.width
+        let previewHeight = windowFrame.height
 
         // 屏幕完全居中显示
         let x = screenFrame.midX - previewWidth / 2
