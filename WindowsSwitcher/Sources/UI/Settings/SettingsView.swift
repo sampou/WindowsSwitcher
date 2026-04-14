@@ -407,6 +407,15 @@ struct DockSettingsView: View {
                             set: { config.config.dockPreview.showAnimation = $0 }
                         )
                     )
+
+                    SettingsToggle(
+                        title: "显示应用图标",
+                        description: "在预览窗口中显示对应的软件图标",
+                        isOn: Binding(
+                            get: { config.config.dockPreview.showAppIcon },
+                            set: { config.config.dockPreview.showAppIcon = $0 }
+                        )
+                    )
                 }
 
                 // 间距设置

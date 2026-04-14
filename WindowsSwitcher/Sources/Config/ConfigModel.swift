@@ -74,6 +74,7 @@ struct DockPreviewConfig: Codable, Equatable {
     var showAnimation: Bool = true             // 是否显示动画
     var verticalSpacing: Double = 0            // 预览窗口与程序坞的垂直间距（像素），0 表示自动计算
     var horizontalSpacing: Double = 0          // 预览窗口与程序坞的水平间距（像素），0 表示自动计算
+    var showAppIcon: Bool = true               // 是否显示应用图标
 }
 
 struct ConfigModel: Codable, Equatable {

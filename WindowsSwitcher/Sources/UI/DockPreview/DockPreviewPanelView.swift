@@ -197,7 +197,10 @@ class DockPreviewManager: ObservableObject {
         }
 
         // 按 lastActiveTime 降序排序，确保最新活跃的窗口在最前面
-        let sortedWindows = windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
+        // 按窗口 ID 升序排列（最早的窗口排在前面）
+        // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
+        // 这与 Command+Tab 切换器的 lastActiveTime 降序排序完全独立
+        let sortedWindows = windows.sorted { $0.id < $1.id }
 
         // 创建预览项 - 显示所有窗口，不再限制数量
         previewItems = sortedWindows.map { windowModel in
@@ -482,6 +485,9 @@ struct DockPreviewItemView: View {
     private var iconSize: CGFloat { DesignTokens.WindowItem.iconSize }
     private var iconCornerRadius: CGFloat { DesignTokens.WindowItem.iconCornerRadius }
 
+    // 是否显示应用图标
+    private var showAppIcon: Bool { ConfigManager.shared.config.dockPreview.showAppIcon }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             // 预览图 - 与切换器一致
@@ -491,10 +497,12 @@ struct DockPreviewItemView: View {
 
             // 应用信息 - 与切换器一致
             HStack(spacing: DesignTokens.Spacing.xs) {
-                Image(nsImage: item.appIcon)
-                    .resizable()
-                    .frame(width: iconSize, height: iconSize)
-                    .clipShape(RoundedRectangle(cornerRadius: iconCornerRadius))
+                if showAppIcon {
+                    Image(nsImage: item.appIcon)
+                        .resizable()
+                        .frame(width: iconSize, height: iconSize)
+                        .clipShape(RoundedRectangle(cornerRadius: iconCornerRadius))
+                }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.appName)
