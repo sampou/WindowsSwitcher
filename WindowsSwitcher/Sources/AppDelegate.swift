@@ -438,7 +438,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 隐藏已有的大预览窗口
         hideLargePreview()
 
-        let frame = DockPreviewManager.shared.largePreviewFrame
         let manager = DockPreviewManager.shared
 
         // 创建大预览视图
@@ -449,9 +448,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             previewGenerator: manager.previewGenerator
         )
 
-        // 创建面板 - 层级设置为 floating，低于 popUpMenu
+        // 获取屏幕尺寸，创建全屏面板
+        guard let screen = NSScreen.main else { return }
+        let screenFrame = screen.frame
+
+        // 创建全屏面板
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: frame.width, height: frame.height),
+            contentRect: NSRect(x: 0, y: 0, width: screenFrame.width, height: screenFrame.height),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -466,9 +469,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
         let hostingView = NSHostingView(rootView: largePreviewView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: frame.width, height: frame.height)
+        hostingView.frame = NSRect(x: 0, y: 0, width: screenFrame.width, height: screenFrame.height)
         panel.contentView = hostingView
-        panel.setFrameOrigin(NSPoint(x: frame.origin.x, y: frame.origin.y))
+        // 设置面板位置在屏幕左下角（macOS 坐标系原点）
+        panel.setFrameOrigin(NSPoint(x: screenFrame.origin.x, y: screenFrame.origin.y))
 
         // 显示（带动画）
         panel.alphaValue = 0

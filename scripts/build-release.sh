@@ -5,17 +5,30 @@
 set -e
 
 # 配置
-VERSION="1.7.7"
+VERSION="0.0.13"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/release"
 BUILD_DIR="$PROJECT_DIR/build"
+INFO_PLIST="$PROJECT_DIR/WindowsSwitcher/Sources/Info.plist"
 
 echo "=========================================="
 echo "WindowsSwitcher 打包脚本 v$VERSION"
 echo "=========================================="
 echo ""
 
+# 自动增加 CFBundleVersion
+echo "📝 自动增加 CFBundleVersion..."
+CURRENT_BUILD=$(grep -A1 "CFBundleVersion" "$INFO_PLIST" | grep "<string>" | head -1 | sed 's/.*<string>\([0-9]*\)<\/string>.*/\1/')
+if [ -z "$CURRENT_BUILD" ]; then
+    CURRENT_BUILD=1
+fi
+NEW_BUILD=$((CURRENT_BUILD + 1))
+# 替换版本号
+sed -i '' "s/<string>$CURRENT_BUILD<\/string>/<string>$NEW_BUILD<\/string>/" "$INFO_PLIST"
+echo "   版本号: $CURRENT_BUILD -> $NEW_BUILD"
+
 # 清理旧的构建
+echo ""
 echo "🔧 清理旧的构建..."
 rm -rf "$BUILD_DIR" "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"

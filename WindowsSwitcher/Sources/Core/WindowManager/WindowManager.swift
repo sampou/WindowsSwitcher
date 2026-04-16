@@ -38,6 +38,10 @@ class WindowManager: WindowManagerProtocol {
     private var appInfoCache: [pid_t: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)] = [:]
     private let appInfoCacheLock = NSLock()
 
+    // 焦点窗口轮询定时器（用于监听同一应用内的窗口切换，如 Command+`）
+    private var focusPollingTimer: Timer?
+    private var lastFocusedWindowID: CGWindowID?
+
     private init() {}
 
     // 缓存的窗口列表
@@ -46,6 +50,7 @@ class WindowManager: WindowManagerProtocol {
     }
 
     deinit {
+        stopFocusPolling()
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers.removeAll()
     }
@@ -159,6 +164,9 @@ class WindowManager: WindowManagerProtocol {
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers.removeAll()
 
+        // 停止之前的轮询
+        stopFocusPolling()
+
         // 监听应用激活事件，追踪外部窗口切换（窗口级别）
         let token = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -194,6 +202,7 @@ class WindowManager: WindowManagerProtocol {
                     ownerPID: model.ownerPID
                 )
                 self.windowCache[windowID] = model
+                self.lastFocusedWindowID = windowID
                 Logger.debug("==> Updated lastActiveTime for focused window: \(model.windowTitle)")
             } else {
                 // 如果无法获取焦点窗口，更新该应用最新的窗口（降级方案）
@@ -224,6 +233,64 @@ class WindowManager: WindowManagerProtocol {
             self.cacheTimestamp = nil
         }
         observers.append(token)
+
+        // 启动焦点窗口轮询，监听同一应用内的窗口切换（如 Command+`）
+        startFocusPolling()
+    }
+
+    // MARK: - 焦点窗口轮询
+
+    /// 启动焦点窗口轮询定时器
+    private func startFocusPolling() {
+        focusPollingTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.pollFocusedWindow()
+        }
+    }
+
+    /// 停止焦点窗口轮询
+    private func stopFocusPolling() {
+        focusPollingTimer?.invalidate()
+        focusPollingTimer = nil
+    }
+
+    /// 轮询检查焦点窗口变化
+    private func pollFocusedWindow() {
+        // 获取当前前台应用的焦点窗口
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return }
+        let pid = frontmostApp.processIdentifier
+
+        guard let focusedWindowID = getFocusedWindowID(pid: pid) else { return }
+
+        // 如果焦点窗口发生变化（同一应用内切换窗口）
+        if focusedWindowID != lastFocusedWindowID {
+            lastFocusedWindowID = focusedWindowID
+            let now = Date()
+
+            if var model = windowCache[focusedWindowID] {
+                model = WindowModel(
+                    id: model.id,
+                    appName: model.appName,
+                    bundleIdentifier: model.bundleIdentifier,
+                    windowTitle: model.windowTitle,
+                    appIcon: model.appIcon,
+                    frame: model.frame,
+                    isMinimized: model.isMinimized,
+                    isHidden: model.isHidden,
+                    isOnScreen: model.isOnScreen,
+                    lastActiveTime: now,
+                    windowLayer: model.windowLayer,
+                    ownerPID: model.ownerPID
+                )
+                windowCache[focusedWindowID] = model
+                Logger.debug("==> Focus window changed (same app): \(model.windowTitle)")
+
+                // 清除缓存以便重新排序
+                cacheTimestamp = nil
+
+                // 通知事件处理器
+                eventHandler?(.windowStateChanged(model))
+            }
+        }
     }
 
     /// 获取指定应用的焦点窗口 ID

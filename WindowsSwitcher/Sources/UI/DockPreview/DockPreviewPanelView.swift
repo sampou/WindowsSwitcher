@@ -200,6 +200,8 @@ class DockPreviewManager: ObservableObject {
         // 按窗口 ID 升序排列（最早的窗口排在前面）
         // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
         // 这与 Command+Tab 切换器的 lastActiveTime 降序排序完全独立
+        // 按窗口 ID 升序排列，最新创建的窗口排在最后面
+        // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
         let sortedWindows = windows.sorted { $0.id < $1.id }
 
         // 创建预览项 - 显示所有窗口，不再限制数量
@@ -759,23 +761,33 @@ struct LargeDockPreviewView: View {
     @State private var isLoading = true
 
     var body: some View {
+        // 完全参考切换器背景预览 BackgroundPreviewContainer 的布局方式
         ZStack {
-            // 背景
-            RoundedRectangle(cornerRadius: 12)
-                .fill(DesignTokens.Colors.secondaryBackground)
-
             if let image = previewImage {
-                // 居中显示，去掉空白区域
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                // 获取屏幕和窗口信息
+                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+                let windowFrame = item.windowModel.frame
+
+                // 窗口的尺寸和位置
+                let imgWidth = image.size.width
+                let imgHeight = image.size.height
+                let imgX = windowFrame.origin.x
+                let imgY = windowFrame.origin.y
+
+                ZStack {
+                    Color.clear
+
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(width: imgWidth, height: imgHeight)
+                        .position(x: imgX + imgWidth / 2, y: imgY + imgHeight / 2)
+                }
             } else if isLoading {
                 ProgressView()
                     .scaleEffect(1.5)
             }
         }
-        .frame(width: previewWidth, height: previewHeight)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
         .onAppear {
             loadFullResolutionPreview()
@@ -784,6 +796,11 @@ struct LargeDockPreviewView: View {
 
     /// 使用全分辨率预览，类似于窗口切换器的背景预览
     private func loadFullResolutionPreview() {
+        // 如果已有图片且是相同窗口，直接使用
+        if previewImage != nil && !isLoading {
+            return
+        }
+
         Task(priority: .userInitiated) {
             // 使用全分辨率预览生成器
             if let image = await previewGenerator?.generateFullResolutionPreview(for: item.windowModel) {
