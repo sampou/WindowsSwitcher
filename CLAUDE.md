@@ -68,6 +68,24 @@ xcodebuild -project WindowsSwitcher.xcodeproj -scheme WindowsSwitcher -configura
 3. **Window Preview**: ScreenCaptureKit for window screenshots
 4. **Accessibility**: AXUIElement for window activation and state management
 5. **Floating Panels**: NSPanel with .popUpMenu level for proper window layering
+6. **Focus Window Polling**: Timer-based polling (0.5s) to detect same-app window switches (Command+`), updates `lastActiveTime` for focused window
+
+### Window Sorting
+
+| Feature | Sorting | Direction |
+|---------|---------|------------|
+| Window Switcher (Option+Tab) | `lastActiveTime` | Descending (most recent first) |
+| Dock Preview | `windowID` (CGWindowID) | Ascending (oldest first) |
+
+### Background Preview Layout
+
+Both switcher and dock preview backgrounds use fullscreen containers with images positioned at actual window coordinates:
+```swift
+Image(nsImage: image)
+    .resizable()
+    .frame(width: imgWidth, height: imgHeight)
+    .position(x: imgX + imgWidth / 2, y: imgY + imgHeight / 2)
+```
 
 ### Entry Points
 
