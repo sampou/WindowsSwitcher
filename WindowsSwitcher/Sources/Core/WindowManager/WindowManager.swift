@@ -109,31 +109,65 @@ class WindowManager: WindowManagerProtocol {
                 isOnScreen: cachedWindow.isOnScreen,
                 lastActiveTime: now,
                 windowLayer: cachedWindow.windowLayer,
-                ownerPID: cachedWindow.ownerPID
+                ownerPID: cachedWindow.ownerPID,
+                isStandardWindow: cachedWindow.isStandardWindow
             )
             windowCache[window.id] = cachedWindow
             // 同时更新缓存的窗口列表
             cachedWindows = cachedWindows.map { $0.id == window.id ? cachedWindow : $0 }
         }
 
+        // 执行激活（带重试机制）
+        performActivation(window: window, app: app, retryCount: 0)
+    }
+
+    /// 执行窗口激活（带重试机制）
+    private func performActivation(window: WindowModel, app: NSRunningApplication, retryCount: Int) {
+        let maxRetries = 3
+
         // 第一步：先通过 AXUIElement raise 窗口（在应用激活之前）
-        // 这样可以确保窗口在应用内的层级最高
         if let win = axWindow(for: window) {
-            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-            AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+
+            if raiseResult != .success || focusResult != .success {
+                Logger.warning("AX API call failed: raise=\(raiseResult.rawValue), focus=\(focusResult.rawValue)")
+            }
+        } else {
+            Logger.warning("Failed to get AXUIElement for window: \(window.windowTitle)")
         }
 
         // 第二步：激活应用（将应用带到前台）
         let activateResult = app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
         if !activateResult {
             Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
+
+            // 如果激活失败且未达到最大重试次数，延迟重试
+            if retryCount < maxRetries {
+                let delay = 0.1 * Double(retryCount + 1)
+                Logger.info("Retrying activation in \(delay)s (attempt \(retryCount + 1)/\(maxRetries))")
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.performActivation(window: window, app: app, retryCount: retryCount + 1)
+                }
+                return
+            }
         }
 
         // 第三步：再次确保窗口焦点（有时应用激活后会重置焦点）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             guard let self = self, let win = self.axWindow(for: window) else { return }
-            AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+            let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+
+            // 如果仍然失败，再尝试一次
+            if focusResult != .success || raiseResult != .success {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    if let win = self.axWindow(for: window) {
+                        AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+                    }
+                }
+            }
         }
 
         Logger.info("Activated window: \(window.appName) - \(window.windowTitle)")
@@ -199,7 +233,8 @@ class WindowManager: WindowManagerProtocol {
                     isOnScreen: model.isOnScreen,
                     lastActiveTime: now,
                     windowLayer: model.windowLayer,
-                    ownerPID: model.ownerPID
+                    ownerPID: model.ownerPID,
+                    isStandardWindow: model.isStandardWindow
                 )
                 self.windowCache[windowID] = model
                 self.lastFocusedWindowID = windowID
@@ -222,7 +257,8 @@ class WindowManager: WindowManagerProtocol {
                         isOnScreen: model.isOnScreen,
                         lastActiveTime: now,
                         windowLayer: model.windowLayer,
-                        ownerPID: model.ownerPID
+                        ownerPID: model.ownerPID,
+                        isStandardWindow: model.isStandardWindow
                     )
                     self.windowCache[model.id] = model
                     Logger.debug("==> Fallback: Updated lastActiveTime for newest window: \(model.windowTitle)")
@@ -279,7 +315,8 @@ class WindowManager: WindowManagerProtocol {
                     isOnScreen: model.isOnScreen,
                     lastActiveTime: now,
                     windowLayer: model.windowLayer,
-                    ownerPID: model.ownerPID
+                    ownerPID: model.ownerPID,
+                    isStandardWindow: model.isStandardWindow
                 )
                 windowCache[focusedWindowID] = model
                 Logger.debug("==> Focus window changed (same app): \(model.windowTitle)")
@@ -361,6 +398,21 @@ class WindowManager: WindowManagerProtocol {
         // 改用 windowCache 中已有的时间戳，首次出现时才用 Date()
         let lastActive = windowCache[windowID]?.lastActiveTime ?? Date()
 
+        // 判断是否为标准窗口
+        let isStandardWindow = !NonStandardWindowRules.isNonStandardWindow(
+            bundleIdentifier: appInfo.bundleIdentifier,
+            appName: appName,
+            windowTitle: windowTitle,
+            frame: frame,
+            windowLayer: layer
+        )
+
+        // 如果不是标准窗口，直接返回 nil（不包含在窗口列表中）
+        guard isStandardWindow else {
+            Logger.debug("Skipping non-standard window: \(appName) - \(windowTitle) [\(frame.width)x\(frame.height)]")
+            return nil
+        }
+
         return WindowModel(
             id: windowID,
             appName: appName,
@@ -373,7 +425,8 @@ class WindowManager: WindowManagerProtocol {
             isOnScreen: isOnScreen,
             lastActiveTime: lastActive,
             windowLayer: layer,
-            ownerPID: ownerPID
+            ownerPID: ownerPID,
+            isStandardWindow: isStandardWindow
         )
     }
 

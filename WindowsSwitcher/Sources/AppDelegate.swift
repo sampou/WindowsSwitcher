@@ -539,7 +539,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 激活选中的窗口并隐藏面板（时序优化）
+    /// 激活选中的窗口并隐藏面板（优化时序）
     @MainActor
     private func activateSelectedAndHide() {
         Logger.info("=== activateSelectedAndHide called ===")
@@ -566,24 +566,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 2. 先隐藏面板（这样面板就不会阻挡焦点转移）
         hideSwitchPanel()
 
-        // 3. 直接使用 WindowManager.shared 激活窗口（确保使用最新数据）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
-            // 刷新窗口列表确保获取最新的窗口信息
-            let freshWindows = self?.windowManager.getAllWindows() ?? []
-            if let freshWindow = freshWindows.first(where: { $0.id == selectedWindow.id }) {
-                self?.windowManager.activateWindow(freshWindow)
-                Logger.info("Activated fresh window: \(freshWindow.appName)")
-            } else {
-                // 如果找不到匹配的窗口，使用原始窗口信息
-                self?.windowManager.activateWindow(selectedWindow)
-                Logger.info("Activated original window: \(selectedWindow.appName)")
-            }
+        // 3. 同步激活窗口（移除延迟，提升响应速度）
+        windowManager.activateWindow(selectedWindow)
+        Logger.info("Activated window: \(selectedWindow.appName)")
 
-            // 4. 强制激活目标应用（确保焦点转移到目标窗口）
-            if let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) {
-                app.activate(options: .activateIgnoringOtherApps)
-                Logger.info("App activated: \(app.localizedName ?? "unknown")")
-            }
+        // 4. 强制激活目标应用（确保焦点转移到目标窗口）
+        if let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) {
+            app.activate(options: .activateIgnoringOtherApps)
+            Logger.info("App activated: \(app.localizedName ?? "unknown")")
         }
     }
 
@@ -1005,7 +995,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     isOnScreen: windows[maxIndex].isOnScreen,
                     lastActiveTime: now,  // 更新为当前时间
                     windowLayer: windows[maxIndex].windowLayer,
-                    ownerPID: windows[maxIndex].ownerPID
+                    ownerPID: windows[maxIndex].ownerPID,
+                    isStandardWindow: windows[maxIndex].isStandardWindow
                 )
                 windows[maxIndex] = updatedWindow
                 Logger.info("==> Updated frontmost window lastActiveTime: \(updatedWindow.windowTitle)")
@@ -1434,6 +1425,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func hideSwitchPanel() {
+        // 立即标记面板不可见，避免状态不一致
+        isPanelVisible = false
+
         // 停止刷新定时器
         stopWindowRefreshTimer()
 
@@ -1450,7 +1444,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let panel = switchPanelWindow else { return }
         PanelAnimator.hide(panel) { [weak self] in
             self?.switchPanelWindow = nil
-            self?.isPanelVisible = false
             Logger.info("Switch panel hidden")
         }
     }

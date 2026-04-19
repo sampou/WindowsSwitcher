@@ -316,7 +316,7 @@ struct DockPreviewPanelView: View {
     }
 
     // 间距
-    private var itemSpacing: CGFloat { 16 }  // 行间距
+    private var itemSpacing: CGFloat { 8 }   // 行间距（优化：减少上下窗口间距）
     private var itemPadding: CGFloat { 8 }   // 窗口项外部 padding
     private var panelPadding: CGFloat { DesignTokens.Panel.padding }
 

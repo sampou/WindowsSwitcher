@@ -1,237 +1,151 @@
 import AppKit
 import CoreGraphics
 
+// MARK: - 预览缓存配置
+struct PreviewCacheConfig {
+    /// 内存缓存最大数量
+    static let maxMemorySize = 100
+    /// 磁盘缓存最大大小（字节）
+    static let maxDiskCacheSize: Int64 = 200 * 1024 * 1024  // 200MB
+    /// 缓存有效期（秒）- 短缓存确保实时性
+    static let cacheExpiry: TimeInterval = 0.5  // 500ms
+    /// 最大并发生成数
+    static let maxConcurrentGeneration = 4
+}
+
+// MARK: - 预览缓存
 actor PreviewCache {
-    // MARK: - 内存缓存
     private var memoryCache: [String: CachedEntry] = [:]
-    private let maxMemorySize = 80  // 增加内存缓存数量
-
-    // MARK: - 磁盘缓存
     private let cacheDirectory: URL
-    private let maxDiskCacheSize: Int64 = 200 * 1024 * 1024  // 200MB
 
-    // MARK: - 配置 - 使用长时间缓存，基于内容哈希判断是否更新
-    var expiryInterval: TimeInterval = 600  // 10分钟缓存有效期
+    struct CachedEntry {
+        let image: NSImage
+        let timestamp: Date
+        let windowID: CGWindowID
+    }
 
-    // MARK: - 初始化
     init() {
         let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         cacheDirectory = cachesDirectory.appendingPathComponent("WindowsSwitcher/Previews", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
-    
-    // MARK: - 缓存条目
-    struct CachedEntry {
-        let image: NSImage
-        let windowHash: String  // 窗口内容哈希，用于检测变化
-        let timestamp: Date
-        let windowID: CGWindowID
-    }
-    
-    // MARK: - 公共方法
-    
-    /// 获取缓存的预览图（检查内容哈希是否匹配）
-    func get(for windowID: CGWindowID, windowHash: String) -> NSImage? {
-        let key = cacheKey(windowID: windowID, windowHash: windowHash)
-        
-        // 1. 检查内存缓存
+
+    /// 获取缓存的预览图
+    func get(for windowID: CGWindowID) -> NSImage? {
+        let key = "\(windowID)"
+
         if let entry = memoryCache[key] {
-            if Date().timeIntervalSince(entry.timestamp) < expiryInterval {
+            let age = Date().timeIntervalSince(entry.timestamp)
+            if age < PreviewCacheConfig.cacheExpiry {
                 return entry.image
-            } else {
-                memoryCache.removeValue(forKey: key)
             }
         }
-        
-        // 2. 检查磁盘缓存
+
+        // 尝试从磁盘加载
         if let image = loadFromDisk(key: key) {
-            // 存入内存缓存
-            let entry = CachedEntry(image: image, windowHash: windowHash, timestamp: Date(), windowID: windowID)
+            let entry = CachedEntry(image: image, timestamp: Date(), windowID: windowID)
             memoryCache[key] = entry
-            limitMemoryCacheSize()
             return image
         }
-        
+
         return nil
     }
-    
+
     /// 设置缓存
-    func set(_ image: NSImage, for windowID: CGWindowID, windowHash: String) {
-        let key = cacheKey(windowID: windowID, windowHash: windowHash)
-        
-        // 存入内存缓存
-        let entry = CachedEntry(image: image, windowHash: windowHash, timestamp: Date(), windowID: windowID)
+    func set(_ image: NSImage, for windowID: CGWindowID) {
+        let key = "\(windowID)"
+        let entry = CachedEntry(image: image, timestamp: Date(), windowID: windowID)
         memoryCache[key] = entry
         limitMemoryCacheSize()
-        
+
         // 异步存入磁盘
-        Task {
+        Task(priority: .background) {
             await saveToDisk(image: image, key: key)
         }
     }
-    
-    /// 计算窗口内容哈希（用于检测窗口是否变化）
-    func computeWindowHash(for window: WindowModel) -> String {
-        // 基于窗口的关键属性计算哈希
-        let hashInput = "\(window.id)_\(window.frame)_\(window.windowTitle)_\(window.isMinimized)_\(window.isHidden)"
-        return String(hashInput.hash)
+
+    /// 使指定窗口的缓存失效
+    func invalidate(for windowID: CGWindowID) {
+        let key = "\(windowID)"
+        memoryCache.removeValue(forKey: key)
     }
-    
+
     /// 清空所有缓存
     func clear() {
         memoryCache.removeAll()
         try? FileManager.default.removeItem(at: cacheDirectory)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
-    
-    func setExpiry(_ interval: TimeInterval) {
-        expiryInterval = interval
-    }
-    
-    // MARK: - 私有方法
-    
-    private func cacheKey(windowID: CGWindowID, windowHash: String) -> String {
-        return "\(windowID)_\(windowHash)"
-    }
-    
+
     private func limitMemoryCacheSize() {
-        while memoryCache.count > maxMemorySize {
+        while memoryCache.count > PreviewCacheConfig.maxMemorySize {
             if let oldest = memoryCache.min(by: { $0.value.timestamp < $1.value.timestamp })?.key {
                 memoryCache.removeValue(forKey: oldest)
             }
         }
     }
-    
+
     private func saveToDisk(image: NSImage, key: String) async {
         let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
-        
+
         guard let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
               let pngData = bitmap.representation(using: .png, properties: [:]) else {
             return
         }
-        
+
         try? pngData.write(to: fileURL)
-        
-        // 清理过期磁盘缓存
-        await cleanDiskCacheIfNeeded()
     }
-    
+
     private func loadFromDisk(key: String) -> NSImage? {
         let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
-        
         guard FileManager.default.fileExists(atPath: fileURL.path),
               let image = NSImage(contentsOf: fileURL) else {
             return nil
         }
-        
         return image
-    }
-    
-    private func cleanDiskCacheIfNeeded() async {
-        // 获取磁盘缓存总大小
-        let files = try? FileManager.default.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: [.fileSizeKey])
-        
-        var totalSize: Int64 = 0
-        var fileInfos: [(url: URL, size: Int64, date: Date)] = []
-        
-        for file in files ?? [] {
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: file.path) {
-                let size = (attributes[.size] as? Int64) ?? 0
-                let date = (attributes[.modificationDate] as? Date) ?? Date.distantPast
-                totalSize += size
-                fileInfos.append((url: file, size: size, date: date))
-            }
-        }
-        
-        // 如果超过最大大小，删除最旧的文件
-        if totalSize > maxDiskCacheSize {
-            let sortedFiles = fileInfos.sorted { $0.date < $1.date }
-            var sizeToFree = totalSize - maxDiskCacheSize + 10 * 1024 * 1024  // 多清理10MB
-            
-            for file in sortedFiles {
-                if sizeToFree <= 0 { break }
-                try? FileManager.default.removeItem(at: file.url)
-                sizeToFree -= file.size
-            }
-        }
     }
 }
 
+// MARK: - 预览生成器
 final class PreviewGenerator: @unchecked Sendable {
     private let cache = PreviewCache()
-    // 使用并发队列，支持多线程并行生成缩略图
-    private let queue = DispatchQueue(label: "com.windowsswitcher.preview", qos: .userInitiated, attributes: .concurrent)
-    // 信号量限制并发生成数量
-    private let semaphore = DispatchSemaphore(value: 3)
+    private let queue = DispatchQueue(
+        label: "com.windowsswitcher.preview",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+    private let semaphore = DispatchSemaphore(value: PreviewCacheConfig.maxConcurrentGeneration)
 
-    init() {
-        // 使用固定的长时间缓存（10分钟），只有在窗口内容变化时才更新
-        // 缓存过期不影响正常使用，因为我们会根据内容哈希判断是否需要重新生成
-        Task { await cache.setExpiry(600) }
-    }
-
-    /// 生成单个窗口预览
+    /// 生成单个窗口预览（带缓存）
     func generatePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
-        // 检查缓存（包括内存和磁盘）
-        if let cached = await cache.get(for: window.id, windowHash: await cache.computeWindowHash(for: window)) {
+        // 检查缓存
+        if let cached = await cache.get(for: window.id) {
             return cached
         }
 
+        // 生成新预览
         let windowID = window.id
-        let windowHash = await cache.computeWindowHash(for: window)
         let cacheRef = self.cache
-        let semaphoreRef = self.semaphore
-        let queueRef = self.queue
 
         return await withCheckedContinuation { continuation in
-            queueRef.async {
-                // 限制并发数量
-                semaphoreRef.wait()
-                defer { semaphoreRef.signal() }
+            queue.async {
+                self.semaphore.wait()
+                defer { self.semaphore.signal() }
 
                 let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
 
-                if let image {
+                if let image = image {
                     Task {
-                        await cacheRef.set(image, for: windowID, windowHash: windowHash)
+                        await cacheRef.set(image, for: windowID)
                     }
                 }
             }
         }
     }
 
-    /// 批量生成预览（用于面板打开时）
-    func generatePreviews(for windows: [WindowModel], size: CGSize) async -> [CGWindowID: NSImage] {
-        var results: [CGWindowID: NSImage] = [:]
-
-        // 使用简单的顺序处理避免 Sendable 问题
-        for window in windows {
-            if let image = await generatePreview(for: window, size: size) {
-                results[window.id] = image
-            }
-        }
-
-        return results
-    }
-
-    func clearCache() async { await cache.clear() }
-
-    /// 生成原始分辨率预览（用于背景预览等需要高质量的场景）
-    func generateFullResolutionPreview(for window: WindowModel) async -> NSImage? {
-        let windowID = window.id
-        let windowFrame = window.frame
-
-        return await withCheckedContinuation { continuation in
-            queue.async {
-                let image = Self.captureWindowFullResolution(windowID, windowFrame: windowFrame)
-                continuation.resume(returning: image)
-            }
-        }
-    }
-
-    /// 生成实时预览（不使用缓存，用于 Dock 预览等需要最新内容的场景）
+    /// 生成实时预览（强制刷新缓存）
     func generateRealtimePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
         let windowID = window.id
 
@@ -246,11 +160,46 @@ final class PreviewGenerator: @unchecked Sendable {
         }
     }
 
-    /// 捕获窗口截图 - 优化分辨率（静态方法，可在任意线程调用）
+    /// 批量生成预览
+    func generatePreviews(for windows: [WindowModel], size: CGSize) async -> [CGWindowID: NSImage] {
+        var results: [CGWindowID: NSImage] = [:]
+
+        for window in windows {
+            if let image = await generatePreview(for: window, size: size) {
+                results[window.id] = image
+            }
+        }
+
+        return results
+    }
+
+    /// 生成原始分辨率预览
+    func generateFullResolutionPreview(for window: WindowModel) async -> NSImage? {
+        let windowID = window.id
+        let windowFrame = window.frame
+
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let image = Self.captureWindowFullResolution(windowID, windowFrame: windowFrame)
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    /// 使缓存失效
+    func invalidateCache(for windowID: CGWindowID) async {
+        await cache.invalidate(for: windowID)
+    }
+
+    func clearCache() async {
+        await cache.clear()
+    }
+
+    // MARK: - 私有方法
+
     private static func captureWindowSync(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
 
-        // 使用 bestResolution 获取高质量截图，然后缩放到目标尺寸
         guard let cgImage = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
@@ -258,27 +207,27 @@ final class PreviewGenerator: @unchecked Sendable {
             [.boundsIgnoreFraming, .bestResolution]
         ) else { return nil }
 
-        // 缩放到目标尺寸
         let targetSize = NSSize(width: size.width, height: size.height)
         let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
 
-        // 缩放图片
+        // 高质量缩放
         let resizedImage = NSImage(size: targetSize)
         resizedImage.lockFocus()
-        nsImage.draw(in: NSRect(origin: .zero, size: targetSize),
-                    from: NSRect(origin: .zero, size: nsImage.size),
-                    operation: .copy,
-                    fraction: 1.0)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        nsImage.draw(
+            in: NSRect(origin: .zero, size: targetSize),
+            from: NSRect(origin: .zero, size: nsImage.size),
+            operation: .copy,
+            fraction: 1.0
+        )
         resizedImage.unlockFocus()
 
         return resizedImage
     }
 
-    /// 捕获窗口原始分辨率截图（不缩放，保持最高清晰度）
     private static func captureWindowFullResolution(_ windowID: CGWindowID, windowFrame: CGRect) -> NSImage? {
         guard CGPreflightScreenCaptureAccess() else { return nil }
 
-        // 使用 bestResolution 获取最高质量截图
         guard let cgImage = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
@@ -286,8 +235,6 @@ final class PreviewGenerator: @unchecked Sendable {
             [.boundsIgnoreFraming, .bestResolution]
         ) else { return nil }
 
-        // 使用窗口的逻辑尺寸作为 NSImage 的 size
-        // 这样在 Retina 屏幕上能正确显示高分辨率图片
         let logicalSize = NSSize(width: windowFrame.width, height: windowFrame.height)
         return NSImage(cgImage: cgImage, size: logicalSize)
     }
