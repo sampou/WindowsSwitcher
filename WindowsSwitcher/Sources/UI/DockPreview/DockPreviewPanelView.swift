@@ -316,48 +316,127 @@ struct DockPreviewPanelView: View {
     }
 
     // 间距
-    private var itemSpacing: CGFloat { 8 }   // 行间距（优化：减少上下窗口间距）
+    private var itemSpacing: CGFloat { 8 }   // 行间距
     private var itemPadding: CGFloat { 8 }   // 窗口项外部 padding
     private var panelPadding: CGFloat { DesignTokens.Panel.padding }
 
-    // 计算总行数
+    // MARK: - 滚动相关配置
+
+    /// 最大面板高度占屏幕高度的比例
+    private let maxPanelHeightRatio: CGFloat = 0.6
+
+    /// 最大显示行数（用于计算最大高度阈值）
+    private let absoluteMaxRows: Int = 5
+
+    /// 计算总行数
     private var totalRows: Int {
         let count = manager.previewItems.count
         return (count + itemsPerRow - 1) / itemsPerRow
     }
 
-    // 最多显示的行数（超过需要滚动）
-    private var maxDisplayRows: Int { 3 }
-
-    // 是否需要显示滚动条（两行及以上才显示）
-    private var needsScroll: Bool {
-        totalRows >= 2
+    /// 获取屏幕可用高度（考虑 Dock 和菜单栏）
+    private var availableScreenHeight: CGFloat {
+        guard let screen = NSScreen.main else {
+            return 800  // 默认值
+        }
+        // visibleFrame 已经排除了 Dock 和菜单栏
+        return screen.visibleFrame.height
     }
 
-    // 是否需要滚动功能（内容超出显示区域）
+    /// 计算每行的实际高度（包含 itemPadding）
+    private var actualRowHeight: CGFloat {
+        itemHeight + itemPadding * 2
+    }
+
+    /// 内容区域高度（所有行的总高度，包含行间距）
+    private var contentRowsHeight: CGFloat {
+        guard totalRows > 0 else { return 0 }
+        return CGFloat(totalRows) * actualRowHeight + CGFloat(totalRows - 1) * itemSpacing
+    }
+
+    /// 实际内容高度（包含 panelPadding）
+    private var actualContentHeight: CGFloat {
+        // 内容高度 + 上下 padding
+        return contentRowsHeight + panelPadding * 2
+    }
+
+    /// 最大内容高度限制（包含 panelPadding）
+    private var maxPanelContentHeight: CGFloat {
+        // 基于行数计算最大高度（包含 padding）
+        let maxByRows = CGFloat(absoluteMaxRows) * actualRowHeight + CGFloat(absoluteMaxRows - 1) * itemSpacing + panelPadding * 2
+        // 基于屏幕比例计算最大高度
+        let maxByRatio = availableScreenHeight * maxPanelHeightRatio
+        return min(maxByRatio, maxByRows)
+    }
+
+    /// 是否需要滚动（内容超出最大高度阈值）
     private var needsScrolling: Bool {
-        totalRows > maxDisplayRows
+        actualContentHeight > maxPanelContentHeight
     }
+
+    /// 显示区域高度（用于 ScrollView）
+    private var displayHeight: CGFloat {
+        // 实际内容高度或最大高度，取较小值
+        let height = needsScrolling ? maxPanelContentHeight : actualContentHeight
+        // 确保不超过可用的内容高度
+        return min(height, actualContentHeight)
+    }
+
+    /// 滚动指示器透明度（平滑过渡）
+    @State private var scrollIndicatorOpacity: Double = 0
+
+    /// 当前滚动位置
+    @State private var scrollPosition: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 0) {
             // 滚动区域
-            ScrollView(.vertical, showsIndicators: needsScroll) {
-                VStack(spacing: itemSpacing) {
-                    // 按行显示窗口
-                    ForEach(0..<totalRows, id: \.self) { rowIndex in
-                        rowView(for: rowIndex)
-                            .frame(height: itemHeight + itemPadding * 2)
+            GeometryReader { geometry in
+                ZStack(alignment: .trailing) {
+                    // 主滚动视图
+                    ControllableScrollView(scrollPosition: $scrollPosition) { position in
+                        // 滚动回调（可选，用于额外处理）
+                    } content: {
+                        VStack(spacing: itemSpacing) {
+                            // 按行显示窗口
+                            ForEach(0..<totalRows, id: \.self) { rowIndex in
+                                rowView(for: rowIndex)
+                                    .frame(height: itemHeight + itemPadding * 2)
+                            }
+                        }
+                        .padding(.horizontal, panelPadding)
+                        .padding(.vertical, panelPadding)
+                    }
+                    .frame(maxHeight: displayHeight)
+
+                    // 自定义滚动条（支持拖动交互）
+                    if needsScrolling {
+                        ScrollBar(
+                            totalHeight: actualContentHeight,
+                            visibleHeight: geometry.size.height,
+                            scrollPosition: scrollPosition,
+                            opacity: scrollIndicatorOpacity,
+                            onScroll: { targetPosition in
+                                // 滚动条拖动时更新滚动位置
+                                scrollPosition = targetPosition
+                            }
+                        )
+                        .padding(.trailing, 4)
+                        .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                     }
                 }
-                .padding(.horizontal, panelPadding)
-                .padding(.vertical, panelPadding)
+                .onAppear {
+                    updateScrollIndicatorOpacity()
+                }
+                .onChange(of: needsScrolling) { _ in
+                    updateScrollIndicatorOpacity()
+                }
             }
-            .frame(maxHeight: contentHeight)
+            .frame(height: displayHeight)
 
             // 滚动提示（仅当内容超出显示区域时显示）
             if needsScrolling {
-                scrollIndicator
+                scrollIndicatorView
                     .transition(.opacity.animation(.easeInOut(duration: 0.2)))
             }
         }
@@ -371,6 +450,31 @@ struct DockPreviewPanelView: View {
             y: DesignTokens.Panel.shadowY
         )
         .animation(.easeInOut(duration: 0.2), value: totalRows)
+    }
+
+    /// 更新滚动条透明度（平滑动画）
+    private func updateScrollIndicatorOpacity() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            scrollIndicatorOpacity = needsScrolling ? 1 : 0
+        }
+    }
+
+    // 滚动提示视图
+    private var scrollIndicatorView: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "chevron.up")
+                .font(.system(size: 10))
+                .opacity(0.5)
+            Text("滚动查看更多")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 10))
+                .opacity(0.5)
+        }
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(Color.black.opacity(0.05))
     }
 
     // 每行视图
@@ -412,41 +516,13 @@ struct DockPreviewPanelView: View {
         return CGFloat(firstRowCount) * actualItemWidth + panelPadding * 2
     }
 
-    // 内容高度（每行高度 = itemHeight + 上下 padding）
-    private var contentHeight: CGFloat {
-        let actualRowHeight = itemHeight + itemPadding * 2
-        if needsScrolling {
-            // 内容超出显示区域时，显示固定高度（允许滚动）
-            return CGFloat(maxDisplayRows) * actualRowHeight + CGFloat(maxDisplayRows - 1) * itemSpacing
-        } else {
-            // 不需要滚动时，显示实际内容高度
-            return CGFloat(totalRows) * actualRowHeight + CGFloat(totalRows - 1) * itemSpacing
-        }
-    }
-
     // 总面板高度
     private var totalPanelHeight: CGFloat {
-        var height = contentHeight + panelPadding * 2 // 上下 padding
+        var height = displayHeight + panelPadding * 2
         if needsScrolling {
-            height += 32 // 滚动提示高度
+            height += 28  // 滚动提示高度
         }
         return height
-    }
-
-    // 滚动提示
-    private var scrollIndicator: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "chevron.up")
-                .font(.system(size: 10))
-                .opacity(0.5)
-            Text("滚动查看更多")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 10))
-                .opacity(0.5)
-        }
-        .padding(.bottom, 8)
     }
 
     private var backgroundView: some View {
@@ -454,6 +530,205 @@ struct DockPreviewPanelView: View {
             material: .hudWindow,
             blendingMode: .behindWindow
         )
+    }
+}
+
+// MARK: - 自定义滚动条组件（支持拖动交互）
+struct ScrollBar: View {
+    let totalHeight: CGFloat
+    let visibleHeight: CGFloat
+    let scrollPosition: CGFloat
+    let opacity: Double
+
+    // 滚动回调
+    var onScroll: ((CGFloat) -> Void)? = nil
+
+    // 拖动状态
+    @State private var isDragging: Bool = false
+    @State private var dragStartY: CGFloat = 0
+    @State private var dragStartScrollPosition: CGFloat = 0
+
+    // 计算滚动条高度（最小 30pt，最大不超过可见区域的 80%）
+    private var thumbHeight: CGFloat {
+        guard totalHeight > 0 else { return 0 }
+        let ratio = visibleHeight / totalHeight
+        return max(30, min(visibleHeight * ratio, visibleHeight * 0.8))
+    }
+
+    // 计算滚动条位置
+    private var thumbOffset: CGFloat {
+        guard totalHeight > visibleHeight else { return 0 }
+        let maxScrollOffset = totalHeight - visibleHeight
+        let maxThumbOffset = visibleHeight - thumbHeight
+        let scrollRatio = maxScrollOffset > 0 ? scrollPosition / maxScrollOffset : 0
+        return min(maxThumbOffset, max(0, scrollRatio * maxThumbOffset))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            // 滚动条轨道（点击可快速跳转）
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.clear)
+                .frame(width: 12)
+                .contentShape(Rectangle())
+                .onTapGesture { location in
+                    handleTrackTap(location: location, in: geometry.size.height)
+                }
+                .overlay(
+                    // 滚动条滑块
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(isDragging ? Color.secondary.opacity(0.8) : Color.secondary.opacity(0.5 * opacity))
+                        .frame(width: isDragging ? 6 : 4, height: thumbHeight)
+                        .offset(y: thumbOffset)
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    handleDragChanged(value: value, in: geometry.size.height)
+                                }
+                                .onEnded { _ in
+                                    handleDragEnded()
+                                }
+                        )
+                        .animation(.easeInOut(duration: 0.15), value: isDragging)
+                        .padding(.trailing, 4)
+                )
+        }
+        .frame(width: 16)
+    }
+
+    // 处理轨道点击（快速跳转）
+    private func handleTrackTap(location: CGPoint, in trackHeight: CGFloat) {
+        guard totalHeight > visibleHeight else { return }
+
+        // 计算点击位置对应的目标滚动位置
+        let clickRatio = location.y / trackHeight
+        let maxScrollOffset = totalHeight - visibleHeight
+        let targetScrollPosition = clickRatio * maxScrollOffset
+
+        onScroll?(targetScrollPosition)
+    }
+
+    // 处理拖动开始
+    private func handleDragChanged(value: DragGesture.Value, in trackHeight: CGFloat) {
+        if !isDragging {
+            isDragging = true
+            dragStartY = value.startLocation.y
+            dragStartScrollPosition = scrollPosition
+        }
+
+        guard totalHeight > visibleHeight else { return }
+
+        // 计算拖动距离对应滚动距离
+        let dragDelta = value.location.y - dragStartY
+        let maxThumbOffset = trackHeight - thumbHeight
+        let maxScrollOffset = totalHeight - visibleHeight
+
+        // 将拖动距离转换为滚动距离
+        let scrollDelta = maxThumbOffset > 0 ? (dragDelta / maxThumbOffset) * maxScrollOffset : 0
+        let targetScrollPosition = max(0, min(maxScrollOffset, dragStartScrollPosition + scrollDelta))
+
+        onScroll?(targetScrollPosition)
+    }
+
+    // 处理拖动结束
+    private func handleDragEnded() {
+        withAnimation(.easeOut(duration: 0.15)) {
+            isDragging = false
+        }
+    }
+}
+
+// MARK: - 滚动视图包装器（支持滚动位置控制和追踪）
+struct ControllableScrollView<Content: View>: NSViewRepresentable {
+    let content: Content
+    @Binding var scrollPosition: CGFloat
+    var onScroll: ((CGFloat) -> Void)?
+
+    init(scrollPosition: Binding<CGFloat>, onScroll: ((CGFloat) -> Void)? = nil, @ViewBuilder content: () -> Content) {
+        self._scrollPosition = scrollPosition
+        self.onScroll = onScroll
+        self.content = content()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.verticalScrollElasticity = .allowed
+        scrollView.horizontalScrollElasticity = .none
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        // 设置内容视图
+        let hostingView = NSHostingView(rootView: content)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = hostingView
+
+        // 监听滚动事件
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.boundsDidChange),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+
+        context.coordinator.scrollView = scrollView
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        // 更新内容
+        if let hostingView = scrollView.documentView as? NSHostingView<Content> {
+            hostingView.rootView = content
+        }
+
+        // 检查是否需要程序化滚动（外部修改了 scrollPosition）
+        let currentScrollY = scrollView.contentView.bounds.origin.y
+        let targetScrollY = scrollPosition
+
+        // 如果目标位置与当前位置不同，且差距超过阈值（避免浮点误差导致的循环）
+        if abs(currentScrollY - targetScrollY) > 1.0 {
+            // 标记为程序化滚动，防止触发 boundsDidChange 中的循环更新
+            context.coordinator.isProgrammaticScroll = true
+            let newOrigin = NSPoint(x: 0, y: max(0, targetScrollY))
+            scrollView.contentView.scroll(to: newOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+
+            // 延迟重置标志
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                context.coordinator.isProgrammaticScroll = false
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject {
+        var parent: ControllableScrollView
+        var scrollView: NSScrollView?
+        var isProgrammaticScroll: Bool = false
+
+        init(_ parent: ControllableScrollView) {
+            self.parent = parent
+        }
+
+        @objc func boundsDidChange(_ notification: Notification) {
+            // 如果是程序化滚动触发的，跳过更新以避免循环
+            guard !isProgrammaticScroll else { return }
+
+            guard let clipView = notification.object as? NSClipView else { return }
+            let newScrollPosition = clipView.bounds.origin.y
+
+            // 更新绑定的滚动位置
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.scrollPosition = newScrollPosition
+                self?.parent.onScroll?(newScrollPosition)
+            }
+        }
     }
 }
 
