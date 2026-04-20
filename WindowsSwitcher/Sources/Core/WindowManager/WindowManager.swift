@@ -19,6 +19,7 @@ protocol WindowManagerProtocol {
     func minimizeWindow(_ window: WindowModel)
     func hideWindow(_ window: WindowModel)
     func observeWindowChanges(_ handler: @escaping (WindowEvent) -> Void)
+    func refreshCache()
 }
 
 class WindowManager: WindowManagerProtocol {
@@ -89,9 +90,33 @@ class WindowManager: WindowManagerProtocol {
     }
 
     func activateWindow(_ window: WindowModel) {
-        guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else {
-            Logger.error("Failed to get NSRunningApplication for PID: \(window.ownerPID)")
+        // BUG-007: 先刷新窗口缓存，获取最新窗口信息
+        refreshCache()
+
+        // 从最新窗口列表中查找对应窗口，确保使用最新 PID
+        let latestWindows = getAllWindows()
+        let targetWindow = latestWindows.first { $0.id == window.id } ?? window
+
+        // 如果窗口已不存在，尝试使用 bundleIdentifier 查找应用
+        guard let app = NSRunningApplication(processIdentifier: targetWindow.ownerPID) else {
+            Logger.warning("Failed to get NSRunningApplication for PID: \(targetWindow.ownerPID), trying bundleID")
+
+            // 降级：尝试通过 bundleIdentifier 查找应用
+            let bundleID = window.bundleIdentifier
+            if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
+                // 直接激活应用
+                let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                Logger.info("Fallback activation result: \(result) for \(appByBundle.localizedName ?? "unknown")")
+                return
+            }
+
+            Logger.error("Cannot find running application for window: \(window.windowTitle)")
             return
+        }
+
+        // 检查窗口是否仍然有效
+        if !latestWindows.contains(where: { $0.id == window.id }) {
+            Logger.warning("Window no longer exists, activating app directly")
         }
 
         // 更新窗口的 lastActiveTime 为当前时间，确保排序正确
@@ -118,7 +143,7 @@ class WindowManager: WindowManagerProtocol {
         }
 
         // 执行激活（带重试机制）
-        performActivation(window: window, app: app, retryCount: 0)
+        performActivation(window: targetWindow, app: app, retryCount: 0)
     }
 
     /// 执行窗口激活（带重试机制）

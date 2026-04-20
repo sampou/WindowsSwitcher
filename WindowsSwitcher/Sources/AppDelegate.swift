@@ -3,6 +3,12 @@ import SwiftUI
 import Carbon
 import Combine
 
+// Carbon 修饰键常量（来自 Carbon HIToolbox）
+private let carbonCmdKey: UInt32 = 0x1000       // ⌘ Command (cmdKey)
+private let carbonShiftKey: UInt32 = 0x0200     // ⇧ Shift (shiftKey)
+private let carbonOptionKey: UInt32 = 0x0800    // ⌥ Option (optionKey)
+private let carbonControlKey: UInt32 = 0x4000   // ⌃ Control (controlKey)
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
@@ -26,6 +32,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 标记是否已完成延迟初始化
     private var deferredInitCompleted = false
     private var dockPreviewConfigCancellable: AnyCancellable?
+
+    // 监听切换器快捷键的修饰键状态
+    private var wasSwitchModifierPressed = false  // 跟踪切换器快捷键修饰键状态
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -500,23 +509,66 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         largePreviewWindow = nil
     }
 
-    // 监听 Option 键释放 - 使用全局监听器
+    // 监听切换器快捷键的修饰键释放 - 根据配置动态检测
     private func setupOptionKeyMonitor() {
-        // 使用全局监听器捕获键盘事件（即使面板显示时也能捕获）
+        Logger.info("==> setupOptionKeyMonitor called")
+
+        // 使用全局监听器捕获修饰键变化事件（即使面板显示时也能捕获）
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self else { return }
 
-            let isOptionPressed = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.option)
-            Logger.debug("Global flagsChanged: isOptionPressed=\(isOptionPressed), isPanelVisible=\(self.isPanelVisible)")
+            // 只有在面板可见时才处理
+            guard self.isPanelVisible else {
+                Logger.debug("Global flagsChanged ignored: panel not visible")
+                return
+            }
 
-            guard self.isPanelVisible else { return }
+            // 获取当前快捷键配置中的修饰键
+            let switchModifiers = self.configManager.config.hotKeys.switchModifiers
 
-            // Option 键被释放
-            if !isOptionPressed {
-                Logger.info("Global: Option key released, calling activateSelectedAndHide()")
+            // 获取原始的 modifierFlags 原始值（用于调试）
+            let rawFlags = event.modifierFlags.rawValue
+
+            // 获取实际的 modifierFlags（排除设备无关标志）
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let isCmdPressed = flags.contains(.command)
+            let isOptionPressed = flags.contains(.option)
+            let isShiftPressed = flags.contains(.shift)
+            let isControlPressed = flags.contains(.control)
+
+            Logger.info("Global flagsChanged: rawFlags=0x\(String(rawFlags, radix: 16)), isCmd=\(isCmdPressed), isOption=\(isOptionPressed), isShift=\(isShiftPressed), isControl=\(isControlPressed), configuredModifiers=\(self.carbonToCocoaModifiers(switchModifiers))")
+
+            // 直接检查配置中的修饰键是否释放
+            var allModifiersReleased = true
+
+            // 检查 Cmd
+            if switchModifiers & carbonCmdKey != 0 {
+                if flags.contains(.command) { allModifiersReleased = false }
+            }
+            // 检查 Option
+            if switchModifiers & carbonOptionKey != 0 {
+                if flags.contains(.option) { allModifiersReleased = false }
+            }
+            // 检查 Shift
+            if switchModifiers & carbonShiftKey != 0 {
+                if flags.contains(.shift) { allModifiersReleased = false }
+            }
+            // 检查 Control
+            if switchModifiers & carbonControlKey != 0 {
+                if flags.contains(.control) { allModifiersReleased = false }
+            }
+
+            Logger.info("Global: allModifiersReleased=\(allModifiersReleased), wasSwitchModifierPressed=\(self.wasSwitchModifierPressed)")
+
+            // 检测切换器修饰键释放：当所有配置的修饰键都释放时
+            if self.wasSwitchModifierPressed && allModifiersReleased {
+                Logger.info("Global: ALL modifiers RELEASED! Calling activateSelectedAndHide()")
                 Task { @MainActor in
                     self.activateSelectedAndHide()
                 }
+            } else if !allModifiersReleased {
+                // 至少有一个修饰键仍然按下，更新状态
+                self.wasSwitchModifierPressed = true
             }
         }
 
@@ -524,19 +576,88 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self else { return event }
 
-            let isOptionPressed = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.option)
-
+            // 只有在面板可见时才处理
             guard self.isPanelVisible else { return event }
 
-            // Option 键被释放
-            if !isOptionPressed {
-                Logger.info("Local: Option key released, calling activateSelectedAndHide()")
+            // 获取当前快捷键配置中的修饰键
+            let switchModifiers = self.configManager.config.hotKeys.switchModifiers
+
+            // 获取原始的 modifierFlags 原始值
+            let rawFlags = event.modifierFlags.rawValue
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let isCmdPressed = flags.contains(.command)
+
+            Logger.info("Local flagsChanged: rawFlags=0x\(String(rawFlags, radix: 16)), isCmd=\(isCmdPressed)")
+
+            // 直接检查配置中的修饰键是否释放
+            var allModifiersReleased = true
+
+            // 检查 Cmd
+            if switchModifiers & carbonCmdKey != 0 {
+                if flags.contains(.command) { allModifiersReleased = false }
+            }
+            // 检查 Option
+            if switchModifiers & carbonOptionKey != 0 {
+                if flags.contains(.option) { allModifiersReleased = false }
+            }
+            // 检查 Shift
+            if switchModifiers & carbonShiftKey != 0 {
+                if flags.contains(.shift) { allModifiersReleased = false }
+            }
+            // 检查 Control
+            if switchModifiers & carbonControlKey != 0 {
+                if flags.contains(.control) { allModifiersReleased = false }
+            }
+
+            Logger.info("Local: allModifiersReleased=\(allModifiersReleased), wasSwitchModifierPressed=\(self.wasSwitchModifierPressed)")
+
+            // 检测切换器修饰键释放：当所有配置的修饰键都释放时
+            if self.wasSwitchModifierPressed && allModifiersReleased {
+                Logger.info("Local: ALL modifiers RELEASED! Calling activateSelectedAndHide()")
                 Task { @MainActor in
                     self.activateSelectedAndHide()
                 }
+            } else if !allModifiersReleased {
+                // 至少有一个修饰键仍然按下，更新状态
+                self.wasSwitchModifierPressed = true
             }
+
             return event
         }
+
+        Logger.info("==> setupOptionKeyMonitor completed, globalKeyMonitor=\(globalKeyMonitor != nil), localKeyMonitor=\(localKeyMonitor != nil)")
+    }
+
+    // 将 Carbon 修饰键转换为 NSEvent.ModifierFlags（用于日志显示）
+    private func carbonToCocoaModifiers(_ carbonModifiers: UInt32) -> String {
+        var parts: [String] = []
+        if carbonModifiers & carbonCmdKey != 0 { parts.append("⌘") }
+        if carbonModifiers & carbonOptionKey != 0 { parts.append("⌥") }
+        if carbonModifiers & carbonShiftKey != 0 { parts.append("⇧") }
+        if carbonModifiers & carbonControlKey != 0 { parts.append("⌃") }
+        return parts.isEmpty ? "无" : parts.joined()
+    }
+
+    // 检查配置的修饰键是否按下
+    private func checkModifiersPressed(modifierFlags: NSEvent.ModifierFlags, carbonModifiers: UInt32) -> Bool {
+        let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
+        var isPressed = true
+
+        // 检查每个配置的修饰键
+        if carbonModifiers & carbonCmdKey != 0 {
+            isPressed = isPressed && flags.contains(.command)
+        }
+        if carbonModifiers & carbonOptionKey != 0 {
+            isPressed = isPressed && flags.contains(.option)
+        }
+        if carbonModifiers & carbonShiftKey != 0 {
+            isPressed = isPressed && flags.contains(.shift)
+        }
+        if carbonModifiers & carbonControlKey != 0 {
+            isPressed = isPressed && flags.contains(.control)
+        }
+
+        return isPressed
     }
 
     /// 激活选中的窗口并隐藏面板（优化时序）
@@ -937,6 +1058,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard !isPanelVisible else { return }
         isPanelVisible = true
+
+        // 初始化切换器修饰键状态为 true（假设用户正在按切换快捷键）
+        // 然后在 flagsChanged 监听器中检测修饰键释放
+        wasSwitchModifierPressed = true
+        let switchModifiers = configManager.config.hotKeys.switchModifiers
+        Logger.info("==> Panel shown, initialized wasSwitchModifierPressed = true, modifiers=\(carbonToCocoaModifiers(switchModifiers))")
 
         // 1. 先监听窗口变化，以便实时更新活跃时间
         windowManager.observeWindowChanges { [weak self] event in

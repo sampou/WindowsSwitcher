@@ -265,6 +265,8 @@ class DockPreviewManager: ObservableObject {
     }
 
     func selectItem(_ item: DockPreviewItem) {
+        // 激活前先刷新窗口缓存
+        WindowManager.shared.refreshCache()
         // 激活窗口
         WindowManager.shared.activateWindow(item.windowModel)
 
@@ -860,7 +862,8 @@ struct DockPreviewItemView: View {
     private func loadPreview() {
         Task(priority: .userInitiated) {
             let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
-            if let image = await generator.generatePreview(
+            // 使用实时预览方法，确保获取最新窗口内容
+            if let image = await generator.generateRealtimePreview(
                 for: item.windowModel,
                 size: CGSize(width: previewWidth, height: previewHeight)
             ) {

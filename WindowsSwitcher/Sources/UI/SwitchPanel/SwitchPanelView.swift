@@ -329,17 +329,34 @@ class KeyCatchView: NSView {
 
     override func keyDown(with event: NSEvent) {
         let chars = event.charactersIgnoringModifiers ?? ""
-        // Escape 没有 specialKey，用 keyCode 53
+
+        // 只处理以下按键，其他按键不关闭面板，直接忽略
+        // ESC (keyCode 53) - 关闭面板
         if event.keyCode == 53 {
             Logger.info("==> ESC pressed, hiding panel")
-            onDismiss?(); return
+            onDismiss?()
+            return
         }
-        switch event.specialKey {
-        case .tab:
-            if event.modifierFlags.contains(.shift) { onPrev?() }
-            else { onNext?() }
-        case .carriageReturn, .enter, .newline:
+
+        // Tab / Shift+Tab - 在应用间导航
+        if event.specialKey == .tab {
+            if event.modifierFlags.contains(.shift) {
+                onPrev?()
+            } else {
+                onNext?()
+            }
+            return
+        }
+
+        // Enter/Return - 确认选择
+        if let specialKey = event.specialKey,
+           [.carriageReturn, .enter, .newline].contains(specialKey) {
             onConfirm?()
+            return
+        }
+
+        // 方向键 - 导航
+        switch event.specialKey {
         case .leftArrow:
             onPrev?()  // 左：上一项
         case .rightArrow:
@@ -349,12 +366,17 @@ class KeyCatchView: NSView {
         case .downArrow:
             onMoveDown?()  // 下：下一行同列
         default:
-            if let n = Int(chars), (1...9).contains(n) {
-                onSelectIndex?(n - 1)
-            } else {
-                super.keyDown(with: event)
-            }
+            break
         }
+
+        // 数字键 1-9 - 快速选择
+        if let n = Int(chars), (1...9).contains(n) {
+            onSelectIndex?(n - 1)
+            return
+        }
+
+        // 其他所有按键：不执行任何操作，不关闭面板，保持切换器显示
+        Logger.debug("==> Key ignored (no action): keyCode=\(event.keyCode), chars=\(chars)")
     }
 }
 

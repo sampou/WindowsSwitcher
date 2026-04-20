@@ -316,6 +316,8 @@ class SwitchPanelViewModel: ObservableObject {
         }
         let window = filteredWindows[selectedIndex]
         Logger.info("activateSelected: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
+        // 激活前先刷新窗口缓存
+        windowManager.refreshCache()
         windowManager.activateWindow(window)
     }
 
