@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?  // 设置窗口引用
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
+    private var globalMouseMonitor: Any?   // 鼠标点击全局监听器
     private var globalEscKeyMonitor: Any?  // ESC 键全局监听器
     private let windowManager = WindowManager.shared
     private let previewGenerator = PreviewGenerator()
@@ -625,7 +626,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return event
         }
 
-        Logger.info("==> setupOptionKeyMonitor completed, globalKeyMonitor=\(globalKeyMonitor != nil), localKeyMonitor=\(localKeyMonitor != nil)")
+        // 3. 添加全局鼠标点击监听 - 点击面板外区域关闭面板
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self else { return }
+            guard self.isPanelVisible else { return }
+
+            // 检查点击是否在切换面板窗口内
+            if let panelWindow = self.switchPanelWindow {
+                let mouseLocation = NSEvent.mouseLocation
+                let panelFrame = panelWindow.frame
+
+                // 如果点击在面板窗口内，不处理
+                if panelFrame.contains(mouseLocation) {
+                    Logger.debug("Mouse click inside panel, ignoring")
+                    return
+                }
+
+                // 点击在面板外，关闭面板（但不激活任何窗口）
+                Logger.info("Mouse click outside panel, hiding panel without activation")
+                Task { @MainActor in
+                    self.hideSwitchPanel()
+                }
+            }
+        }
+
+        Logger.info("==> setupOptionKeyMonitor completed, globalKeyMonitor=\(globalKeyMonitor != nil), localKeyMonitor=\(localKeyMonitor != nil), globalMouseMonitor=\(globalMouseMonitor != nil)")
     }
 
     // 将 Carbon 修饰键转换为 NSEvent.ModifierFlags（用于日志显示）
@@ -684,18 +709,55 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Logger.info("Selected window: \(selectedWindow.appName) - PID:\(selectedWindow.ownerPID), Title: \(selectedWindow.windowTitle)")
 
-        // 2. 先隐藏面板（这样面板就不会阻挡焦点转移）
-        hideSwitchPanel()
+        // 2. 先尝试激活窗口，确保激活成功后再隐藏面板
+        // 刷新缓存获取最新窗口信息
+        windowManager.refreshCache()
+        let latestWindows = windowManager.getAllWindows()
 
-        // 3. 同步激活窗口（移除延迟，提升响应速度）
-        windowManager.activateWindow(selectedWindow)
-        Logger.info("Activated window: \(selectedWindow.appName)")
-
-        // 4. 强制激活目标应用（确保焦点转移到目标窗口）
-        if let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) {
-            app.activate(options: .activateIgnoringOtherApps)
-            Logger.info("App activated: \(app.localizedName ?? "unknown")")
+        // 验证窗口仍然存在
+        guard latestWindows.contains(where: { $0.id == selectedWindow.id }) else {
+            Logger.warning("Window no longer exists: \(selectedWindow.windowTitle)")
+            // 尝试通过 bundleIdentifier 激活应用（窗口可能已经关闭但应用还在）
+            if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: selectedWindow.bundleIdentifier).first {
+                let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                if result {
+                    hideSwitchPanel()
+                    return
+                }
+            }
+            // 窗口不存在且无法激活应用，保持面板显示
+            wasSwitchModifierPressed = false
+            return
         }
+
+        // 尝试激活应用
+        guard let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) else {
+            Logger.warning("Cannot find running application for PID: \(selectedWindow.ownerPID)")
+            // 降级：通过 bundleIdentifier 激活
+            if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: selectedWindow.bundleIdentifier).first {
+                let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+                if result {
+                    hideSwitchPanel()
+                    return
+                }
+            }
+            wasSwitchModifierPressed = false
+            return
+        }
+
+        // 执行激活
+        let activationResult = app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
+
+        if !activationResult {
+            Logger.warning("App.activate returned false, keeping panel visible")
+            wasSwitchModifierPressed = false
+            return
+        }
+
+        Logger.info("Window activated successfully, hiding panel now")
+
+        // 3. 激活成功后隐藏面板
+        hideSwitchPanel()
     }
 
     // MARK: - 快捷键注册
