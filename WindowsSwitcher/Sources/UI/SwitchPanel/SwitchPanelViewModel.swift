@@ -153,58 +153,18 @@ class SwitchPanelViewModel: ObservableObject {
 
     func selectNext() {
         guard !filteredWindows.isEmpty else { return }
-
+        // 直接计算下一个索引，不进行数组重排
         let nextIndex = (selectedIndex + 1) % filteredWindows.count
-        let nextWindow = filteredWindows[nextIndex]
-        let currentWindow = filteredWindows[selectedIndex]
-
-        // 检测是否切换到不同应用（使用 appName 判断，更稳定）
-        let isAppSwitch = currentWindow.appName != nextWindow.appName
-
-        // 只有启用应用分组功能且发生应用切换时才重新排列
-        if isAppGroupSwitchEnabled && isAppSwitch {
-            // 应用切换：重新排列窗口顺序
-            filteredWindows = rearrangeWindowsForAppSwitch(
-                from: currentWindow,
-                to: nextWindow,
-                in: filteredWindows
-            )
-            selectedIndex = 0  // 切换后选中新应用的第一窗口
-        } else {
-            // 同一应用内切换或不启用功能时
-            selectedIndex = nextIndex
-        }
-
-        // 延迟加载预览，避免阻塞切换
-        loadPreviewDelayed(for: filteredWindows[selectedIndex])
+        selectedIndex = nextIndex
+        // 完全跳过预览加载，由预加载统一处理
     }
 
     func selectPrevious() {
         guard !filteredWindows.isEmpty else { return }
-
+        // 直接计算上一个索引，不进行数组重排
         let prevIndex = (selectedIndex - 1 + filteredWindows.count) % filteredWindows.count
-        let prevWindow = filteredWindows[prevIndex]
-        let currentWindow = filteredWindows[selectedIndex]
-
-        // 检测是否切换到不同应用（使用 appName 判断，更稳定）
-        let isAppSwitch = currentWindow.appName != prevWindow.appName
-
-        // 只有启用应用分组功能且发生应用切换时才重新排列
-        if isAppGroupSwitchEnabled && isAppSwitch {
-            // 应用切换：重新排列窗口顺序
-            filteredWindows = rearrangeWindowsForAppSwitch(
-                from: currentWindow,
-                to: prevWindow,
-                in: filteredWindows
-            )
-            selectedIndex = 0  // 切换后选中新应用的第一窗口
-        } else {
-            // 同一应用内切换或不启用功能时
-            selectedIndex = prevIndex
-        }
-
-        // 延迟加载预览，避免阻塞切换
-        loadPreviewDelayed(for: filteredWindows[selectedIndex])
+        selectedIndex = prevIndex
+        // 完全跳过预览加载，由预加载统一处理
     }
 
     /// 上方向键：移动到上一行同列位置
@@ -219,7 +179,7 @@ class SwitchPanelViewModel: ObservableObject {
         let currentCol = selectedIndex % columnCount
 
         if currentRow == 0 {
-            // 已在第一行，不做处理或循环到最后一行
+            // 已在第一行，不做处理
             return
         }
 
@@ -229,7 +189,6 @@ class SwitchPanelViewModel: ObservableObject {
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
             selectedIndex = targetIndex
-            loadPreview(for: filteredWindows[selectedIndex])
         }
     }
 
@@ -256,7 +215,6 @@ class SwitchPanelViewModel: ObservableObject {
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
             selectedIndex = targetIndex
-            loadPreview(for: filteredWindows[selectedIndex])
         }
     }
 

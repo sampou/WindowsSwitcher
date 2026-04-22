@@ -158,9 +158,6 @@ struct SwitchPanelView: View {
         return min(max(contentHeight, minHeight), maxHeight)
     }
 
-    // 用于自动滚动到选中项
-    @State private var selectedScrollID: CGWindowID?
-
     var body: some View {
         ZStack {
             // 毛玻璃背景
@@ -188,11 +185,6 @@ struct SwitchPanelView: View {
             onMoveUp: { viewModel.selectUp() },
             onMoveDown: { viewModel.selectDown() }
         ))
-        .onChange(of: viewModel.selectedIndex) { (newIndex: Int) in
-            // 简化：只在有效索引时设置
-            guard newIndex >= 0 && newIndex < viewModel.filteredWindows.count else { return }
-            selectedScrollID = viewModel.filteredWindows[newIndex].id
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("窗口切换面板")
         .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 Escape 退出")
@@ -224,16 +216,7 @@ struct SwitchPanelView: View {
                                 .id(window.id)
                             }
                         }
-                        // 移除 drawingGroup，因为它会导致每次更新都重新光栅化整个视图
-                        // .drawingGroup()
-                        .onChange(of: selectedScrollID) { newID in
-                            // 只在非空时滚动，避免空值触发
-                            if let windowID = newID {
-                                withAnimation(.none) {
-                                    proxy.scrollTo(windowID, anchor: .center)
-                                }
-                            }
-                        }
+                        // 禁用自动滚动以提升性能
                     }
                 }
             }
