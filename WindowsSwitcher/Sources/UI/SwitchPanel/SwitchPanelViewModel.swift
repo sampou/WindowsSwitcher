@@ -58,20 +58,12 @@ class SwitchPanelViewModel: ObservableObject {
     private func setupNotifications() {
         NotificationCenter.default.publisher(for: .switchHotKeyPressed)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                let t0 = CFAbsoluteTimeGetCurrent()
-                self?.selectNext()
-                Logger.info("=== notification -> selectNext took: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms ===")
-            }
+            .sink { [weak self] _ in self?.selectNext() }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .reverseSwitchHotKeyPressed)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                let t0 = CFAbsoluteTimeGetCurrent()
-                self?.selectPrevious()
-                Logger.info("=== notification -> selectPrevious took: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms ===")
-            }
+            .sink { [weak self] _ in self?.selectPrevious() }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .appSwitchHotKeyPressed)
@@ -132,17 +124,11 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func selectNext() {
-        Logger.info("==> selectNext called, selectedIndex: \(selectedIndex), count: \(filteredWindows.count)")
-        guard !filteredWindows.isEmpty else {
-            Logger.warning("==> selectNext: filteredWindows is empty!")
-            return
-        }
+        guard !filteredWindows.isEmpty else { return }
 
         let nextIndex = (selectedIndex + 1) % filteredWindows.count
         let nextWindow = filteredWindows[nextIndex]
         let currentWindow = filteredWindows[selectedIndex]
-
-        Logger.info("==> selectNext: \(currentWindow.appName) -> \(nextWindow.appName)")
 
         // 检测是否切换到不同应用（使用 appName 判断，更稳定）
         let isAppSwitch = currentWindow.appName != nextWindow.appName
@@ -156,14 +142,13 @@ class SwitchPanelViewModel: ObservableObject {
                 in: filteredWindows
             )
             selectedIndex = 0  // 切换后选中新应用的第一窗口
-            Logger.info("==> selectNext: app switch, new index: 0")
         } else {
             // 同一应用内切换或不启用功能时
             selectedIndex = nextIndex
-            Logger.info("==> selectNext: same app switch, new index: \(nextIndex)")
         }
 
-        loadPreview(for: filteredWindows[selectedIndex])
+        // 延迟加载预览，避免阻塞切换
+        loadPreviewDelayed(for: filteredWindows[selectedIndex])
     }
 
     func selectPrevious() {
@@ -190,7 +175,8 @@ class SwitchPanelViewModel: ObservableObject {
             selectedIndex = prevIndex
         }
 
-        loadPreview(for: filteredWindows[selectedIndex])
+        // 延迟加载预览，避免阻塞切换
+        loadPreviewDelayed(for: filteredWindows[selectedIndex])
     }
 
     /// 上方向键：移动到上一行同列位置
@@ -321,6 +307,19 @@ class SwitchPanelViewModel: ObservableObject {
         windowManager.activateWindow(window)
     }
 
+    /// 通过窗口 ID 直接激活（避免索引问题）
+    func activateWindowByID(_ windowID: CGWindowID) {
+        // 找到对应的窗口
+        guard let window = filteredWindows.first(where: { $0.id == windowID }) else {
+            Logger.warning("activateWindowByID: window not found, id: \(windowID)")
+            return
+        }
+        Logger.info("activateWindowByID: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
+        // 激活前先刷新窗口缓存
+        windowManager.refreshCache()
+        windowManager.activateWindow(window)
+    }
+
     func closeWindow(_ window: WindowModel) {
         // BUG-006: 先乐观移除，200ms 后从系统重新获取确认
         windowManager.closeWindow(window)
@@ -396,13 +395,13 @@ class SwitchPanelViewModel: ObservableObject {
     private func loadPreview(for window: WindowModel) {
         // 如果已经在加载中，取消之前的任务
         previewLoadTasks[window.id]?.cancel()
-        
+
         let task = Task { [weak self] in
             guard let self = self else { return }
-            
+
             // 使用适中的预览尺寸
             let size = CGSize(width: 200, height: 112)
-            
+
             // 直接使用 PreviewGenerator 生成预览（内部已包含缓存逻辑）
             if let image = await self.previewGenerator.generatePreview(for: window, size: size) {
                 await MainActor.run {
@@ -410,12 +409,26 @@ class SwitchPanelViewModel: ObservableObject {
                     self.previewLoadTasks.removeValue(forKey: window.id)
                 }
             }
-            
+
             // 预加载相邻窗口
             await self.prefetchAdjacentPreviews(from: window)
         }
-        
+
         previewLoadTasks[window.id] = task
+    }
+
+    /// 延迟加载预览（让 UI 先完成渲染）
+    private func loadPreviewDelayed(for window: WindowModel) {
+        // 如果已经有缓存，跳过
+        if previewImages[window.id] != nil { return }
+
+        // 延迟 16ms（约一帧）后再加载，避免阻塞切换
+        Task {
+            try? await Task.sleep(nanoseconds: 16_000_000)  // 16ms
+            await MainActor.run {
+                self.loadPreview(for: window)
+            }
+        }
     }
 
     /// 预加载相邻窗口的预览（向前预加载2个，向后预加载1个）

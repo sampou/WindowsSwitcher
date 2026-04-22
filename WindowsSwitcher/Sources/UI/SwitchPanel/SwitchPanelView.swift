@@ -210,12 +210,12 @@ struct SwitchPanelView: View {
                             ForEach(Array(viewModel.filteredWindows.enumerated()), id: \.element.id) { index, window in
                                 WindowItemView(
                                     window: window,
-                                    isSelected: index == viewModel.selectedIndex,
+                                    isSelected: window.id == viewModel.selectedWindow?.id,
                                     previewImage: viewModel.previewImages[window.id],
                                     onSelect: { viewModel.selectedIndex = index },
                                     onActivate: {
-                                        viewModel.selectedIndex = index
-                                        viewModel.activateSelected()
+                                        // 直接通过窗口 ID 激活，确保准确性
+                                        viewModel.activateWindowByID(window.id)
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
                                     },
                                     onClose: { viewModel.closeWindow(window) },

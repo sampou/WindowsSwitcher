@@ -697,10 +697,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // 1. 先获取要激活的窗口信息
-        Logger.info("filteredWindows count: \(vm.filteredWindows.count)")
-        Logger.info("selectedIndex: \(vm.selectedIndex)")
-
+        // 1. 直接从 ViewModel 获取当前选中的窗口（这是用户实际选中的）
         guard let selectedWindow = vm.selectedWindow else {
             Logger.warning("No selected window to activate (selectedWindow is nil)")
             hideSwitchPanel()
@@ -709,12 +706,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Logger.info("Selected window: \(selectedWindow.appName) - PID:\(selectedWindow.ownerPID), Title: \(selectedWindow.windowTitle)")
 
-        // 2. 先尝试激活窗口，确保激活成功后再隐藏面板
-        // 刷新缓存获取最新窗口信息
+        // 2. 刷新缓存并验证窗口仍然存在
         windowManager.refreshCache()
         let latestWindows = windowManager.getAllWindows()
 
-        // 验证窗口仍然存在
+        // 验证窗口仍然存在（通过 window ID 匹配）
         guard latestWindows.contains(where: { $0.id == selectedWindow.id }) else {
             Logger.warning("Window no longer exists: \(selectedWindow.windowTitle)")
             // 尝试通过 bundleIdentifier 激活应用（窗口可能已经关闭但应用还在）
@@ -730,7 +726,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // 尝试激活应用
+        // 3. 尝试激活应用（使用原始选中窗口的 PID，确保激活正确的窗口）
         guard let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) else {
             Logger.warning("Cannot find running application for PID: \(selectedWindow.ownerPID)")
             // 降级：通过 bundleIdentifier 激活
@@ -780,23 +776,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             HotKey(keyCode: switchKeyCode, modifiers: switchModifiers, identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
-            let t0 = CFAbsoluteTimeGetCurrent()
-            Logger.info("=== Switch hotkey pressed ===")
             // 移除节流限制，允许最快速度切换
             let now = Date()
-            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.005 else { return }  // 5ms 节流
+            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.003 else { return }  // 3ms 节流
             self.lastHotKeyTime = now
             DispatchQueue.main.async { [weak self] in
-                let t1 = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-                Logger.info("=== hotkey dispatch delay: \(t1)ms ===")
                 guard let self else { return }
                 if self.isPanelVisible {
-                    Logger.info("--> Panel visible, switching to next")
-                    let t2 = CFAbsoluteTimeGetCurrent()
                     NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
-                    Logger.info("=== notification post took: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms ===")
                 } else {
-                    Logger.info("--> Panel hidden, showing panel")
                     Task { @MainActor in self.showSwitchPanel() }
                 }
             }
@@ -807,9 +795,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             HotKey(keyCode: switchKeyCode, modifiers: switchModifiers | UInt32(shiftKey), identifier: "reverseSwitch")
         ) { [weak self] in
             guard let self else { return }
-            Logger.info("=== Reverse switch hotkey pressed ===")
             let now = Date()
-            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.02 else { return }
+            guard now.timeIntervalSince(self.lastHotKeyTime) > 0.003 else { return }  // 3ms 节流
             self.lastHotKeyTime = now
             DispatchQueue.main.async {
                 if self.isPanelVisible {
