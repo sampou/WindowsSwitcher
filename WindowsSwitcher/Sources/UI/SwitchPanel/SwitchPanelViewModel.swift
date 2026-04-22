@@ -5,7 +5,15 @@ import Combine
 class SwitchPanelViewModel: ObservableObject {
     @Published var windows: [WindowModel] = []
     @Published var filteredWindows: [WindowModel] = []
-    @Published var selectedIndex: Int = 0
+    @Published var selectedIndex: Int = 0 {
+        didSet {
+            // 当索引改变时，同步更新 selectedWindowID
+            if filteredWindows.indices.contains(selectedIndex) {
+                selectedWindowID = filteredWindows[selectedIndex].id
+            }
+        }
+    }
+    @Published var selectedWindowID: CGWindowID?  // 使用窗口 ID 追踪选中状态
     @Published var searchText: String = "" {
         didSet { applyFilter() }
     }
@@ -25,6 +33,10 @@ class SwitchPanelViewModel: ObservableObject {
         self.previewGenerator = previewGenerator
         self.filterEngine = filterEngine
         self.windows = windows
+        // 初始化选中状态
+        if !windows.isEmpty {
+            self.selectedWindowID = windows[0].id
+        }
         applyFilter()
         setupNotifications()
     }
@@ -102,6 +114,9 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func applyFilter() {
+        // 先保存当前选中的窗口 ID
+        let previousSelectedID = selectedWindowID
+
         // T-063: 合并 filter+sort 为单次调用，减少中间数组分配
         let criteria = FilterCriteria(
             searchText: searchText,
@@ -110,7 +125,20 @@ class SwitchPanelViewModel: ObservableObject {
         )
         filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria,
                                                      order: config.config.behavior.sortOrder)
-        selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
+
+        // 恢复选中状态：优先使用之前的窗口 ID
+        if let prevID = previousSelectedID,
+           let newIndex = filteredWindows.firstIndex(where: { $0.id == prevID }) {
+            selectedIndex = newIndex
+            selectedWindowID = prevID
+        } else {
+            selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
+            // 更新 selectedWindowID
+            if filteredWindows.indices.contains(selectedIndex) {
+                selectedWindowID = filteredWindows[selectedIndex].id
+            }
+        }
+
         loadVisiblePreviews()
     }
 
@@ -352,7 +380,12 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     var selectedWindow: WindowModel? {
-        filteredWindows.indices.contains(selectedIndex) ? filteredWindows[selectedIndex] : nil
+        // 优先使用 selectedWindowID 查找，更可靠
+        if let windowID = selectedWindowID {
+            return filteredWindows.first { $0.id == windowID }
+        }
+        // 降级：使用 selectedIndex
+        return filteredWindows.indices.contains(selectedIndex) ? filteredWindows[selectedIndex] : nil
     }
 
     private func loadVisiblePreviews() {
