@@ -282,11 +282,11 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     func activateSelected() {
-        guard filteredWindows.indices.contains(selectedIndex) else {
-            Logger.warning("activateSelected: selectedIndex \(selectedIndex) out of bounds, filtered count: \(filteredWindows.count)")
+        // 优先使用 selectedWindowID 查找，更可靠
+        guard let window = selectedWindow else {
+            Logger.warning("activateSelected: selectedWindow is nil")
             return
         }
-        let window = filteredWindows[selectedIndex]
         Logger.info("activateSelected: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
         // 激活前先刷新窗口缓存
         windowManager.refreshCache()

@@ -689,7 +689,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @MainActor
     private func activateSelectedAndHide() {
         Logger.info("=== activateSelectedAndHide called ===")
-        Logger.info("switchPanelViewModel is nil: \(switchPanelViewModel == nil)")
 
         guard let vm = switchPanelViewModel else {
             Logger.error("switchPanelViewModel is nil! Cannot activate window.")
@@ -697,7 +696,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        // 1. 直接从 ViewModel 获取当前选中的窗口（这是用户实际选中的）
+        // 1. 优先使用 selectedWindowID 激活（与键盘/鼠标点击逻辑一致）
+        if let windowID = vm.selectedWindowID {
+            Logger.info("Using selectedWindowID: \(windowID)")
+            vm.activateWindowByID(windowID)
+            hideSwitchPanel()
+            return
+        }
+
+        // 2. 降级：使用 selectedWindow
         guard let selectedWindow = vm.selectedWindow else {
             Logger.warning("No selected window to activate (selectedWindow is nil)")
             hideSwitchPanel()
@@ -705,54 +712,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         Logger.info("Selected window: \(selectedWindow.appName) - PID:\(selectedWindow.ownerPID), Title: \(selectedWindow.windowTitle)")
-
-        // 2. 刷新缓存并验证窗口仍然存在
         windowManager.refreshCache()
-        let latestWindows = windowManager.getAllWindows()
-
-        // 验证窗口仍然存在（通过 window ID 匹配）
-        guard latestWindows.contains(where: { $0.id == selectedWindow.id }) else {
-            Logger.warning("Window no longer exists: \(selectedWindow.windowTitle)")
-            // 尝试通过 bundleIdentifier 激活应用（窗口可能已经关闭但应用还在）
-            if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: selectedWindow.bundleIdentifier).first {
-                let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-                if result {
-                    hideSwitchPanel()
-                    return
-                }
-            }
-            // 窗口不存在且无法激活应用，保持面板显示
-            wasSwitchModifierPressed = false
-            return
-        }
-
-        // 3. 尝试激活应用（使用原始选中窗口的 PID，确保激活正确的窗口）
-        guard let app = NSRunningApplication(processIdentifier: selectedWindow.ownerPID) else {
-            Logger.warning("Cannot find running application for PID: \(selectedWindow.ownerPID)")
-            // 降级：通过 bundleIdentifier 激活
-            if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: selectedWindow.bundleIdentifier).first {
-                let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-                if result {
-                    hideSwitchPanel()
-                    return
-                }
-            }
-            wasSwitchModifierPressed = false
-            return
-        }
-
-        // 执行激活
-        let activationResult = app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-
-        if !activationResult {
-            Logger.warning("App.activate returned false, keeping panel visible")
-            wasSwitchModifierPressed = false
-            return
-        }
-
-        Logger.info("Window activated successfully, hiding panel now")
-
-        // 3. 激活成功后隐藏面板
+        windowManager.activateWindow(selectedWindow)
         hideSwitchPanel()
     }
 

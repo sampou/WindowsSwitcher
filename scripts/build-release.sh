@@ -5,7 +5,7 @@
 set -e
 
 # 配置
-VERSION="0.0.34"
+VERSION="0.0.45"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/release"
 BUILD_DIR="$PROJECT_DIR/build"

@@ -150,52 +150,67 @@ class WindowManager: WindowManagerProtocol {
     private func performActivation(window: WindowModel, app: NSRunningApplication, retryCount: Int) {
         let maxRetries = 3
 
-        // 第一步：先通过 AXUIElement raise 窗口（在应用激活之前）
-        if let win = axWindow(for: window) {
-            let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-            let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        // 检查目标应用是否已经是前台应用
+        let isFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
 
-            if raiseResult != .success || focusResult != .success {
-                Logger.warning("AX API call failed: raise=\(raiseResult.rawValue), focus=\(focusResult.rawValue)")
-            }
+        if isFrontmost {
+            // 同一应用内切换窗口：直接聚焦目标窗口
+            Logger.info("Same app window switch: \(window.windowTitle)")
+            focusWindow(window, retryCount: retryCount)
         } else {
-            Logger.warning("Failed to get AXUIElement for window: \(window.windowTitle)")
-        }
+            // 不同应用间切换：先激活应用，再聚焦窗口
+            Logger.info("Different app switch: activating \(window.appName)")
+            let activateResult = app.activate(options: [.activateIgnoringOtherApps])
+            if !activateResult {
+                Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
 
-        // 第二步：激活应用（将应用带到前台）
-        let activateResult = app.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-        if !activateResult {
-            Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
-
-            // 如果激活失败且未达到最大重试次数，延迟重试
-            if retryCount < maxRetries {
-                let delay = 0.1 * Double(retryCount + 1)
-                Logger.info("Retrying activation in \(delay)s (attempt \(retryCount + 1)/\(maxRetries))")
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    self?.performActivation(window: window, app: app, retryCount: retryCount + 1)
-                }
-                return
-            }
-        }
-
-        // 第三步：再次确保窗口焦点（有时应用激活后会重置焦点）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-            guard let self = self, let win = self.axWindow(for: window) else { return }
-            let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-
-            // 如果仍然失败，再尝试一次
-            if focusResult != .success || raiseResult != .success {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    if let win = self.axWindow(for: window) {
-                        AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+                if retryCount < maxRetries {
+                    let delay = 0.1 * Double(retryCount + 1)
+                    Logger.info("Retrying activation in \(delay)s (attempt \(retryCount + 1)/\(maxRetries))")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.performActivation(window: window, app: app, retryCount: retryCount + 1)
                     }
+                    return
                 }
+            }
+
+            // 激活应用后聚焦目标窗口
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                self?.focusWindow(window, retryCount: 0)
             }
         }
 
         Logger.info("Activated window: \(window.appName) - \(window.windowTitle)")
+    }
+
+    /// 聚焦指定窗口
+    private func focusWindow(_ window: WindowModel, retryCount: Int) {
+        guard let win = axWindow(for: window) else {
+            Logger.warning("Cannot find AXUIElement for window: \(window.windowTitle)")
+
+            // 重试
+            if retryCount < 3 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.focusWindow(window, retryCount: retryCount + 1)
+                }
+            }
+            return
+        }
+
+        // 先 raise 窗口，再设置焦点
+        let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+
+        Logger.info("AX results - raise: \(raiseResult.rawValue), focus: \(focusResult.rawValue)")
+
+        if focusResult != .success || raiseResult != .success {
+            // 再尝试一次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                guard let self = self, let win = self.axWindow(for: window) else { return }
+                AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+                AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            }
+        }
     }
 
     func closeWindow(_ window: WindowModel) {
@@ -473,7 +488,8 @@ class WindowManager: WindowManagerProtocol {
         return nil
     }
 
-    /// BUG-002: 用 CGWindowID 匹配 AXUIElement，比标题匹配更可靠
+    /// 用 CGWindowID 匹配 AXUIElement，比标题匹配更可靠
+    /// 如果精确匹配失败，返回 nil 而不是降级到第一个窗口（避免切换到错误窗口）
     private func axWindow(for model: WindowModel) -> AXUIElement? {
         let axApp = AXUIElementCreateApplication(model.ownerPID)
         var windowList: CFTypeRef?
@@ -488,15 +504,17 @@ class WindowManager: WindowManagerProtocol {
             return nil
         }
 
+        // 优先：通过 CGWindowID 精确匹配
         for win in wins {
-            // 通过 _AXUIElementGetWindow 获取 CGWindowID（私有 API，降级用标题匹配）
             var cgWinID: CGWindowID = 0
             if _AXUIElementGetWindow(win, &cgWinID) == .success, cgWinID == model.id {
                 Logger.debug("Matched window by CGWindowID: \(cgWinID)")
                 return win
             }
+        }
 
-            // 降级：标题匹配
+        // 次选：通过窗口标题精确匹配
+        for win in wins {
             var titleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
             if let title = titleRef as? String, title == model.windowTitle {
@@ -505,15 +523,33 @@ class WindowManager: WindowManagerProtocol {
             }
         }
 
-        // 如果都匹配不到，返回第一个窗口作为最后降级方案
-        if let firstWin = wins.first {
-            var titleRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(firstWin, kAXTitleAttribute as CFString, &titleRef)
-            let title = titleRef as? String ?? "unknown"
-            Logger.warning("Fallback to first window: \(title) for target: \(model.windowTitle)")
-            return firstWin
+        // 第三选择：通过窗口位置匹配（如果窗口标题不唯一）
+        for win in wins {
+            var positionRef: CFTypeRef?
+            var sizeRef: CFTypeRef?
+
+            AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &positionRef)
+            AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef)
+
+            if let positionValue = positionRef, let sizeValue = sizeRef {
+                var position = CGPoint.zero
+                var size = CGSize.zero
+                AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
+                AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+
+                // 检查位置和大小是否匹配
+                if abs(position.x - model.frame.origin.x) < 5 &&
+                   abs(position.y - model.frame.origin.y) < 5 &&
+                   abs(size.width - model.frame.width) < 5 &&
+                   abs(size.height - model.frame.height) < 5 {
+                    Logger.debug("Matched window by position/size: \(position), \(size)")
+                    return win
+                }
+            }
         }
 
+        // 如果所有精确匹配都失败，打印警告并返回 nil（不再降级到第一个窗口）
+        Logger.warning("No matching window found for: \(model.windowTitle), available windows: \(wins.count)")
         return nil
     }
 }

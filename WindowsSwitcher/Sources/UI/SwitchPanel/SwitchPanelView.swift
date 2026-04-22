@@ -173,12 +173,26 @@ struct SwitchPanelView: View {
         .shadow(color: .black.opacity(0.25), radius: DesignTokens.Panel.shadowRadius,
                 x: 0, y: DesignTokens.Panel.shadowY)
         .background(KeyEventHandler(
-            onNext: { viewModel.selectNext() },
-            onPrev: { viewModel.selectPrevious() },
-            onConfirm: { viewModel.activateSelected(); DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() } },
+            onNext: {
+                viewModel.selectNext()
+            },
+            onPrev: {
+                viewModel.selectPrevious()
+            },
+            onConfirm: {
+                // 使用 selectedWindowID 直接激活（与鼠标点击逻辑一致）
+                if let windowID = viewModel.selectedWindowID {
+                    viewModel.activateWindowByID(windowID)
+                } else {
+                    viewModel.activateSelected()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
+            },
             onDismiss: onDismiss,
             onSelectIndex: { idx in
                 if viewModel.filteredWindows.indices.contains(idx) {
+                    // 同时设置窗口 ID 和索引，确保同步
+                    viewModel.selectedWindowID = viewModel.filteredWindows[idx].id
                     viewModel.selectedIndex = idx
                 }
             },
@@ -204,7 +218,11 @@ struct SwitchPanelView: View {
                                     window: window,
                                     isSelected: window.id == viewModel.selectedWindow?.id,
                                     previewImage: viewModel.previewImages[window.id],
-                                    onSelect: { viewModel.selectedIndex = index },
+                                    onSelect: {
+                                        // 同时设置索引和窗口 ID，确保同步
+                                        viewModel.selectedWindowID = window.id
+                                        viewModel.selectedIndex = index
+                                    },
                                     onActivate: {
                                         // 直接通过窗口 ID 激活，确保准确性
                                         viewModel.activateWindowByID(window.id)

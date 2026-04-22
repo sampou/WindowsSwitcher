@@ -253,13 +253,8 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1500;
-				TargetAttributes = {
-					0261107D4E9167FCE63ABAF2 = {
-						ProvisioningStyle = Automatic;
-					};
-				};
 			};
-			buildConfigurationList = 8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "	" */;
+			buildConfigurationList = 8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "WindowsSwitcher" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -395,10 +390,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WindowsSwitcher/Sources/WindowsSwitcher.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = LKD3AU8ZZ9;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = WindowsSwitcher/Sources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -407,6 +402,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moeasy.windowsswitcher;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
 			};
@@ -417,10 +413,10 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WindowsSwitcher/Sources/WindowsSwitcher.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = LKD3AU8ZZ9;
 				ENABLE_HARDENED_RUNTIME = YES;
 				INFOPLIST_FILE = WindowsSwitcher/Sources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -429,6 +425,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.moeasy.windowsswitcher;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = macosx;
 				SWIFT_VERSION = 5.9;
 			};
@@ -494,7 +491,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "	" */ = {
+		8B11FB36574ED1C9F57ACE08 /* Build configuration list for PBXProject "WindowsSwitcher" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				6ACBE4AB9024D0A3CBD90E6A /* Debug */,
