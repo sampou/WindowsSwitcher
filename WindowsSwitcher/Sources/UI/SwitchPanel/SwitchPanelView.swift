@@ -74,6 +74,9 @@ struct SwitchPanelView: View {
     private var columnCount: Int {
         let windowCount = viewModel.filteredWindows.count
 
+        // 如果没有窗口，返回 1 避免除以零
+        guard windowCount > 0 else { return 1 }
+
         // 如果用户设置了固定列数，使用设置值
         if configManager.config.appearance.switcherColumns > 0 {
             return min(configManager.config.appearance.switcherColumns, windowCount)
@@ -216,7 +219,7 @@ struct SwitchPanelView: View {
                             ForEach(Array(viewModel.filteredWindows.enumerated()), id: \.element.id) { index, window in
                                 WindowItemView(
                                     window: window,
-                                    isSelected: window.id == viewModel.selectedWindow?.id,
+                                    isSelected: window.id == viewModel.selectedWindowID,
                                     previewImage: viewModel.previewImages[window.id],
                                     onSelect: {
                                         // 同时设置索引和窗口 ID，确保同步
@@ -334,6 +337,7 @@ class KeyCatchView: NSView {
         // 只处理以下按键，其他按键不关闭面板，直接忽略
         // ESC (keyCode 53) - 关闭面板
         if event.keyCode == 53 {
+            Logger.keyEvent("ESC", action: "按下")
             Logger.info("==> ESC pressed, hiding panel")
             onDismiss?()
             return
@@ -342,8 +346,10 @@ class KeyCatchView: NSView {
         // Tab / Shift+Tab - 在应用间导航
         if event.specialKey == .tab {
             if event.modifierFlags.contains(.shift) {
+                Logger.keyEvent("Shift+Tab", action: "反向切换")
                 onPrev?()
             } else {
+                Logger.keyEvent("Tab", action: "正向切换")
                 onNext?()
             }
             return
@@ -352,6 +358,7 @@ class KeyCatchView: NSView {
         // Enter/Return - 确认选择
         if let specialKey = event.specialKey,
            [.carriageReturn, .enter, .newline].contains(specialKey) {
+            Logger.keyEvent("Enter", action: "确认选择")
             onConfirm?()
             return
         }
@@ -359,12 +366,16 @@ class KeyCatchView: NSView {
         // 方向键 - 导航
         switch event.specialKey {
         case .leftArrow:
+            Logger.keyEvent("←", action: "上一项")
             onPrev?()  // 左：上一项
         case .rightArrow:
+            Logger.keyEvent("→", action: "下一项")
             onNext?()  // 右：下一项
         case .upArrow:
+            Logger.keyEvent("↑", action: "上一行")
             onMoveUp?()  // 上：上一行同列
         case .downArrow:
+            Logger.keyEvent("↓", action: "下一行")
             onMoveDown?()  // 下：下一行同列
         default:
             break
@@ -372,6 +383,7 @@ class KeyCatchView: NSView {
 
         // 数字键 1-9 - 快速选择
         if let n = Int(chars), (1...9).contains(n) {
+            Logger.keyEvent(chars, action: "快速选择第\(n)项")
             onSelectIndex?(n - 1)
             return
         }

@@ -155,6 +155,11 @@ class SwitchPanelViewModel: ObservableObject {
         guard !filteredWindows.isEmpty else { return }
         // 直接计算下一个索引，不进行数组重排
         let nextIndex = (selectedIndex + 1) % filteredWindows.count
+        let nextWindow = filteredWindows[nextIndex]
+
+        // 操作日志：窗口选择
+        Logger.windowSelect("Tab", windowInfo: "\(nextWindow.appName) - \(nextWindow.windowTitle)")
+
         selectedIndex = nextIndex
         // 完全跳过预览加载，由预加载统一处理
     }
@@ -163,6 +168,11 @@ class SwitchPanelViewModel: ObservableObject {
         guard !filteredWindows.isEmpty else { return }
         // 直接计算上一个索引，不进行数组重排
         let prevIndex = (selectedIndex - 1 + filteredWindows.count) % filteredWindows.count
+        let prevWindow = filteredWindows[prevIndex]
+
+        // 操作日志：窗口选择
+        Logger.windowSelect("Shift+Tab", windowInfo: "\(prevWindow.appName) - \(prevWindow.windowTitle)")
+
         selectedIndex = prevIndex
         // 完全跳过预览加载，由预加载统一处理
     }
@@ -285,8 +295,10 @@ class SwitchPanelViewModel: ObservableObject {
         // 优先使用 selectedWindowID 查找，更可靠
         guard let window = selectedWindow else {
             Logger.warning("activateSelected: selectedWindow is nil")
+            Logger.windowActivate("未知窗口", result: "失败 - selectedWindow 为 nil")
             return
         }
+        Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "开始激活")
         Logger.info("activateSelected: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
         // 激活前先刷新窗口缓存
         windowManager.refreshCache()
@@ -298,8 +310,10 @@ class SwitchPanelViewModel: ObservableObject {
         // 找到对应的窗口
         guard let window = filteredWindows.first(where: { $0.id == windowID }) else {
             Logger.warning("activateWindowByID: window not found, id: \(windowID)")
+            Logger.windowActivate("窗口ID: \(windowID)", result: "失败 - 窗口未找到")
             return
         }
+        Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过ID激活")
         Logger.info("activateWindowByID: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
         // 激活前先刷新窗口缓存
         windowManager.refreshCache()
@@ -347,31 +361,33 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadVisiblePreviews() {
-        // 使用多线程并行加载所有可见窗口的预览
-        let windowsToLoad = Array(filteredWindows.prefix(20))  // 增加到20个窗口
-        
-        Task {
-            await withTaskGroup(of: Void.self) { group in
-                for window in windowsToLoad {
-                    // 跳过已有缓存的窗口
-                    if previewImages[window.id] != nil { continue }
-                    
-                    group.addTask { [weak self] in
-                        await self?.loadPreviewAsync(for: window)
+        // 限制并发数量，避免 CPU 过载
+        let windowsToLoad = Array(filteredWindows.prefix(12))
+
+        Task(priority: .userInitiated) {
+            // 顺序加载，避免并行过多任务导致卡顿
+            for window in windowsToLoad {
+                // 跳过已有缓存的窗口
+                if previewImages[window.id] != nil { continue }
+
+                // 加载单个预览
+                if let image = await previewGenerator.generatePreview(for: window, size: CGSize(width: 200, height: 112)) {
+                    await MainActor.run {
+                        self.previewImages[window.id] = image
                     }
                 }
             }
         }
     }
-    
+
     // 异步加载单个预览（非阻塞）
     private func loadPreviewAsync(for window: WindowModel) async {
         // 如果已经有缓存，跳过
         if previewImages[window.id] != nil { return }
-        
+
         // 使用适中的预览尺寸
         let size = CGSize(width: 200, height: 112)
-        
+
         // 直接使用 PreviewGenerator 生成预览（内部已包含缓存逻辑）
         if let image = await self.previewGenerator.generatePreview(for: window, size: size) {
             await MainActor.run {

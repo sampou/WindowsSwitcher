@@ -3,11 +3,12 @@ import SwiftUI
 import Carbon
 import Combine
 
-// Carbon 修饰键常量（来自 Carbon HIToolbox）
-private let carbonCmdKey: UInt32 = 0x1000       // ⌘ Command (cmdKey)
-private let carbonShiftKey: UInt32 = 0x0200     // ⇧ Shift (shiftKey)
-private let carbonOptionKey: UInt32 = 0x0800    // ⌥ Option (optionKey)
-private let carbonControlKey: UInt32 = 0x4000   // ⌃ Control (controlKey)
+// Carbon 修饰键常量（来自 Carbon HIToolbox/Events.h）
+// 正确的值：cmdKey = 256, shiftKey = 512, optionKey = 2048, controlKey = 4096
+private let carbonCmdKey: UInt32 = 256          // ⌘ Command (cmdKey = 1 << 8)
+private let carbonShiftKey: UInt32 = 512        // ⇧ Shift (shiftKey = 1 << 9)
+private let carbonOptionKey: UInt32 = 2048      // ⌥ Option (optionKey = 1 << 11)
+private let carbonControlKey: UInt32 = 4096     // ⌃ Control (controlKey = 1 << 12)
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
@@ -106,7 +107,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupDockPreview()
         Logger.info("8. setupDockPreview complete")
 
+        // 启动自动更新检查（如果已启用）
+        setupAutoUpdateCheck()
+        Logger.info("9. Auto update check setup complete")
+
         Logger.info("=== Deferred initialization completed ===")
+    }
+
+    /// 设置自动更新检查
+    private func setupAutoUpdateCheck() {
+        if ConfigManager.shared.config.update.autoCheckEnabled {
+            UpdateService.shared.startAutoCheck()
+        }
     }
 
     /// 启动时自动显示设置界面
@@ -537,38 +549,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let isShiftPressed = flags.contains(.shift)
             let isControlPressed = flags.contains(.control)
 
-            Logger.info("Global flagsChanged: rawFlags=0x\(String(rawFlags, radix: 16)), isCmd=\(isCmdPressed), isOption=\(isOptionPressed), isShift=\(isShiftPressed), isControl=\(isControlPressed), configuredModifiers=\(self.carbonToCocoaModifiers(switchModifiers))")
+            // 详细日志：记录所有修饰键状态
+            Logger.flagsChanged("Global: Cmd=\(isCmdPressed), Opt=\(isOptionPressed), Shift=\(isShiftPressed), Ctrl=\(isControlPressed), raw=0x\(String(rawFlags, radix: 16)), config=0x\(String(switchModifiers, radix: 16))")
 
             // 直接检查配置中的修饰键是否释放
             var allModifiersReleased = true
 
             // 检查 Cmd
             if switchModifiers & carbonCmdKey != 0 {
-                if flags.contains(.command) { allModifiersReleased = false }
+                if flags.contains(.command) {
+                    allModifiersReleased = false
+                }
             }
             // 检查 Option
             if switchModifiers & carbonOptionKey != 0 {
-                if flags.contains(.option) { allModifiersReleased = false }
-            }
-            // 检查 Shift
-            if switchModifiers & carbonShiftKey != 0 {
-                if flags.contains(.shift) { allModifiersReleased = false }
+                if flags.contains(.option) {
+                    allModifiersReleased = false
+                }
             }
             // 检查 Control
             if switchModifiers & carbonControlKey != 0 {
-                if flags.contains(.control) { allModifiersReleased = false }
+                if flags.contains(.control) {
+                    allModifiersReleased = false
+                }
             }
 
-            Logger.info("Global: allModifiersReleased=\(allModifiersReleased), wasSwitchModifierPressed=\(self.wasSwitchModifierPressed)")
-
-            // 检测切换器修饰键释放：当所有配置的修饰键都释放时
+            // 检测切换器修饰键释放：当所有配置的修饰键都释放时关闭切换器
             if self.wasSwitchModifierPressed && allModifiersReleased {
+                Logger.modifierState("释放", detail: "allModifiersReleased=true")
                 Logger.info("Global: ALL modifiers RELEASED! Calling activateSelectedAndHide()")
                 Task { @MainActor in
                     self.activateSelectedAndHide()
                 }
             } else if !allModifiersReleased {
-                // 至少有一个修饰键仍然按下，更新状态
+                // 至少有一个修饰键仍然按下，更新状态，保持切换器打开
                 self.wasSwitchModifierPressed = true
             }
         }
@@ -587,39 +601,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let rawFlags = event.modifierFlags.rawValue
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let isCmdPressed = flags.contains(.command)
+            let isOptionPressed = flags.contains(.option)
+            let isShiftPressed = flags.contains(.shift)
+            let isControlPressed = flags.contains(.control)
 
-            Logger.info("Local flagsChanged: rawFlags=0x\(String(rawFlags, radix: 16)), isCmd=\(isCmdPressed)")
+            // 详细日志：记录所有修饰键状态
+            Logger.flagsChanged("Local: Cmd=\(isCmdPressed), Opt=\(isOptionPressed), Shift=\(isShiftPressed), Ctrl=\(isControlPressed), raw=0x\(String(rawFlags, radix: 16)), config=0x\(String(switchModifiers, radix: 16))")
 
             // 直接检查配置中的修饰键是否释放
             var allModifiersReleased = true
 
             // 检查 Cmd
             if switchModifiers & carbonCmdKey != 0 {
-                if flags.contains(.command) { allModifiersReleased = false }
+                if flags.contains(.command) {
+                    allModifiersReleased = false
+                }
             }
             // 检查 Option
             if switchModifiers & carbonOptionKey != 0 {
-                if flags.contains(.option) { allModifiersReleased = false }
-            }
-            // 检查 Shift
-            if switchModifiers & carbonShiftKey != 0 {
-                if flags.contains(.shift) { allModifiersReleased = false }
+                if flags.contains(.option) {
+                    allModifiersReleased = false
+                }
             }
             // 检查 Control
             if switchModifiers & carbonControlKey != 0 {
-                if flags.contains(.control) { allModifiersReleased = false }
+                if flags.contains(.control) {
+                    allModifiersReleased = false
+                }
             }
 
-            Logger.info("Local: allModifiersReleased=\(allModifiersReleased), wasSwitchModifierPressed=\(self.wasSwitchModifierPressed)")
-
-            // 检测切换器修饰键释放：当所有配置的修饰键都释放时
+            // 检测切换器修饰键释放：当所有配置的修饰键都释放时关闭切换器
             if self.wasSwitchModifierPressed && allModifiersReleased {
+                Logger.modifierState("释放", detail: "allModifiersReleased=true")
                 Logger.info("Local: ALL modifiers RELEASED! Calling activateSelectedAndHide()")
                 Task { @MainActor in
                     self.activateSelectedAndHide()
                 }
             } else if !allModifiersReleased {
-                // 至少有一个修饰键仍然按下，更新状态
+                // 至少有一个修饰键仍然按下，更新状态，保持切换器打开
                 self.wasSwitchModifierPressed = true
             }
 
@@ -692,13 +711,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard let vm = switchPanelViewModel else {
             Logger.error("switchPanelViewModel is nil! Cannot activate window.")
+            Logger.modifierState("释放 - 失败 (switchPanelViewModel 为 nil)")
             hideSwitchPanel()
             return
         }
 
         // 1. 优先使用 selectedWindowID 激活（与键盘/鼠标点击逻辑一致）
         if let windowID = vm.selectedWindowID {
-            Logger.info("Using selectedWindowID: \(windowID)")
+            // 操作日志：修饰键释放，激活窗口
+            Logger.modifierState("释放")
+            if let window = vm.filteredWindows.first(where: { $0.id == windowID }) {
+                Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过 selectedWindowID")
+            }
             vm.activateWindowByID(windowID)
             hideSwitchPanel()
             return
@@ -707,10 +731,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 2. 降级：使用 selectedWindow
         guard let selectedWindow = vm.selectedWindow else {
             Logger.warning("No selected window to activate (selectedWindow is nil)")
+            Logger.modifierState("释放 - 失败 (selectedWindow 为 nil)")
             hideSwitchPanel()
             return
         }
 
+        Logger.modifierState("释放")
+        Logger.windowActivate("\(selectedWindow.appName) - \(selectedWindow.windowTitle)", result: "通过 selectedWindow")
         Logger.info("Selected window: \(selectedWindow.appName) - PID:\(selectedWindow.ownerPID), Title: \(selectedWindow.windowTitle)")
         windowManager.refreshCache()
         windowManager.activateWindow(selectedWindow)
@@ -1057,17 +1084,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - 切换面板
     @MainActor
     func showSwitchPanel(reversed: Bool = false, appSwitchMode: Bool = false) {
-        Logger.info("==> showSwitchPanel START (reversed=\(reversed), appSwitchMode=\(appSwitchMode))")
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
         let previousFrontmostApp = NSWorkspace.shared.frontmostApplication
         let previousPID = previousFrontmostApp?.processIdentifier
         let previousBundleID = previousFrontmostApp?.bundleIdentifier
+
+        // 操作日志：面板显示
+        Logger.panelState("显示", detail: "reversed=\(reversed), appSwitchMode=\(appSwitchMode), 前台应用=\(previousBundleID ?? "unknown")")
+
+        Logger.info("==> showSwitchPanel START (reversed=\(reversed), appSwitchMode=\(appSwitchMode))")
         Logger.info("==> Previous frontmost app: \(previousBundleID ?? "unknown"), PID: \(previousPID ?? -1)")
 
         guard !isPanelVisible else { return }
         isPanelVisible = true
+
+        // 暂停焦点轮询，避免窗口列表在切换过程中变化
+        windowManager.pauseFocusPolling()
 
         // 初始化切换器修饰键状态为 true（假设用户正在按切换快捷键）
         // 然后在 flagsChanged 监听器中检测修饰键释放
@@ -1180,8 +1214,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Logger.info("==> SwitchPanelViewModel created: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms")
 
         // 选中逻辑
-        if reversed {
-            vm.selectPrevious()
+        if reversed && sortedWindows.count > 1 {
+            // 反向切换：选择第二个窗口（上一个最近使用的窗口）
+            vm.selectedIndex = 1
+            Logger.info("==> reversed mode: selecting index 1 (previous window)")
         } else if appSwitchMode && sortedWindows.count > 1 {
             // 同应用切换模式：默认选中第二个窗口（下一个要切换的窗口）
             vm.selectedIndex = 1
@@ -1562,8 +1598,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func hideSwitchPanel() {
+        // 操作日志：面板隐藏
+        Logger.panelState("隐藏", detail: "wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
+
         // 立即标记面板不可见，避免状态不一致
         isPanelVisible = false
+
+        // 重置修饰键状态，避免重复触发
+        wasSwitchModifierPressed = false
+
+        // 恢复焦点轮询
+        windowManager.resumeFocusPolling()
 
         // 停止刷新定时器
         stopWindowRefreshTimer()

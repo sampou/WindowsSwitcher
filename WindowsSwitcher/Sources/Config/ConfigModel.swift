@@ -77,9 +77,16 @@ struct DockPreviewConfig: Codable, Equatable {
     var showAppIcon: Bool = true               // 是否显示应用图标
 }
 
+struct UpdateConfig: Codable, Equatable {
+    var autoCheckEnabled: Bool = false         // 是否自动检查更新
+    var autoDownloadEnabled: Bool = false      // 是否自动下载安装
+    var checkInterval: Double = 86400          // 检查间隔（秒），默认 24 小时
+}
+
 struct ConfigModel: Codable, Equatable {
     var hotKeys: HotKeyConfig = HotKeyConfig()
     var appearance: AppearanceConfig = AppearanceConfig()
     var behavior: BehaviorConfig = BehaviorConfig()
     var dockPreview: DockPreviewConfig = DockPreviewConfig()
+    var update: UpdateConfig = UpdateConfig()
 }

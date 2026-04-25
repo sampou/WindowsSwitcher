@@ -130,6 +130,7 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(selectedGroup == group ? .primary : DesignTokens.Colors.secondaryLabel)
+        .focusable(false)  // 禁用焦点环
     }
 
     // MARK: - 内容区
@@ -157,6 +158,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)
+                .focusable(false)
             }
             .padding(.bottom, DesignTokens.Spacing.lg)
 
@@ -198,6 +200,7 @@ struct SettingsView: View {
                     .font(.system(size: 11))
             }
             .buttonStyle(.plain)
+            .focusable(false)
         }
         .padding(.horizontal, DesignTokens.Spacing.lg)
         .padding(.vertical, DesignTokens.Spacing.sm)
@@ -222,6 +225,7 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
     @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
+    // @ObservedObject private var updateService = UpdateService.shared  // TODO: 后期启用
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
@@ -233,6 +237,72 @@ struct GeneralSettingsView: View {
                     isOn: $launchAtLogin.isEnabled
                 )
             }
+
+            // 更新设置（暂未启用）
+            // TODO: 后期提供版本检查 URL 后启用
+//            SettingsSection(title: "软件更新", icon: "arrow.clockwise") {
+//                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+//                    HStack {
+//                        SettingsToggle(
+//                            title: "自动检查更新",
+//                            description: "定期检查是否有新版本",
+//                            isOn: $config.config.update.autoCheckEnabled
+//                        )
+//                        .onChange(of: config.config.update.autoCheckEnabled) { newValue in
+//                            if newValue {
+//                                updateService.startAutoCheck()
+//                            } else {
+//                                updateService.stopAutoCheck()
+//                            }
+//                        }
+//
+//                        Spacer()
+//
+//                        // 手动检查按钮（仅当自动检查关闭时显示）
+//                        if !config.config.update.autoCheckEnabled {
+//                            Button {
+//                                Task {
+//                                    await updateService.checkForUpdateAndShowAlert()
+//                                }
+//                            } label: {
+//                                if updateService.isChecking {
+//                                    ProgressView()
+//                                        .scaleEffect(0.7)
+//                                        .frame(width: 20, height: 20)
+//                                } else {
+//                                    Image(systemName: "arrow.clockwise")
+//                                        .font(.system(size: 14))
+//                                }
+//                            }
+//                            .buttonStyle(.plain)
+//                            .focusable(false)
+//                            .help("检查更新")
+//                        }
+//                    }
+//
+//                    // 自动下载选项（仅当自动检查打开时显示）
+//                    if config.config.update.autoCheckEnabled {
+//                        SettingsToggle(
+//                            title: "自动下载安装",
+//                            description: "发现新版本时自动下载并提示安装",
+//                            isOn: $config.config.update.autoDownloadEnabled
+//                        )
+//                    }
+//
+//                    // 当前版本信息
+//                    HStack {
+//                        Text("当前版本: \(updateService.currentVersion) (\(updateService.currentBuildNumber))")
+//                            .font(FontSystem.captionMedium)
+//                            .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+//
+//                        if let latest = updateService.latestVersion, updateService.updateAvailable {
+//                            Text("• 最新版本: \(latest.version)")
+//                                .font(FontSystem.captionMedium)
+//                                .foregroundStyle(.green)
+//                        }
+//                    }
+//                }
+//            }
 
             // 主题设置
             SettingsSection(title: "主题", icon: "paintbrush") {
@@ -573,35 +643,6 @@ struct HotKeySettingsView: View {
                         .font(FontSystem.captionMedium)
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                 }
-
-                // 反向切换快捷键
-                HStack {
-                    Text("反向切换快捷键")
-                        .font(FontSystem.bodyMedium)
-
-                    HotKeyRecorder(
-                        keyCode: $config.config.hotKeys.appSwitchReverseKeyCode,
-                        modifiers: $config.config.hotKeys.appSwitchReverseModifiers,
-                        placeholder: "⌥⇧ `",
-                        onReset: {
-                            config.config.hotKeys.appSwitchReverseKeyCode = 50
-                            config.config.hotKeys.appSwitchReverseModifiers = 2560
-                        },
-                        onConflict: { conflict in
-                            currentConflict = conflict
-                            pendingHotKeyType = "appSwitchReverse"
-                            showConflictAlert = true
-                        },
-                        onBeforeChange: {
-                            previousKeyCode = config.config.hotKeys.appSwitchReverseKeyCode
-                            previousModifiers = config.config.hotKeys.appSwitchReverseModifiers
-                        }
-                    )
-                }
-
-                Text("反向切换同应用的窗口（从后往前）")
-                    .font(FontSystem.captionMedium)
-                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
             }
 
             // 使用说明
@@ -1032,6 +1073,7 @@ struct HotKeyRecorder: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .help("恢复默认")
 
                 // 显示当前快捷键
@@ -1085,6 +1127,7 @@ struct ModifierKeyToggle: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .help(label)
     }
 }
