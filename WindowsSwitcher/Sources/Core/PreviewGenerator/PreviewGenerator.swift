@@ -148,6 +148,7 @@ final class PreviewGenerator: @unchecked Sendable {
     /// 生成实时预览（强制刷新缓存）
     func generateRealtimePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
         let windowID = window.id
+        let cacheRef = self.cache
 
         return await withCheckedContinuation { continuation in
             queue.async {
@@ -156,6 +157,13 @@ final class PreviewGenerator: @unchecked Sendable {
 
                 let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
+
+                // 更新缓存，确保下次使用最新内容
+                if let image = image {
+                    Task {
+                        await cacheRef.set(image, for: windowID)
+                    }
+                }
             }
         }
     }

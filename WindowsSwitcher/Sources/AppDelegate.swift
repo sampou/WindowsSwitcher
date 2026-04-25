@@ -37,6 +37,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // 监听切换器快捷键的修饰键状态
     private var wasSwitchModifierPressed = false  // 跟踪切换器快捷键修饰键状态
+    private var panelShowTime: CFAbsoluteTime = 0  // 面板显示时间，用于忽略假释放事件
+    private let ignoreReleaseDelay: CFAbsoluteTime = 0.15  // 忽略面板显示后 150ms 内的释放事件
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -576,6 +578,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // 检测切换器修饰键释放：当所有配置的修饰键都释放时关闭切换器
             if self.wasSwitchModifierPressed && allModifiersReleased {
+                // 检查是否在延迟时间内（忽略面板显示后的假释放事件）
+                let timeSinceShow = CFAbsoluteTimeGetCurrent() - self.panelShowTime
+                if timeSinceShow < self.ignoreReleaseDelay {
+                    let delay = self.ignoreReleaseDelay - timeSinceShow
+                    Logger.flagsChanged("Global: Ignoring early release (timeSinceShow=\(String(format: "%.3f", timeSinceShow))s), scheduling check after \(String(format: "%.3f", delay))s")
+                    // 安排延迟后的检查
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.checkModifierStateAfterDelay()
+                    }
+                    return
+                }
+
                 Logger.modifierState("释放", detail: "allModifiersReleased=true")
                 Logger.info("Global: ALL modifiers RELEASED! Calling activateSelectedAndHide()")
                 Task { @MainActor in
@@ -632,6 +646,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             // 检测切换器修饰键释放：当所有配置的修饰键都释放时关闭切换器
             if self.wasSwitchModifierPressed && allModifiersReleased {
+                // 检查是否在延迟时间内（忽略面板显示后的假释放事件）
+                let timeSinceShow = CFAbsoluteTimeGetCurrent() - self.panelShowTime
+                if timeSinceShow < self.ignoreReleaseDelay {
+                    let delay = self.ignoreReleaseDelay - timeSinceShow
+                    Logger.flagsChanged("Local: Ignoring early release (timeSinceShow=\(String(format: "%.3f", timeSinceShow))s), scheduling check after \(String(format: "%.3f", delay))s")
+                    // 安排延迟后的检查
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                        self?.checkModifierStateAfterDelay()
+                    }
+                    return event
+                }
+
                 Logger.modifierState("释放", detail: "allModifiersReleased=true")
                 Logger.info("Local: ALL modifiers RELEASED! Calling activateSelectedAndHide()")
                 Task { @MainActor in
@@ -670,6 +696,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         Logger.info("==> setupOptionKeyMonitor completed, globalKeyMonitor=\(globalKeyMonitor != nil), localKeyMonitor=\(localKeyMonitor != nil), globalMouseMonitor=\(globalMouseMonitor != nil)")
+    }
+
+    /// 延迟后检查修饰键状态（用于处理面板显示后的假释放事件）
+    private func checkModifierStateAfterDelay() {
+        // 确保面板仍然可见
+        guard isPanelVisible else {
+            Logger.flagsChanged("DelayedCheck: Panel no longer visible, skipping")
+            return
+        }
+
+        // 获取当前修饰键状态
+        let currentFlags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let switchModifiers = configManager.config.hotKeys.switchModifiers
+
+        Logger.flagsChanged("DelayedCheck: Checking modifier state after delay")
+
+        // 检查配置的修饰键是否仍然按下
+        var allModifiersReleased = true
+
+        if switchModifiers & carbonCmdKey != 0 {
+            if currentFlags.contains(.command) {
+                allModifiersReleased = false
+                Logger.flagsChanged("DelayedCheck: Cmd still pressed")
+            }
+        }
+        if switchModifiers & carbonOptionKey != 0 {
+            if currentFlags.contains(.option) {
+                allModifiersReleased = false
+                Logger.flagsChanged("DelayedCheck: Opt still pressed")
+            }
+        }
+        if switchModifiers & carbonControlKey != 0 {
+            if currentFlags.contains(.control) {
+                allModifiersReleased = false
+                Logger.flagsChanged("DelayedCheck: Ctrl still pressed")
+            }
+        }
+
+        if allModifiersReleased && wasSwitchModifierPressed {
+            Logger.info("DelayedCheck: All modifiers released, activating window")
+            Task { @MainActor in
+                self.activateSelectedAndHide()
+            }
+        } else {
+            Logger.flagsChanged("DelayedCheck: Modifiers still pressed or wasSwitchModifierPressed=false, keeping panel open")
+        }
     }
 
     // 将 Carbon 修饰键转换为 NSEvent.ModifierFlags（用于日志显示）
@@ -1106,6 +1178,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 初始化切换器修饰键状态为 true（假设用户正在按切换快捷键）
         // 然后在 flagsChanged 监听器中检测修饰键释放
         wasSwitchModifierPressed = true
+        panelShowTime = CFAbsoluteTimeGetCurrent()  // 记录面板显示时间
         let switchModifiers = configManager.config.hotKeys.switchModifiers
         Logger.info("==> Panel shown, initialized wasSwitchModifierPressed = true, modifiers=\(carbonToCocoaModifiers(switchModifiers))")
 

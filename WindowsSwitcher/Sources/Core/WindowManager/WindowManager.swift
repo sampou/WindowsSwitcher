@@ -93,43 +93,24 @@ class WindowManager: WindowManagerProtocol {
         // 操作日志：开始激活窗口
         Logger.operation("窗口激活开始", detail: "\(window.appName) - \(window.windowTitle) (ID: \(window.id), PID: \(window.ownerPID))")
 
-        // BUG-007: 先刷新窗口缓存，获取最新窗口信息
-        refreshCache()
-
-        // 从最新窗口列表中查找对应窗口，确保使用最新 PID
-        let latestWindows = getAllWindows()
-        let targetWindow = latestWindows.first { $0.id == window.id } ?? window
-
-        // 如果窗口已不存在，尝试使用 bundleIdentifier 查找应用
-        guard let app = NSRunningApplication(processIdentifier: targetWindow.ownerPID) else {
-            Logger.warning("Failed to get NSRunningApplication for PID: \(targetWindow.ownerPID), trying bundleID")
-            Logger.operation("窗口激活", detail: "PID 不存在，尝试 bundleID", result: "降级处理")
+        // 直接使用传入的窗口信息，避免不必要的缓存刷新
+        // 获取应用实例
+        guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else {
+            Logger.warning("Failed to get NSRunningApplication for PID: \(window.ownerPID), trying bundleID")
 
             // 降级：尝试通过 bundleIdentifier 查找应用
             let bundleID = window.bundleIdentifier
             if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
-                // 直接激活应用
                 let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
                 Logger.info("Fallback activation result: \(result) for \(appByBundle.localizedName ?? "unknown")")
                 Logger.operation("窗口激活", detail: "通过 bundleID 激活", result: result ? "成功" : "失败")
-                return
             }
-
-            Logger.error("Cannot find running application for window: \(window.windowTitle)")
-            Logger.operation("窗口激活", detail: "找不到应用", result: "失败")
             return
         }
 
-        // 检查窗口是否仍然有效
-        if !latestWindows.contains(where: { $0.id == window.id }) {
-            Logger.warning("Window no longer exists, activating app directly")
-            Logger.operation("窗口激活", detail: "窗口已不存在", result: "警告")
-        }
-
-        // 更新窗口的 lastActiveTime 为当前时间，确保排序正确
-        let now = Date()
+        // 更新窗口的 lastActiveTime（简化操作）
         if var cachedWindow = windowCache[window.id] {
-            cachedWindow = WindowModel(
+            windowCache[window.id] = WindowModel(
                 id: cachedWindow.id,
                 appName: cachedWindow.appName,
                 bundleIdentifier: cachedWindow.bundleIdentifier,
@@ -139,18 +120,15 @@ class WindowManager: WindowManagerProtocol {
                 isMinimized: cachedWindow.isMinimized,
                 isHidden: cachedWindow.isHidden,
                 isOnScreen: cachedWindow.isOnScreen,
-                lastActiveTime: now,
+                lastActiveTime: Date(),
                 windowLayer: cachedWindow.windowLayer,
                 ownerPID: cachedWindow.ownerPID,
                 isStandardWindow: cachedWindow.isStandardWindow
             )
-            windowCache[window.id] = cachedWindow
-            // 同时更新缓存的窗口列表
-            cachedWindows = cachedWindows.map { $0.id == window.id ? cachedWindow : $0 }
         }
 
         // 执行激活（带重试机制）
-        performActivation(window: targetWindow, app: app, retryCount: 0)
+        performActivation(window: window, app: app, retryCount: 0)
     }
 
     /// 执行窗口激活（带重试机制）
@@ -163,20 +141,16 @@ class WindowManager: WindowManagerProtocol {
         if isFrontmost {
             // 同一应用内切换窗口：直接聚焦目标窗口
             Logger.operation("应用内切换", detail: "\(window.appName) - \(window.windowTitle)", result: "直接聚焦")
-            Logger.info("Same app window switch: \(window.windowTitle)")
             focusWindow(window, retryCount: retryCount)
         } else {
             // 不同应用间切换：先激活应用，再聚焦窗口
             Logger.operation("跨应用切换", detail: "激活 \(window.appName) - \(window.windowTitle)", result: "先激活应用")
-            Logger.info("Different app switch: activating \(window.appName)")
             let activateResult = app.activate(options: [.activateIgnoringOtherApps])
             if !activateResult {
                 Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
-                Logger.operation("应用激活", detail: window.appName, result: "失败，准备重试")
 
                 if retryCount < maxRetries {
-                    let delay = 0.1 * Double(retryCount + 1)
-                    Logger.info("Retrying activation in \(delay)s (attempt \(retryCount + 1)/\(maxRetries))")
+                    let delay = 0.05 * Double(retryCount + 1)
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                         self?.performActivation(window: window, app: app, retryCount: retryCount + 1)
                     }
@@ -184,27 +158,23 @@ class WindowManager: WindowManagerProtocol {
                 }
             }
 
-            // 激活应用后聚焦目标窗口
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            // 激活应用后聚焦目标窗口（减少延迟）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.focusWindow(window, retryCount: 0)
             }
         }
 
         Logger.operation("窗口激活完成", detail: "\(window.appName) - \(window.windowTitle)")
-        Logger.info("Activated window: \(window.appName) - \(window.windowTitle)")
     }
 
     /// 聚焦指定窗口
     private func focusWindow(_ window: WindowModel, retryCount: Int) {
-        Logger.operation("聚焦窗口", detail: "\(window.appName) - \(window.windowTitle) (重试: \(retryCount))")
-
         guard let win = axWindow(for: window) else {
             Logger.warning("Cannot find AXUIElement for window: \(window.windowTitle)")
-            Logger.operation("聚焦窗口", detail: window.windowTitle, result: "找不到 AXUIElement")
 
-            // 重试
+            // 重试（减少延迟）
             if retryCount < 3 {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
                     self?.focusWindow(window, retryCount: retryCount + 1)
                 }
             }
@@ -215,13 +185,12 @@ class WindowManager: WindowManagerProtocol {
         let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
         let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
 
-        Logger.info("AX results - raise: \(raiseResult.rawValue), focus: \(focusResult.rawValue)")
         Logger.operation("AX 操作", detail: "raise=\(raiseResult.rawValue), focus=\(focusResult.rawValue)",
                          result: raiseResult == .success && focusResult == .success ? "成功" : "部分失败")
 
         if focusResult != .success || raiseResult != .success {
-            // 再尝试一次
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            // 再尝试一次（减少延迟）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
                 guard let self = self, let win = self.axWindow(for: window) else { return }
                 AXUIElementPerformAction(win, kAXRaiseAction as CFString)
                 AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)

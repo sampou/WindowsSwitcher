@@ -161,7 +161,9 @@ class SwitchPanelViewModel: ObservableObject {
         Logger.windowSelect("Tab", windowInfo: "\(nextWindow.appName) - \(nextWindow.windowTitle)")
 
         selectedIndex = nextIndex
-        // 完全跳过预览加载，由预加载统一处理
+
+        // 刷新选中窗口的预览（实时获取最新内容）
+        refreshSelectedWindowPreview()
     }
 
     func selectPrevious() {
@@ -174,7 +176,9 @@ class SwitchPanelViewModel: ObservableObject {
         Logger.windowSelect("Shift+Tab", windowInfo: "\(prevWindow.appName) - \(prevWindow.windowTitle)")
 
         selectedIndex = prevIndex
-        // 完全跳过预览加载，由预加载统一处理
+
+        // 刷新选中窗口的预览（实时获取最新内容）
+        refreshSelectedWindowPreview()
     }
 
     /// 上方向键：移动到上一行同列位置
@@ -199,6 +203,8 @@ class SwitchPanelViewModel: ObservableObject {
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
             selectedIndex = targetIndex
+            // 刷新选中窗口的预览（实时获取最新内容）
+            refreshSelectedWindowPreview()
         }
     }
 
@@ -225,6 +231,8 @@ class SwitchPanelViewModel: ObservableObject {
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
             selectedIndex = targetIndex
+            // 刷新选中窗口的预览（实时获取最新内容）
+            refreshSelectedWindowPreview()
         }
     }
 
@@ -241,6 +249,24 @@ class SwitchPanelViewModel: ObservableObject {
             columnCount = max(3, min(8, Int((maxPanelWidth - 24) / (itemWidth + 16))))
         }
         return columnCount
+    }
+
+    /// 刷新选中窗口的预览（使用实时预览，不使用缓存）
+    func refreshSelectedWindowPreview() {
+        guard let windowID = selectedWindowID,
+              let window = filteredWindows.first(where: { $0.id == windowID }) else { return }
+
+        Task(priority: .userInitiated) {
+            let size = config.config.appearance.previewSize.dimensions
+            let previewSize = CGSize(width: size.width, height: size.height)
+
+            // 使用实时预览，不使用缓存
+            if let image = await previewGenerator.generateRealtimePreview(for: window, size: previewSize) {
+                await MainActor.run {
+                    self.previewImages[windowID] = image
+                }
+            }
+        }
     }
 
     /// 根据应用切换重新排列窗口顺序
@@ -310,13 +336,9 @@ class SwitchPanelViewModel: ObservableObject {
         // 找到对应的窗口
         guard let window = filteredWindows.first(where: { $0.id == windowID }) else {
             Logger.warning("activateWindowByID: window not found, id: \(windowID)")
-            Logger.windowActivate("窗口ID: \(windowID)", result: "失败 - 窗口未找到")
             return
         }
         Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过ID激活")
-        Logger.info("activateWindowByID: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
-        // 激活前先刷新窗口缓存
-        windowManager.refreshCache()
         windowManager.activateWindow(window)
     }
 
@@ -365,15 +387,16 @@ class SwitchPanelViewModel: ObservableObject {
         let windowsToLoad = Array(filteredWindows.prefix(12))
 
         Task(priority: .userInitiated) {
-            // 顺序加载，避免并行过多任务导致卡顿
-            for window in windowsToLoad {
-                // 跳过已有缓存的窗口
-                if previewImages[window.id] != nil { continue }
-
-                // 加载单个预览
-                if let image = await previewGenerator.generatePreview(for: window, size: CGSize(width: 200, height: 112)) {
-                    await MainActor.run {
-                        self.previewImages[window.id] = image
+            // 并发生成预览，提升加载速度
+            await withTaskGroup(of: Void.self) { group in
+                for window in windowsToLoad {
+                    group.addTask {
+                        // 使用实时预览获取最新内容（同时会更新缓存）
+                        if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: CGSize(width: 200, height: 112)) {
+                            await MainActor.run {
+                                self.previewImages[window.id] = image
+                            }
+                        }
                     }
                 }
             }
