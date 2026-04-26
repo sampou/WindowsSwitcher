@@ -43,6 +43,10 @@ extension Notification.Name {
     static let windowListDidChange = Notification.Name("com.windowsswitcher.windowListDidChange")
     static let dockPreviewWindowSelected = Notification.Name("com.windowsswitcher.dockPreviewWindowSelected")
     static let permissionStatusChanged = Notification.Name("com.windowsswitcher.permissionStatusChanged")
+    // 安装相关通知
+    static let showInstallProgress = Notification.Name("com.windowsswitcher.showInstallProgress")
+    static let installCompleted = Notification.Name("com.windowsswitcher.installCompleted")
+    static let installFailed = Notification.Name("com.windowsswitcher.installFailed")
 }
 
 // MARK: - 权限状态枚举

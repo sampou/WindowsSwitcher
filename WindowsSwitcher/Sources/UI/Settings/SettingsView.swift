@@ -294,6 +294,24 @@ struct GeneralSettingsView: View {
                         )
                     }
 
+                    // 静默安装选项
+                    SettingsToggle(
+                        title: "静默安装",
+                        description: "自动完成安装，无需手动拖拽应用",
+                        isOn: $config.config.update.silentInstallEnabled
+                    )
+
+                    // 错误提示
+                    if let error = updateService.errorMessage {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .font(FontSystem.captionMedium)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
                     // 当前版本信息
                     HStack {
                         Text("当前版本: v\(updateService.currentVersion) (\(updateService.currentBuildNumber))")

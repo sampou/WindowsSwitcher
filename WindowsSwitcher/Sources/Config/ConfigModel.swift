@@ -80,9 +80,11 @@ struct DockPreviewConfig: Codable, Equatable {
 struct UpdateConfig: Codable, Equatable {
     var autoCheckEnabled: Bool = false         // 是否自动检查更新
     var autoDownloadEnabled: Bool = false      // 是否自动下载安装
+    var silentInstallEnabled: Bool = false     // 是否启用静默安装
     var checkInterval: Double = 86400          // 检查间隔（秒），默认 24 小时
     var apiURL: String = "https://api.github.com/repos/sampou/WindowsSwitcher/releases/latest"  // 版本检查 API 地址
     var releasesPageURL: String = "https://github.com/sampou/WindowsSwitcher/releases"  // 发布页面地址
+    var githubToken: String = ""               // GitHub Token（可选，用于提高 API 限制）
 }
 
 struct ConfigModel: Codable, Equatable {

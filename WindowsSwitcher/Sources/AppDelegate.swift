@@ -42,6 +42,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // 版本更新提示窗口
     private var updateNotificationController: UpdateNotificationWindowController?
+    // 安装进度窗口
+    private var installProgressController: InstallProgressWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let startTime = CFAbsoluteTimeGetCurrent()
@@ -129,18 +131,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
+        // 监听安装进度窗口显示通知
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleShowInstallProgress),
+            name: .showInstallProgress,
+            object: nil
+        )
+
         if ConfigManager.shared.config.update.autoCheckEnabled {
             UpdateService.shared.startAutoCheck()
+        } else {
+            // 只有自动检查关闭时才手动检查一次
+            checkForUpdateOnLaunch()
         }
-
-        // 首次启动时检查版本更新
-        checkForUpdateOnLaunch()
     }
 
     /// 处理自动检查更新发现新版本的通知
     @objc private func handleUpdateAvailable() {
         Logger.operation("自动更新检查", detail: "发现新版本，显示更新提示")
         showUpdateNotification()
+    }
+
+    /// 处理显示安装进度窗口的通知
+    @objc private func handleShowInstallProgress() {
+        Logger.operation("静默安装", detail: "显示安装进度窗口")
+        showInstallProgress()
     }
 
     /// 首次启动时检查版本更新
@@ -169,6 +185,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         updateNotificationController?.show()
         Logger.operation("更新提示", detail: "窗口已显示")
+    }
+
+    /// 显示安装进度窗口
+    private func showInstallProgress() {
+        Logger.operation("安装进度", detail: "创建窗口控制器")
+        installProgressController = InstallProgressWindowController { [weak self] in
+            self?.installProgressController?.close()
+            self?.installProgressController = nil
+        }
+        installProgressController?.show()
+
+        // 开始静默安装
+        if let fileURL = UpdateDownloadManager.shared.localFileURL {
+            SilentInstaller.shared.install(from: fileURL) { result in
+                switch result {
+                case .success:
+                    Logger.operation("静默安装", detail: "安装成功", result: "成功")
+                case .failure(let error):
+                    Logger.operation("静默安装", detail: "安装失败: \(error.localizedDescription ?? "未知错误")", result: "失败")
+                }
+            }
+        }
     }
 
     /// 启动时自动显示设置界面

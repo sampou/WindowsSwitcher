@@ -52,6 +52,15 @@ struct VersionInfo {
     let releaseNotes: String?     // 更新说明
     let minSystemVersion: String? // 最低系统版本要求
 
+    /// 直接初始化
+    init(version: String, buildNumber: Int, downloadURL: String, releaseNotes: String?, minSystemVersion: String?) {
+        self.version = version
+        self.buildNumber = buildNumber
+        self.downloadURL = downloadURL
+        self.releaseNotes = releaseNotes
+        self.minSystemVersion = minSystemVersion
+    }
+
     /// 从 Gitee Release 创建
     init?(from giteeRelease: GiteeRelease) {
         // 必须有 tag_name
@@ -148,8 +157,15 @@ class UpdateService: ObservableObject {
 
     /// 检查是否有新版本
     func checkForUpdate() async {
+        // 如果已经在检查中，直接返回
+        if isChecking {
+            Logger.operation("版本检查", detail: "已在检查中，跳过")
+            return
+        }
+
         // 从配置中获取 API URL
         let urlString = config.config.update.apiURL
+        let githubToken = config.config.update.githubToken
         Logger.operation("版本检查", detail: "开始检查, URL: \(urlString)")
         Logger.operation("版本检查", detail: "当前版本: \(currentVersion), build: \(currentBuildNumber)")
 
@@ -169,9 +185,43 @@ class UpdateService: ObservableObject {
         }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            // 创建请求，添加 GitHub Token（如果有）
+            var request = URLRequest(url: url)
+            if !githubToken.isEmpty {
+                request.setValue("token \(githubToken)", forHTTPHeaderField: "Authorization")
+                Logger.operation("版本检查", detail: "使用 GitHub Token")
+            }
+            request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            // 检查 HTTP 状态码
+            if let httpResponse = response as? HTTPURLResponse {
+                Logger.operation("版本检查", detail: "HTTP 状态码: \(httpResponse.statusCode)")
+
+                if httpResponse.statusCode == 403 {
+                    // API 速率限制
+                    let errorMessage = "GitHub API 速率限制，请稍后再试或配置 GitHub Token"
+                    Logger.operation("版本检查", detail: "速率限制", result: "失败")
+                    await MainActor.run {
+                        self.errorMessage = errorMessage
+                        self.isChecking = false
+                    }
+                    return
+                }
+
+                if httpResponse.statusCode != 200 {
+                    Logger.operation("版本检查", detail: "HTTP 错误: \(httpResponse.statusCode)", result: "失败")
+                    await MainActor.run {
+                        self.errorMessage = "服务器返回错误: HTTP \(httpResponse.statusCode)"
+                        self.isChecking = false
+                    }
+                    return
+                }
+            }
+
             let giteeRelease = try JSONDecoder().decode(GiteeRelease.self, from: data)
-            Logger.operation("版本检查", detail: "API 返回版本: \(giteeRelease.tagName)")
+            Logger.operation("版本检查", detail: "API 返回版本: \(giteeRelease.tagName ?? "nil")")
 
             // 转换为 VersionInfo
             guard let versionInfo = VersionInfo(from: giteeRelease) else {
