@@ -1,6 +1,11 @@
 import Foundation
 import os.log
 
+// MARK: - 通知名称扩展
+extension Notification.Name {
+    static let updateAvailable = Notification.Name("updateAvailable")
+}
+
 class Logger {
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.moeasy.windowsswitcher"
 

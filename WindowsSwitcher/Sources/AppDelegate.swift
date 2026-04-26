@@ -40,6 +40,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelShowTime: CFAbsoluteTime = 0  // 面板显示时间，用于忽略假释放事件
     private let ignoreReleaseDelay: CFAbsoluteTime = 0.15  // 忽略面板显示后 150ms 内的释放事件
 
+    // 版本更新提示窗口
+    private var updateNotificationController: UpdateNotificationWindowController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let startTime = CFAbsoluteTimeGetCurrent()
         Logger.info("=== Application starting ===")
@@ -118,9 +121,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 设置自动更新检查
     private func setupAutoUpdateCheck() {
+        // 监听自动检查更新通知
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleUpdateAvailable),
+            name: .updateAvailable,
+            object: nil
+        )
+
         if ConfigManager.shared.config.update.autoCheckEnabled {
             UpdateService.shared.startAutoCheck()
         }
+
+        // 首次启动时检查版本更新
+        checkForUpdateOnLaunch()
+    }
+
+    /// 处理自动检查更新发现新版本的通知
+    @objc private func handleUpdateAvailable() {
+        Logger.operation("自动更新检查", detail: "发现新版本，显示更新提示")
+        showUpdateNotification()
+    }
+
+    /// 首次启动时检查版本更新
+    private func checkForUpdateOnLaunch() {
+        Logger.operation("启动更新检查", detail: "开始执行")
+        Task {
+            await UpdateService.shared.checkForUpdate()
+
+            // 如果有新版本，显示更新提示
+            Logger.operation("启动更新检查", detail: "检查完成, updateAvailable: \(UpdateService.shared.updateAvailable)")
+            if UpdateService.shared.updateAvailable {
+                await MainActor.run {
+                    Logger.operation("启动更新检查", detail: "准备显示更新提示窗口")
+                    showUpdateNotification()
+                }
+            }
+        }
+    }
+
+    /// 显示版本更新提示窗口
+    private func showUpdateNotification() {
+        Logger.operation("更新提示", detail: "创建窗口控制器")
+        updateNotificationController = UpdateNotificationWindowController { [weak self] in
+            self?.updateNotificationController?.close()
+            self?.updateNotificationController = nil
+        }
+        updateNotificationController?.show()
+        Logger.operation("更新提示", detail: "窗口已显示")
     }
 
     /// 启动时自动显示设置界面
@@ -1104,10 +1152,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    @objc private func openSettings() {
+    @objc func openSettings() {
         // 如果设置窗口已存在，直接激活
         if let existingWindow = settingsWindow {
-            NSApp.setActivationPolicy(.regular)  // 确保 Dock 图标显示
+            NSApp.setActivationPolicy(.regular)
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -1117,8 +1165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let windowSize = ResponsiveSize.settingsWindowSize()
         let minSize = ResponsiveSize.minWindowSize
 
-        // 手动创建并显示设置窗口，不依赖 SwiftUI Settings 场景
-        // SettingsView 内部已通过 @ObservedObject 监听 ThemeManager，自动响应主题变化
+        // 创建设置窗口
         let settingsView = SettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
 
@@ -1128,13 +1175,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.setContentSize(windowSize)
         window.minSize = minSize
         window.center()
-        window.delegate = self  // 设置代理以监听窗口关闭事件
-        window.isReleasedWhenClosed = false  // 防止窗口关闭时被释放
+        window.delegate = self
+        window.isReleasedWhenClosed = false
 
-        // 保存窗口引用
         settingsWindow = window
 
-        // 确保应用激活并显示 Dock 图标
         NSApp.setActivationPolicy(.regular)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1147,7 +1192,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 检查是否是设置窗口关闭
         if window === settingsWindow {
-            // 切换回 accessory 模式，移除 Dock 图标
             NSApp.setActivationPolicy(.accessory)
             Logger.info("设置窗口已关闭，切换回 accessory 模式")
         }

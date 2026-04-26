@@ -225,7 +225,8 @@ struct SettingsView: View {
 struct GeneralSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
     @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
-    // @ObservedObject private var updateService = UpdateService.shared  // TODO: 后期启用
+    @ObservedObject private var updateService = UpdateService.shared
+    @State private var updateNotificationController: UpdateNotificationWindowController?
 
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xl) {
@@ -238,71 +239,75 @@ struct GeneralSettingsView: View {
                 )
             }
 
-            // 更新设置（暂未启用）
-            // TODO: 后期提供版本检查 URL 后启用
-//            SettingsSection(title: "软件更新", icon: "arrow.clockwise") {
-//                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-//                    HStack {
-//                        SettingsToggle(
-//                            title: "自动检查更新",
-//                            description: "定期检查是否有新版本",
-//                            isOn: $config.config.update.autoCheckEnabled
-//                        )
-//                        .onChange(of: config.config.update.autoCheckEnabled) { newValue in
-//                            if newValue {
-//                                updateService.startAutoCheck()
-//                            } else {
-//                                updateService.stopAutoCheck()
-//                            }
-//                        }
-//
-//                        Spacer()
-//
-//                        // 手动检查按钮（仅当自动检查关闭时显示）
-//                        if !config.config.update.autoCheckEnabled {
-//                            Button {
-//                                Task {
-//                                    await updateService.checkForUpdateAndShowAlert()
-//                                }
-//                            } label: {
-//                                if updateService.isChecking {
-//                                    ProgressView()
-//                                        .scaleEffect(0.7)
-//                                        .frame(width: 20, height: 20)
-//                                } else {
-//                                    Image(systemName: "arrow.clockwise")
-//                                        .font(.system(size: 14))
-//                                }
-//                            }
-//                            .buttonStyle(.plain)
-//                            .focusable(false)
-//                            .help("检查更新")
-//                        }
-//                    }
-//
-//                    // 自动下载选项（仅当自动检查打开时显示）
-//                    if config.config.update.autoCheckEnabled {
-//                        SettingsToggle(
-//                            title: "自动下载安装",
-//                            description: "发现新版本时自动下载并提示安装",
-//                            isOn: $config.config.update.autoDownloadEnabled
-//                        )
-//                    }
-//
-//                    // 当前版本信息
-//                    HStack {
-//                        Text("当前版本: \(updateService.currentVersion) (\(updateService.currentBuildNumber))")
-//                            .font(FontSystem.captionMedium)
-//                            .foregroundStyle(DesignTokens.Colors.secondaryLabel)
-//
-//                        if let latest = updateService.latestVersion, updateService.updateAvailable {
-//                            Text("• 最新版本: \(latest.version)")
-//                                .font(FontSystem.captionMedium)
-//                                .foregroundStyle(.green)
-//                        }
-//                    }
-//                }
-//            }
+            // 更新设置
+            SettingsSection(title: "软件更新", icon: "arrow.clockwise") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                    HStack {
+                        SettingsToggle(
+                            title: "自动检查更新",
+                            description: "定期检查是否有新版本",
+                            isOn: $config.config.update.autoCheckEnabled
+                        )
+                        .onChange(of: config.config.update.autoCheckEnabled) { newValue in
+                            if newValue {
+                                updateService.startAutoCheck()
+                            } else {
+                                updateService.stopAutoCheck()
+                            }
+                        }
+
+                        Spacer()
+
+                        // 手动检查按钮（仅当自动检查关闭时显示）
+                        if !config.config.update.autoCheckEnabled {
+                            Button {
+                                Task {
+                                    await updateService.checkForUpdate()
+                                    if updateService.updateAvailable {
+                                        await MainActor.run {
+                                            showUpdateNotification()
+                                        }
+                                    }
+                                }
+                            } label: {
+                                if updateService.isChecking {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                        .frame(width: 20, height: 20)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .font(.system(size: 14))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .help("检查更新")
+                        }
+                    }
+
+                    // 自动下载选项（仅当自动检查打开时显示）
+                    if config.config.update.autoCheckEnabled {
+                        SettingsToggle(
+                            title: "自动下载安装",
+                            description: "发现新版本时自动下载并提示安装",
+                            isOn: $config.config.update.autoDownloadEnabled
+                        )
+                    }
+
+                    // 当前版本信息
+                    HStack {
+                        Text("当前版本: v\(updateService.currentVersion) (\(updateService.currentBuildNumber))")
+                            .font(FontSystem.captionMedium)
+                            .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+
+                        if let latest = updateService.latestVersion, updateService.updateAvailable {
+                            Text("• 最新版本: v\(latest.version)")
+                                .font(FontSystem.captionMedium)
+                                .foregroundStyle(.green)
+                        }
+                    }
+                }
+            }
 
             // 主题设置
             SettingsSection(title: "主题", icon: "paintbrush") {
@@ -322,6 +327,15 @@ struct GeneralSettingsView: View {
 
             Spacer()
         }
+    }
+
+    /// 显示版本更新提示窗口
+    private func showUpdateNotification() {
+        updateNotificationController = UpdateNotificationWindowController {
+            updateNotificationController?.close()
+            updateNotificationController = nil
+        }
+        updateNotificationController?.show()
     }
 }
 

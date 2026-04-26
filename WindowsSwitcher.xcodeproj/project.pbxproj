@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 			UPD4TE1SERV1CE2BUILDFILE01 /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = UPD4TE1SERV1CE2FILE3REF01 /* UpdateService.swift */; };
+		UPDATENOTIFVIEW001 /* UpdateNotificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UPDATENOTIFVIEW002 /* UpdateNotificationView.swift */; };
+	UPDATEDOWNLOADVIEW001 /* UpdateDownloadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = UPDATEDOWNLOADVIEW002 /* UpdateDownloadView.swift */; };
+
 		122ABF878486E62A3DAFD738 /* PreviewGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A0CC29B65B11E2DB1DB90C /* PreviewGenerator.swift */; };
 		1443E837EB245AB2F5E20D2D /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = FD47C6688AF3532003111434 /* HotKey */; };
 		17DCE1B58A0FADC6DC6E3374 /* WindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B80398F273DCF7C8B12FF8 /* WindowManager.swift */; };
@@ -38,6 +41,9 @@
 
 /* Begin PBXFileReference section */
 			UPD4TE1SERV1CE2FILE3REF01 /* UpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateService.swift; sourceTree = "<group>"; };
+		UPDATENOTIFVIEW002 /* UpdateNotificationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/Update/UpdateNotificationView.swift; sourceTree = "<absolute>"; };
+	UPDATEDOWNLOADVIEW002 /* UpdateDownloadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/Update/UpdateDownloadView.swift; sourceTree = "<absolute>"; };
+
 		0F6395992798B47B5D89F76A /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		14A0F070F39D7A2AF099617C /* HotKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyManager.swift; sourceTree = "<group>"; };
 		39EED15FD6926B9E60DF9FDC /* WindowItemView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowItemView.swift; sourceTree = "<group>"; };
@@ -295,6 +301,8 @@
 			buildActionMask = 2147483647;
 			files = (
 					UPD4TE1SERV1CE2BUILDFILE01 /* UpdateService.swift in Sources */,
+					UPDATENOTIFVIEW001 /* UpdateNotificationView.swift in Sources */,
+					UPDATEDOWNLOADVIEW001 /* UpdateDownloadView.swift in Sources */,
 				6D5225952F73D9F10071DF03 /* /Users/sampou/mac_workspace/WindowsSwitcher/WindowsSwitcher/Sources/UI/DockPreview/DockEventMonitor.swift in Sources */,
 				74028FE34D99EC425A507242 /* AppDelegate.swift in Sources */,
 				F9B60FF46CDD68A7605EE0E2 /* ConfigManager.swift in Sources */,

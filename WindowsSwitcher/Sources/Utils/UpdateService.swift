@@ -1,13 +1,96 @@
 import Foundation
 import AppKit
 
+/// Gitee Release API 响应模型
+struct GiteeRelease: Codable {
+    let tagName: String?         // 标签名，如 "v0.0.75"
+    let name: String?            // 发布名称
+    let body: String?            // 发布说明
+    let htmlUrl: String?         // 页面地址
+    let assets: [GiteeAsset]?    // 下载资源列表
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case name
+        case body
+        case htmlUrl = "html_url"
+        case assets
+    }
+
+    /// 用于测试的初始化方法
+    init(tagName: String?, name: String?, body: String?, htmlUrl: String?, assets: [GiteeAsset]?) {
+        self.tagName = tagName
+        self.name = name
+        self.body = body
+        self.htmlUrl = htmlUrl
+        self.assets = assets
+    }
+}
+
+/// Gitee 资源模型
+struct GiteeAsset: Codable {
+    let name: String?                // 文件名
+    let browserDownloadUrl: String?  // 下载地址
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadUrl = "browser_download_url"
+    }
+
+    /// 用于测试的初始化方法
+    init(name: String?, browserDownloadUrl: String?) {
+        self.name = name
+        self.browserDownloadUrl = browserDownloadUrl
+    }
+}
+
 /// 版本信息模型
-struct VersionInfo: Codable {
-    let version: String           // 最新版本号，如 "0.0.68"
-    let buildNumber: Int          // 构建号
+struct VersionInfo {
+    let version: String           // 版本号，如 "0.0.75"
+    let buildNumber: Int          // 构建号（从版本号解析）
     let downloadURL: String       // 下载地址
     let releaseNotes: String?     // 更新说明
     let minSystemVersion: String? // 最低系统版本要求
+
+    /// 从 Gitee Release 创建
+    init?(from giteeRelease: GiteeRelease) {
+        // 必须有 tag_name
+        guard let tagName = giteeRelease.tagName else { return nil }
+
+        // 解析版本号（去掉 "v" 前缀）
+        var versionString = tagName
+        if versionString.hasPrefix("v") {
+            versionString = String(versionString.dropFirst())
+        }
+
+        self.version = versionString
+
+        // 从版本号解析构建号（取最后一部分）
+        let parts = versionString.split(separator: ".")
+        self.buildNumber = parts.last.flatMap { Int($0) } ?? 0
+
+        // 获取下载地址（优先 DMG）
+        if let assets = giteeRelease.assets {
+            if let dmgAsset = assets.first(where: { $0.name?.hasSuffix(".dmg") ?? false }),
+               let downloadUrl = dmgAsset.browserDownloadUrl {
+                self.downloadURL = downloadUrl
+            } else if let zipAsset = assets.first(where: { $0.name?.hasSuffix(".zip") ?? false }),
+                      let downloadUrl = zipAsset.browserDownloadUrl {
+                self.downloadURL = downloadUrl
+            } else if let firstAsset = assets.first,
+                      let downloadUrl = firstAsset.browserDownloadUrl {
+                self.downloadURL = downloadUrl
+            } else {
+                // 没有资源，使用页面地址
+                self.downloadURL = giteeRelease.htmlUrl ?? "https://gitee.com/sampou/WindowsSwitcher/releases"
+            }
+        } else {
+            self.downloadURL = giteeRelease.htmlUrl ?? "https://gitee.com/sampou/WindowsSwitcher/releases"
+        }
+
+        self.releaseNotes = giteeRelease.body
+        self.minSystemVersion = nil
+    }
 }
 
 /// 版本检查服务
@@ -19,13 +102,7 @@ class UpdateService: ObservableObject {
     @Published var updateAvailable = false
     @Published var errorMessage: String?
 
-    // 版本检查 URL（后期提供）
-    private var checkURL: URL? {
-        // TODO: 后期提供实际的版本检查 URL
-        // return URL(string: "https://example.com/version.json")
-        return nil
-    }
-
+    private let config = ConfigManager.shared
     private var autoCheckTimer: Timer?
 
     private init() {}
@@ -71,10 +148,15 @@ class UpdateService: ObservableObject {
 
     /// 检查是否有新版本
     func checkForUpdate() async {
-        guard let url = checkURL else {
-            // 没有配置检查 URL，模拟检查成功但无更新
+        // 从配置中获取 API URL
+        let urlString = config.config.update.apiURL
+        Logger.operation("版本检查", detail: "开始检查, URL: \(urlString)")
+        Logger.operation("版本检查", detail: "当前版本: \(currentVersion), build: \(currentBuildNumber)")
+
+        guard let url = URL(string: urlString) else {
+            Logger.operation("版本检查", detail: "URL 无效", result: "失败")
             await MainActor.run {
-                self.errorMessage = nil
+                self.errorMessage = "未配置版本检查地址"
                 self.updateAvailable = false
                 self.isChecking = false
             }
@@ -88,14 +170,29 @@ class UpdateService: ObservableObject {
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            let versionInfo = try JSONDecoder().decode(VersionInfo.self, from: data)
+            let giteeRelease = try JSONDecoder().decode(GiteeRelease.self, from: data)
+            Logger.operation("版本检查", detail: "API 返回版本: \(giteeRelease.tagName)")
+
+            // 转换为 VersionInfo
+            guard let versionInfo = VersionInfo(from: giteeRelease) else {
+                Logger.operation("版本检查", detail: "解析版本信息失败", result: "失败")
+                await MainActor.run {
+                    self.errorMessage = "无法解析版本信息"
+                    self.isChecking = false
+                }
+                return
+            }
+
+            let hasUpdate = self.isNewVersionAvailable(versionInfo)
+            Logger.operation("版本检查", detail: "有新版本: \(hasUpdate)", result: hasUpdate ? "是" : "否")
 
             await MainActor.run {
                 self.latestVersion = versionInfo
-                self.updateAvailable = self.isNewVersionAvailable(versionInfo)
+                self.updateAvailable = hasUpdate
                 self.isChecking = false
             }
         } catch {
+            Logger.operation("版本检查", detail: "检查失败: \(error.localizedDescription)", result: "失败")
             await MainActor.run {
                 self.errorMessage = "检查更新失败: \(error.localizedDescription)"
                 self.isChecking = false
@@ -107,40 +204,11 @@ class UpdateService: ObservableObject {
     func checkForUpdateAndShowAlert() async {
         await checkForUpdate()
 
-        // 如果有新版本，显示全局弹窗
+        // 如果有新版本，发送通知显示更新窗口
         if updateAvailable {
             await MainActor.run {
-                showUpdateAlert()
+                NotificationCenter.default.post(name: .updateAvailable, object: nil)
             }
-        }
-    }
-
-    /// 显示更新弹窗（全局）
-    func showUpdateAlert() {
-        // 激活应用
-        NSApp.activate(ignoringOtherApps: true)
-
-        let alert = NSAlert()
-        alert.messageText = "发现新版本"
-
-        if let latest = latestVersion {
-            alert.informativeText = """
-            版本 \(latest.version) 已发布
-
-            \(latest.releaseNotes ?? "建议更新以获得最新功能。")
-            """
-        } else {
-            alert.informativeText = "有新版本可用，建议更新。"
-        }
-
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "立即下载")
-        alert.addButton(withTitle: "稍后提醒")
-
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {
-            openDownloadPage()
         }
     }
 
@@ -150,7 +218,7 @@ class UpdateService: ObservableObject {
     func startAutoCheck() {
         stopAutoCheck()
 
-        let interval = ConfigManager.shared.config.update.checkInterval
+        let interval = config.config.update.checkInterval
         autoCheckTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task {
                 await self?.checkForUpdateAndShowAlert()
@@ -193,9 +261,9 @@ class UpdateService: ObservableObject {
     func openDownloadPage() {
         guard let url = latestVersion?.downloadURL,
               let downloadURL = URL(string: url) else {
-            // 使用默认的 GitHub releases 页面
-            if let githubURL = URL(string: "https://github.com/jnMetaCode/agency-agents-zh/releases") {
-                NSWorkspace.shared.open(githubURL)
+            // 使用配置中的发布页面地址
+            if let releasesURL = URL(string: config.config.update.releasesPageURL) {
+                NSWorkspace.shared.open(releasesURL)
             }
             return
         }
