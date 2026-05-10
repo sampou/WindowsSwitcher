@@ -87,31 +87,37 @@ cd "$BUILD_DIR/Build/Products/Release"
 zip -r "$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.zip" WindowsSwitcher.app
 echo "✅ ZIP 创建成功：$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.zip"
 
-# 创建 DMG 磁盘镜像
+# 创建 DMG 磁盘镜像（带自定义样式）
 echo ""
 echo "💿 创建 DMG 磁盘镜像..."
-cd "$PROJECT_DIR"
 
-# 创建临时文件夹
-rm -rf dmg_temp
-mkdir -p dmg_temp
+# DMG 配置
+DMG_FINAL="$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.dmg"
+DMG_ICON="$BUILD_DIR/Build/Products/Release/WindowsSwitcher.app/Contents/Resources/AppIcon.icns"
+DMG_BACKGROUND="$PROJECT_DIR/scripts/dmg-background.png"
 
-# 复制应用
-cp -r "$APP_PATH" dmg_temp/
+# 删除旧的 DMG（如果存在）
+rm -f "$DMG_FINAL"
 
-# 创建 Applications 快捷方式（引导用户拖拽安装）
-ln -s /Applications dmg_temp/Applications
+# 使用 create-dmg 创建带自定义样式的 DMG
+create-dmg \
+  --volname "Windows Switcher" \
+  --volicon "$DMG_ICON" \
+  --background "$DMG_BACKGROUND" \
+  --window-pos 200 120 \
+  --window-size 660 400 \
+  --text-size 12 \
+  --icon-size 128 \
+  --icon "WindowsSwitcher.app" 160 200 \
+  --hide-extension "WindowsSwitcher.app" \
+  --app-drop-link 500 200 \
+  "$DMG_FINAL" \
+  "$APP_PATH" 2>&1 | grep -v "^ "
 
-# 创建 DMG
-hdiutil create -volname "Windows Switcher" \
-  -srcfolder dmg_temp \
-  -ov -format UDZO \
-  "$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.dmg"
+# 清理临时 DMG 文件
+rm -f "$OUTPUT_DIR"/rw.*.dmg 2>/dev/null
 
-# 清理临时文件
-rm -rf dmg_temp
-
-echo "✅ DMG 创建成功：$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.dmg"
+echo "✅ DMG 创建成功：$DMG_FINAL"
 
 # 显示结果
 echo ""

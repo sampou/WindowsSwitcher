@@ -211,25 +211,39 @@ class DockPreviewManager: ObservableObject {
             return item
         }
 
-        // 预加载预览图（在显示之前就开始加载）
-        preloadPreviews(for: sortedWindows)
-
-        showPreview()
+        // 先加载第一个预览图，减少空白闪烁
+        preloadFirstPreviewAndShow(for: sortedWindows)
     }
 
-    // 预加载预览图（实时获取最新内容，不使用缓存）
-    private func preloadPreviews(for windows: [WindowModel]) {
+    // 先加载第一个预览图，再显示面板
+    private func preloadFirstPreviewAndShow(for windows: [WindowModel]) {
         let previewSize = ConfigManager.shared.config.appearance.previewSize.dimensions
         let size = CGSize(width: previewSize.width, height: previewSize.height)
 
         Task(priority: .userInitiated) {
-            await withTaskGroup(of: Void.self) { group in
-                for window in windows {
-                    group.addTask {
-                        // 使用实时预览方法，不使用缓存
-                        if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size) {
-                            await MainActor.run {
-                                self.previewImages[window.id] = image
+            // 先加载第一个窗口的预览图
+            if let firstWindow = windows.first {
+                if let image = await self.previewGenerator.generateRealtimePreview(for: firstWindow, size: size) {
+                    await MainActor.run {
+                        self.previewImages[firstWindow.id] = image
+                    }
+                }
+            }
+
+            // 显示面板
+            await MainActor.run {
+                showPreview()
+            }
+
+            // 继续加载其余预览图
+            if windows.count > 1 {
+                await withTaskGroup(of: Void.self) { group in
+                    for window in windows.dropFirst() {
+                        group.addTask {
+                            if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size) {
+                                await MainActor.run {
+                                    self.previewImages[window.id] = image
+                                }
                             }
                         }
                     }
@@ -255,8 +269,7 @@ class DockPreviewManager: ObservableObject {
         }
         // 重置事件监听器状态，确保下次悬停能正常触发
         eventMonitor.resetState()
-        // 清空预览图缓存，确保下次获取最新窗口内容
-        previewImages.removeAll()
+        // 保留预览图缓存，下次显示时可复用，减少闪烁
     }
 
     // 公开方法，供外部调用隐藏预览
@@ -816,8 +829,12 @@ struct DockPreviewItemView: View {
         .onTapGesture(perform: onTap)
         .onHover(perform: onHover)
         .onAppear {
-            // 始终重新加载预览，确保获取最新内容
-            loadPreview()
+            // 优先使用缓存图片，没有缓存时才加载
+            if cachedImage != nil {
+                previewImage = cachedImage
+            } else {
+                loadPreview()
+            }
         }
     }
 
@@ -827,7 +844,8 @@ struct DockPreviewItemView: View {
             RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
                 .fill(DesignTokens.Colors.secondaryBackground)
 
-            if let image = previewImage {
+            // 优先显示预览图，其次显示缓存图片，最后显示占位图标
+            if let image = previewImage ?? cachedImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)

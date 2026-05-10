@@ -714,7 +714,6 @@ struct ZAlignment: Layout {
 class UpdateDownloadWindowController: NSWindowController, NSWindowDelegate {
     private var hostingView: NSHostingView<UpdateDownloadView>?
     private var onDismissHandler: (() -> Void)?
-    private var isClosing = false
 
     convenience init(onDismiss: @escaping () -> Void) {
         let window = NSWindow(
@@ -745,15 +744,14 @@ class UpdateDownloadWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func closeWindow() {
-        guard !isClosing else { return }
-        isClosing = true
+        if UpdateDownloadManager.shared.isDownloading {
+            UpdateDownloadManager.shared.pauseDownload()
+        }
         window?.close()
         onDismissHandler?()
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard !isClosing else { return }
-        isClosing = true
         if UpdateDownloadManager.shared.isDownloading {
             UpdateDownloadManager.shared.pauseDownload()
         }
@@ -1213,7 +1211,6 @@ struct InstallProgressView: View {
 class InstallProgressWindowController: NSWindowController, NSWindowDelegate {
     private var hostingView: NSHostingView<InstallProgressView>?
     private var onDismissHandler: (() -> Void)?
-    private var isClosing = false
 
     convenience init(onDismiss: @escaping () -> Void) {
         let window = NSWindow(
@@ -1244,15 +1241,11 @@ class InstallProgressWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func closeWindow() {
-        guard !isClosing else { return }
-        isClosing = true
         window?.close()
         onDismissHandler?()
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard !isClosing else { return }
-        isClosing = true
         onDismissHandler?()
     }
 }

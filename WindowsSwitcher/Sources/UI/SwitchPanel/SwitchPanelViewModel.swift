@@ -120,8 +120,7 @@ class SwitchPanelViewModel: ObservableObject {
         // T-063: 合并 filter+sort 为单次调用，减少中间数组分配
         let criteria = FilterCriteria(
             searchText: searchText,
-            showMinimized: config.config.behavior.showMinimizedWindows,
-            showHidden: config.config.behavior.showHiddenWindows
+            showOffScreen: config.config.behavior.showOffScreenWindows
         )
         filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria,
                                                      order: config.config.behavior.sortOrder)

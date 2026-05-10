@@ -8,7 +8,7 @@ struct PreviewCacheConfig {
     /// 磁盘缓存最大大小（字节）
     static let maxDiskCacheSize: Int64 = 200 * 1024 * 1024  // 200MB
     /// 缓存有效期（秒）- 短缓存确保实时性
-    static let cacheExpiry: TimeInterval = 0.5  // 500ms
+    static let cacheExpiry: TimeInterval = 2.0  // 2秒，平衡实时性和性能
     /// 最大并发生成数
     static let maxConcurrentGeneration = 4
 }

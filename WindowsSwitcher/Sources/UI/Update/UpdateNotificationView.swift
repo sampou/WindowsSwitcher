@@ -139,7 +139,6 @@ class UpdateNotificationWindowController: NSWindowController, NSWindowDelegate {
     private var hostingView: NSHostingView<UpdateNotificationView>?
     private var downloadWindowController: UpdateDownloadWindowController?
     private var onDismissHandler: (() -> Void)?
-    private var isClosing = false
 
     convenience init(onDismiss: @escaping () -> Void) {
         let window = NSWindow(
@@ -175,15 +174,11 @@ class UpdateNotificationWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func closeWindow() {
-        guard !isClosing else { return }
-        isClosing = true
         close()
         onDismissHandler?()
     }
 
     private func showDownloadWindow() {
-        guard !isClosing else { return }
-        isClosing = true
         close()
 
         downloadWindowController = UpdateDownloadWindowController { [weak self] in
@@ -195,8 +190,6 @@ class UpdateNotificationWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard !isClosing else { return }
-        isClosing = true
         onDismissHandler?()
     }
 }

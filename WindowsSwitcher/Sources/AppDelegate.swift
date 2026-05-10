@@ -81,6 +81,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showSettingsOnLaunch()
 
         // === 第三阶段：延迟初始化（非必要组件，后台执行）===
+        // 清理过期的窗口活动记录
+        WindowActivityStore.shared.cleanupOldRecords()
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.performDeferredInitialization()
         }
@@ -1409,6 +1412,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hasShadow = true
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+        panel.ignoresMouseEvents = false  // 确保面板接收鼠标事件
+        panel.acceptsMouseMovedEvents = true  // 确保面板接收鼠标移动事件（悬停）
+        panel.hidesOnDeactivate = false  // 确保面板不会因为失去焦点而隐藏
 
         // 先创建 hostingView 并添加到面板
         let hostingView = NSHostingView(rootView: view)
@@ -1489,11 +1495,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
 
-        // 先显示背景预览窗口（在切换器面板之前）
+        // 先加载第一个窗口的预览图，减少空白闪烁
+        preloadFirstPreview(for: sortedWindows, viewModel: vm)
+
+        // 显示背景预览窗口（在切换器面板之前）
         Logger.info("==> Initial selectedWindow: \(vm.selectedWindow?.appName ?? "nil"), selectedIndex: \(vm.selectedIndex)")
         showBackgroundPreview(for: vm.selectedWindow, screenFrame: NSScreen.main?.frame ?? .zero, panelFrame: panel.frame)
 
-        // 再显示切换器面板（会覆盖背景预览）
+        // 显示切换器面板
         PanelAnimator.show(panel)
         switchPanelWindow = panel
 
@@ -1503,8 +1512,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let totalTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         Logger.info("==> showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
 
-        // 批量预加载所有窗口缩略图
-        preloadAllPreviews(windows: sortedWindows, viewModel: vm)
+        // 继续异步加载其余窗口缩略图
+        preloadRemainingPreviews(windows: sortedWindows, viewModel: vm)
 
         // 监听选中窗口变化，更新背景预览
         setupSelectedWindowObserver(for: vm)
@@ -1591,22 +1600,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
     }
 
-    // 批量预加载所有窗口缩略图
-    private func preloadAllPreviews(windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+    // 先加载第一个窗口的预览图，减少空白闪烁
+    private func preloadFirstPreview(for windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+        guard let firstWindow = windows.first else { return }
+
         let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
         let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
 
-        // 并发批量生成所有缩略图
+        // 同步加载第一个预览图
         Task {
             let startTime = CFAbsoluteTimeGetCurrent()
-            let previewImages = await previewGenerator.generatePreviews(for: windows, size: previewSize)
+            if let image = await previewGenerator.generateRealtimePreview(for: firstWindow, size: previewSize) {
+                await MainActor.run {
+                    viewModel.previewImages[firstWindow.id] = image
+                    Logger.info("==> First preview loaded in \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms")
+                }
+            }
+        }
+    }
+
+    // 异步加载其余窗口缩略图
+    private func preloadRemainingPreviews(windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+        guard windows.count > 1 else { return }
+
+        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
+
+        // 异步加载剩余窗口的预览图
+        Task {
+            let startTime = CFAbsoluteTimeGetCurrent()
+            let remainingWindows = Array(windows.dropFirst())
+            let previewImages = await previewGenerator.generatePreviews(for: remainingWindows, size: previewSize)
 
             await MainActor.run {
-                // 将生成的缩略图存入 ViewModel
                 for (windowID, image) in previewImages {
                     viewModel.previewImages[windowID] = image
                 }
-                Logger.info("==> Preloaded \(previewImages.count) previews in \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms")
+                Logger.info("==> Remaining \(previewImages.count) previews loaded in \((CFAbsoluteTimeGetCurrent() - startTime)*1000)ms")
             }
         }
     }

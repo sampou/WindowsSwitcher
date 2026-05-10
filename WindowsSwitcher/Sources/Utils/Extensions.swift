@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import CryptoKit
 
 // MARK: - NSImage helpers
 extension NSImage {
@@ -168,5 +169,72 @@ class PermissionManager: ObservableObject {
             missing.append("屏幕录制")
         }
         return missing
+    }
+}
+
+// MARK: - 窗口活动记录持久化管理器
+/// 用于保存窗口的最后活跃时间，实现程序重启后排序一致性
+class WindowActivityStore {
+    static let shared = WindowActivityStore()
+
+    private let userDefaults = UserDefaults.standard
+    private let keyPrefix = "window_activity_"
+
+    private init() {}
+
+    /// 生成窗口唯一标识（使用 bundleIdentifier + windowTitle 的哈希值）
+    private func windowKey(bundleIdentifier: String, windowTitle: String) -> String {
+        let combined = "\(bundleIdentifier)|\(windowTitle)"
+        let hash = SHA256.hash(data: Data(combined.utf8))
+        let hashString = hash.compactMap { String(format: "%02x", $0) }.joined()
+        return keyPrefix + String(hashString.prefix(16))
+    }
+
+    /// 获取窗口的最后活跃时间
+    func getLastActiveTime(bundleIdentifier: String, windowTitle: String) -> Date? {
+        let key = windowKey(bundleIdentifier: bundleIdentifier, windowTitle: windowTitle)
+        guard let timestamp = userDefaults.object(forKey: key) as? TimeInterval else {
+            Logger.debug("WindowActivityStore: No stored time for \(bundleIdentifier) - \(windowTitle)")
+            return nil
+        }
+        let date = Date(timeIntervalSince1970: timestamp)
+        Logger.debug("WindowActivityStore: Retrieved time \(date) for \(bundleIdentifier) - \(windowTitle)")
+        return date
+    }
+
+    /// 保存窗口的最后活跃时间
+    func saveLastActiveTime(bundleIdentifier: String, windowTitle: String, time: Date) {
+        guard !bundleIdentifier.isEmpty else { return }
+        let key = windowKey(bundleIdentifier: bundleIdentifier, windowTitle: windowTitle)
+        userDefaults.set(time.timeIntervalSince1970, forKey: key)
+        Logger.debug("WindowActivityStore: Saved time \(time) for \(bundleIdentifier) - \(windowTitle)")
+    }
+
+    /// 清理过期记录（超过30天未活跃的窗口）
+    func cleanupOldRecords() {
+        let cutoffDate = Date().addingTimeInterval(-30 * 24 * 60 * 60)
+        let allKeys = userDefaults.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix(keyPrefix) }
+
+        var cleanedCount = 0
+        for key in allKeys {
+            guard let timestamp = userDefaults.object(forKey: key) as? TimeInterval else { continue }
+            let date = Date(timeIntervalSince1970: timestamp)
+            if date < cutoffDate {
+                userDefaults.removeObject(forKey: key)
+                cleanedCount += 1
+            }
+        }
+
+        if cleanedCount > 0 {
+            Logger.info("Cleaned \(cleanedCount) old window activity records")
+        }
+    }
+
+    /// 获取所有存储的窗口数量（用于调试）
+    func getStoredWindowCount() -> Int {
+        return userDefaults.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix(keyPrefix) }
+            .count
     }
 }

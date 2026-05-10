@@ -58,8 +58,7 @@ private func fuzzyMatch(_ query: String, in text: String) -> Bool {
 
 struct FilterCriteria {
     var searchText: String = ""
-    var showMinimized: Bool = true
-    var showHidden: Bool = false
+    var showOffScreen: Bool = false  // 显示最小化/隐藏的窗口
     /// Exact app name filter (T-033)
     var appName: String? = nil
     /// Filter to current desktop space when true (T-035)
@@ -77,8 +76,7 @@ class FilterEngine {
             : nil
 
         return windows.filter { window in
-            if !criteria.showMinimized && window.isMinimized { return false }
-            if !criteria.showHidden && window.isHidden { return false }
+            if !criteria.showOffScreen && (window.isMinimized || window.isHidden) { return false }
 
             // T-033: exact app name filter
             if let appName = criteria.appName, window.appName != appName { return false }

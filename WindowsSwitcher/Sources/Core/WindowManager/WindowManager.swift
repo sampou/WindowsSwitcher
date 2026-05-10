@@ -109,6 +109,7 @@ class WindowManager: WindowManagerProtocol {
         }
 
         // 更新窗口的 lastActiveTime（简化操作）
+        let newActiveTime = Date()
         if var cachedWindow = windowCache[window.id] {
             windowCache[window.id] = WindowModel(
                 id: cachedWindow.id,
@@ -120,12 +121,19 @@ class WindowManager: WindowManagerProtocol {
                 isMinimized: cachedWindow.isMinimized,
                 isHidden: cachedWindow.isHidden,
                 isOnScreen: cachedWindow.isOnScreen,
-                lastActiveTime: Date(),
+                lastActiveTime: newActiveTime,
                 windowLayer: cachedWindow.windowLayer,
                 ownerPID: cachedWindow.ownerPID,
                 isStandardWindow: cachedWindow.isStandardWindow
             )
         }
+
+        // 持久化保存窗口活动时间
+        WindowActivityStore.shared.saveLastActiveTime(
+            bundleIdentifier: window.bundleIdentifier,
+            windowTitle: window.windowTitle,
+            time: newActiveTime
+        )
 
         // 执行激活（带重试机制）
         performActivation(window: window, app: app, retryCount: 0)
@@ -440,8 +448,15 @@ class WindowManager: WindowManagerProtocol {
         let isMinimized = !isOnScreen && layer == 0
 
         // BUG-011: lastActiveTime 始终为 Date()，无法反映真实 LRU 顺序
-        // 改用 windowCache 中已有的时间戳，首次出现时才用 Date()
-        let lastActive = windowCache[windowID]?.lastActiveTime ?? Date()
+        // 优先级：内存缓存 > 持久化存储 > 当前时间
+        let lastActive = windowCache[windowID]?.lastActiveTime
+            ?? WindowActivityStore.shared.getLastActiveTime(
+                bundleIdentifier: appInfo.bundleIdentifier,
+                windowTitle: windowTitle
+            )
+            ?? Date()
+
+        Logger.debug("Window \(appName) - \(windowTitle): lastActiveTime = \(lastActive)")
 
         // 判断是否为标准窗口
         let isStandardWindow = !NonStandardWindowRules.isNonStandardWindow(

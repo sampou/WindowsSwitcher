@@ -369,15 +369,9 @@ struct SwitcherSettingsView: View {
             // 窗口显示
             SettingsSection(title: "窗口显示", icon: "rectangle.on.rectangle") {
                 SettingsToggle(
-                    title: "显示最小化窗口",
-                    description: "在切换器中显示已最小化的窗口",
-                    isOn: $config.config.behavior.showMinimizedWindows
-                )
-
-                SettingsToggle(
-                    title: "显示隐藏窗口",
-                    description: "在切换器中显示已隐藏的窗口",
-                    isOn: $config.config.behavior.showHiddenWindows
+                    title: "显示最小化/隐藏的窗口",
+                    description: "在切换器中显示已最小化或隐藏的窗口",
+                    isOn: $config.config.behavior.showOffScreenWindows
                 )
 
                 SettingsToggle(
