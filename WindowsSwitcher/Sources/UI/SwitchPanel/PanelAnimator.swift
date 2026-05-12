@@ -7,15 +7,13 @@ struct PanelAnimator {
     /// 显示面板：简化为只有淡入
     static func show(_ window: NSWindow, completion: (() -> Void)? = nil) {
         window.alphaValue = 0
-        window.orderFrontRegardless()  // 先显示窗口
+        window.makeKeyAndOrderFront(nil)  // 直接显示并成为 key window
 
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1  // 缩短动画时间
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().alphaValue = 1
         } completionHandler: {
-            // 动画完成后确保窗口成为 key window，这样才能接收键盘事件
-            window.makeKey()  // 关键：让面板成为 key window
             completion?()
         }
     }

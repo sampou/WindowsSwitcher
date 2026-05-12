@@ -925,13 +925,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             HotKey(keyCode: switchKeyCode, modifiers: switchModifiers, identifier: "switch")
         ) { [weak self] in
             guard let self else { return }
-            // 移除节流限制，允许最快速度切换
             let now = Date()
             guard now.timeIntervalSince(self.lastHotKeyTime) > 0.003 else { return }  // 3ms 节流
             self.lastHotKeyTime = now
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if self.isPanelVisible {
+                    // 面板已显示，选中下一个窗口
                     NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
                 } else {
                     Task { @MainActor in self.showSwitchPanel() }
@@ -947,8 +947,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let now = Date()
             guard now.timeIntervalSince(self.lastHotKeyTime) > 0.003 else { return }  // 3ms 节流
             self.lastHotKeyTime = now
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
                 if self.isPanelVisible {
+                    // 面板已显示，选中上一个窗口
                     NotificationCenter.default.post(name: .reverseSwitchHotKeyPressed, object: nil)
                 } else {
                     Task { @MainActor in self.showSwitchPanel(reversed: true) }
@@ -1065,7 +1067,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             statusItem?.button?.performClick(nil)
             statusItem?.menu = nil
         } else {
-            showSwitchPanel()
+            openSettings()
         }
     }
 
@@ -1648,10 +1650,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Logger.info("==> Setting up ESC and arrow key monitor")
 
-        // 使用全局监听器监听所有键盘事件
+        // 使用全局监听器监听键盘事件
         globalEscKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return }
-            Logger.info("==> Global keyDown: keyCode=\(event.keyCode), isPanelVisible=\(self.isPanelVisible)")
+            Logger.info("==> Global keyDown: keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
 
             guard self.isPanelVisible else { return }
 
@@ -1714,7 +1716,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         localEscKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            Logger.info("==> Local keyDown: keyCode=\(event.keyCode), isPanelVisible=\(self.isPanelVisible)")
+            Logger.info("==> Local keyDown: keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
 
             guard self.isPanelVisible else { return event }
 
@@ -1781,6 +1783,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         windowRefreshTimer?.invalidate()
         windowRefreshTimer = nil
     }
+
 
     func hideSwitchPanel() {
         // 操作日志：面板隐藏

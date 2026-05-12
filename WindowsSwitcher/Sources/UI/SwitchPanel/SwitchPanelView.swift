@@ -237,7 +237,14 @@ struct SwitchPanelView: View {
                                 .id(window.id)
                             }
                         }
-                        // 禁用自动滚动以提升性能
+                    }
+                    // 当选中窗口变化时，自动滚动到可视范围
+                    .onChange(of: viewModel.selectedWindowID) { newID in
+                        if let windowID = newID {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                proxy.scrollTo(windowID, anchor: .center)
+                            }
+                        }
                     }
                 }
             }
