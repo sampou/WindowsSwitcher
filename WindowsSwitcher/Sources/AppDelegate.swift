@@ -1327,6 +1327,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 如果修饰键已经释放，直接切换窗口
         if !modifiersPressed {
             Logger.operation("快速切换", detail: "修饰键已释放，直接切换")
+            // 强制刷新缓存，确保获取最新窗口
+            windowManager.refreshCache()
             // 获取窗口列表
             let windows = windowManager.getAllWindows()
             // 切换到下一个窗口（索引1），与正常切换逻辑一致
@@ -1342,6 +1344,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 取消之前的定时器
         cancelPanelShowDelay()
 
+        // 强制刷新缓存，确保获取最新窗口
+        windowManager.refreshCache()
         // 获取窗口列表，找到目标窗口
         let windows = windowManager.getAllWindows()
         Logger.operation("快速切换", detail: "获取到 \(windows.count) 个窗口")
@@ -1442,8 +1446,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // 2. 实时获取所有窗口（包含最新的活跃时间）
+        // 2. 实时获取所有窗口（强制刷新缓存，确保获取最新窗口）
         let t0 = CFAbsoluteTimeGetCurrent()
+        windowManager.refreshCache()  // 强制刷新缓存，确保新窗口被包含
         var windows = windowManager.getAllWindows()
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
