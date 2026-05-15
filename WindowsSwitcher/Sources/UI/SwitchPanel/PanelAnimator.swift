@@ -10,7 +10,7 @@ struct PanelAnimator {
         window.makeKeyAndOrderFront(nil)  // 直接显示并成为 key window
 
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.1  // 缩短动画时间
+            ctx.duration = 0.08  // 缩短动画时间
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             window.animator().alphaValue = 1
         } completionHandler: {
@@ -21,7 +21,7 @@ struct PanelAnimator {
     /// 隐藏面板：简化为只有淡出
     static func hide(_ window: NSWindow, completion: (() -> Void)? = nil) {
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.08  // 缩短动画时间
+            ctx.duration = 0.05  // 缩短动画时间
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             window.animator().alphaValue = 0
         } completionHandler: {

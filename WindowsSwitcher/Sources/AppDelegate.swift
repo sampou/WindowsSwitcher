@@ -40,6 +40,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var panelShowTime: CFAbsoluteTime = 0  // 面板显示时间，用于忽略假释放事件
     private let ignoreReleaseDelay: CFAbsoluteTime = 0.15  // 忽略面板显示后 150ms 内的释放事件
 
+    // 快速切换：按住组合键不放时延迟显示面板
+    private var panelShowDelayTimer: Timer?
+    private var pendingSwitchWindow: WindowModel?  // 待切换的窗口（用于快速切换）
+    private var pendingSwitchReversed: Bool = false  // 是否反向切换
+
     // 版本更新提示窗口
     private var updateNotificationController: UpdateNotificationWindowController?
     // 安装进度窗口
@@ -621,12 +626,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self else { return }
 
-            // 只有在面板可见时才处理
-            guard self.isPanelVisible else {
-                Logger.debug("Global flagsChanged ignored: panel not visible")
-                return
-            }
-
             // 获取当前快捷键配置中的修饰键
             let switchModifiers = self.configManager.config.hotKeys.switchModifiers
 
@@ -639,6 +638,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let isOptionPressed = flags.contains(.option)
             let isShiftPressed = flags.contains(.shift)
             let isControlPressed = flags.contains(.control)
+
+            // 检查是否有待切换的窗口（快速切换模式）
+            if self.pendingSwitchWindow != nil {
+                // 检查配置中的修饰键是否全部释放
+                var allModifiersReleased = true
+                if switchModifiers & carbonCmdKey != 0 && flags.contains(.command) { allModifiersReleased = false }
+                if switchModifiers & carbonOptionKey != 0 && flags.contains(.option) { allModifiersReleased = false }
+                if switchModifiers & carbonControlKey != 0 && flags.contains(.control) { allModifiersReleased = false }
+
+                if allModifiersReleased {
+                    // 快速切换：直接激活目标窗口
+                    Logger.operation("快速切换", detail: "修饰键释放，执行快速切换")
+                    self.performQuickSwitch()
+                    return
+                }
+            }
+
+            // 只有在面板可见时才处理后续逻辑
+            guard self.isPanelVisible else {
+                Logger.debug("Global flagsChanged ignored: panel not visible")
+                return
+            }
 
             // 详细日志：记录所有修饰键状态
             Logger.flagsChanged("Global: Cmd=\(isCmdPressed), Opt=\(isOptionPressed), Shift=\(isShiftPressed), Ctrl=\(isControlPressed), raw=0x\(String(rawFlags, radix: 16)), config=0x\(String(switchModifiers, radix: 16))")
@@ -763,11 +784,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 3. 添加全局鼠标点击监听 - 点击面板外区域关闭面板
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return }
-            guard self.isPanelVisible else { return }
+            let mouseLocation = NSEvent.mouseLocation
 
             // 检查点击是否在切换面板窗口内
-            if let panelWindow = self.switchPanelWindow {
-                let mouseLocation = NSEvent.mouseLocation
+            if self.isPanelVisible, let panelWindow = self.switchPanelWindow {
                 let panelFrame = panelWindow.frame
 
                 // 如果点击在面板窗口内，不处理
@@ -780,6 +800,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 Logger.info("Mouse click outside panel, hiding panel without activation")
                 Task { @MainActor in
                     self.hideSwitchPanel()
+                }
+            }
+
+            // 检查点击是否在程序坞预览窗口外
+            if let dockPreview = self.dockPreviewWindow {
+                let dockFrame = dockPreview.frame
+
+                // 如果点击在预览窗口内，不处理
+                if dockFrame.contains(mouseLocation) {
+                    return
+                }
+
+                // 点击在预览窗口外，隐藏预览
+                Task { @MainActor in
+                    DockPreviewManager.shared.hidePreviewPanel()
                 }
             }
         }
@@ -865,44 +900,69 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return isPressed
     }
 
-    /// 激活选中的窗口并隐藏面板（优化时序）
+    /// 激活选中的窗口并隐藏面板（优化时序 - 并行执行）
     @MainActor
     private func activateSelectedAndHide() {
         Logger.info("=== activateSelectedAndHide called ===")
 
+        // 先立即隐藏面板（无动画，用户感知更快）
+        hideSwitchPanelImmediately()
+
         guard let vm = switchPanelViewModel else {
             Logger.error("switchPanelViewModel is nil! Cannot activate window.")
-            Logger.modifierState("释放 - 失败 (switchPanelViewModel 为 nil)")
-            hideSwitchPanel()
             return
         }
 
-        // 1. 优先使用 selectedWindowID 激活（与键盘/鼠标点击逻辑一致）
+        // 1. 优先使用 selectedWindowID 激活
         if let windowID = vm.selectedWindowID {
-            // 操作日志：修饰键释放，激活窗口
             Logger.modifierState("释放")
             if let window = vm.filteredWindows.first(where: { $0.id == windowID }) {
                 Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过 selectedWindowID")
             }
             vm.activateWindowByID(windowID)
-            hideSwitchPanel()
             return
         }
 
         // 2. 降级：使用 selectedWindow
         guard let selectedWindow = vm.selectedWindow else {
             Logger.warning("No selected window to activate (selectedWindow is nil)")
-            Logger.modifierState("释放 - 失败 (selectedWindow 为 nil)")
-            hideSwitchPanel()
             return
         }
 
         Logger.modifierState("释放")
         Logger.windowActivate("\(selectedWindow.appName) - \(selectedWindow.windowTitle)", result: "通过 selectedWindow")
-        Logger.info("Selected window: \(selectedWindow.appName) - PID:\(selectedWindow.ownerPID), Title: \(selectedWindow.windowTitle)")
-        windowManager.refreshCache()
         windowManager.activateWindow(selectedWindow)
-        hideSwitchPanel()
+    }
+
+    /// 立即隐藏切换面板（无动画，用于释放修饰键时）
+    private func hideSwitchPanelImmediately() {
+        Logger.panelState("隐藏", detail: "immediately, wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
+
+        // 立即标记面板不可见
+        isPanelVisible = false
+        wasSwitchModifierPressed = false
+
+        // 恢复焦点轮询
+        windowManager.resumeFocusPolling()
+
+        // 停止刷新定时器
+        stopWindowRefreshTimer()
+
+        // 移除 ESC 键监听器
+        removeEscKeyMonitor()
+
+        // 移除选中窗口监听
+        selectedWindowCancellable?.cancel()
+        selectedWindowCancellable = nil
+
+        // 隐藏背景预览窗口
+        hideBackgroundPreview()
+
+        // 立即隐藏面板（无动画）
+        guard let panel = switchPanelWindow else { return }
+        panel.orderOut(nil)
+        switchPanelWindow = nil
+        Logger.info("Switch panel hidden immediately")
     }
 
     // MARK: - 快捷键注册
@@ -934,7 +994,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     // 面板已显示，选中下一个窗口
                     NotificationCenter.default.post(name: .switchHotKeyPressed, object: nil)
                 } else {
-                    Task { @MainActor in self.showSwitchPanel() }
+                    // 延迟显示面板，快速按放时直接切换窗口
+                    self.startPanelShowDelay(reversed: false)
                 }
             }
         }
@@ -953,7 +1014,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     // 面板已显示，选中上一个窗口
                     NotificationCenter.default.post(name: .reverseSwitchHotKeyPressed, object: nil)
                 } else {
-                    Task { @MainActor in self.showSwitchPanel(reversed: true) }
+                    // 延迟显示面板，快速按放时直接切换窗口
+                    self.startPanelShowDelay(reversed: true)
                 }
             }
         }
@@ -1237,6 +1299,103 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if window === settingsWindow {
             NSApp.setActivationPolicy(.accessory)
             Logger.info("设置窗口已关闭，切换回 accessory 模式")
+        }
+    }
+
+    // MARK: - 快速切换（延迟显示面板）
+    /// 启动延迟显示面板的定时器
+    /// 如果在延迟期间修饰键释放，直接切换窗口，不显示面板
+    private func startPanelShowDelay(reversed: Bool) {
+        Logger.operation("快速切换", detail: "startPanelShowDelay 被调用，reversed=\(reversed)")
+
+        // 检查修饰键是否仍在按下
+        let currentFlags = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let rawFlags = NSEvent.modifierFlags.rawValue
+        let switchModifiers = configManager.config.hotKeys.switchModifiers
+
+        let isCmdPressed = currentFlags.contains(.command)
+        let isOptionPressed = currentFlags.contains(.option)
+        let isControlPressed = currentFlags.contains(.control)
+
+        var modifiersPressed = false
+        if switchModifiers & carbonCmdKey != 0 && isCmdPressed { modifiersPressed = true }
+        if switchModifiers & carbonOptionKey != 0 && isOptionPressed { modifiersPressed = true }
+        if switchModifiers & carbonControlKey != 0 && isControlPressed { modifiersPressed = true }
+
+        Logger.operation("快速切换", detail: "修饰键状态: cmd=\(isCmdPressed), opt=\(isOptionPressed), ctrl=\(isControlPressed), config=0x\(String(switchModifiers, radix: 16)), raw=0x\(String(rawFlags, radix: 16))")
+
+        // 如果修饰键已经释放，直接切换窗口
+        if !modifiersPressed {
+            Logger.operation("快速切换", detail: "修饰键已释放，直接切换")
+            // 获取窗口列表
+            let windows = windowManager.getAllWindows()
+            // 切换到下一个窗口（索引1），与正常切换逻辑一致
+            if windows.count >= 2 {
+                let targetIndex = reversed ? windows.count - 1 : 1
+                DispatchQueue.main.async { [weak self] in
+                    self?.windowManager.activateWindow(windows[targetIndex])
+                }
+            }
+            return
+        }
+
+        // 取消之前的定时器
+        cancelPanelShowDelay()
+
+        // 获取窗口列表，找到目标窗口
+        let windows = windowManager.getAllWindows()
+        Logger.operation("快速切换", detail: "获取到 \(windows.count) 个窗口")
+
+        guard windows.count >= 2 else {
+            Logger.operation("快速切换", detail: "窗口数量不足，返回")
+            return
+        }
+
+        // 快速切换：切换到下一个窗口（索引1），因为索引0是当前窗口
+        // 反向切换：切换到最后一个窗口
+        let targetIndex = reversed ? windows.count - 1 : 1
+        pendingSwitchWindow = windows[targetIndex]
+        pendingSwitchReversed = reversed
+
+        Logger.operation("快速切换", detail: "启动延迟，targetIndex=\(targetIndex), window=\(windows[targetIndex].windowTitle)")
+
+        // 从配置读取延迟时间，如果<=0则使用默认值
+        let panelDisplayDelay = configManager.config.behavior.panelDisplayDelay
+        let effectiveDelay = panelDisplayDelay > 0 ? panelDisplayDelay : 0.15  // 默认150ms
+        Logger.operation("快速切换", detail: "panelDisplayDelay=\(panelDisplayDelay), effectiveDelay=\(effectiveDelay)")
+
+        Logger.operation("快速切换", detail: "启动定时器，延迟\(effectiveDelay)秒")
+
+        // 启动延迟定时器
+        panelShowDelayTimer = Timer.scheduledTimer(withTimeInterval: effectiveDelay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            // 延迟到期，显示面板
+            self.pendingSwitchWindow = nil
+            Task { @MainActor in
+                self.showSwitchPanel(reversed: reversed)
+            }
+        }
+    }
+
+    /// 取消延迟显示面板
+    private func cancelPanelShowDelay() {
+        panelShowDelayTimer?.invalidate()
+        panelShowDelayTimer = nil
+        pendingSwitchWindow = nil
+    }
+
+    /// 执行快速切换（直接激活窗口，不显示面板）
+    private func performQuickSwitch() {
+        guard let window = pendingSwitchWindow else { return }
+        Logger.operation("快速切换", detail: "直接激活窗口: \(window.windowTitle)")
+
+        // 清理状态（先清理，避免重复触发）
+        pendingSwitchWindow = nil
+        cancelPanelShowDelay()
+
+        // 在主线程激活窗口
+        DispatchQueue.main.async { [weak self] in
+            self?.windowManager.activateWindow(window)
         }
     }
 
@@ -1648,18 +1807,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 先移除旧的监听器
         removeEscKeyMonitor()
 
-        Logger.info("==> Setting up ESC and arrow key monitor")
+        Logger.operation("ESC监听器", detail: "开始设置")
 
         // 使用全局监听器监听键盘事件
         globalEscKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return }
-            Logger.info("==> Global keyDown: keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
+            Logger.operation("全局键盘", detail: "keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
 
             guard self.isPanelVisible else { return }
 
             // ESC 键的 keyCode 是 53
             if event.keyCode == 53 {
-                Logger.info("==> Global ESC pressed, hiding panel")
+                Logger.operation("ESC按键", detail: "全局ESC按下，关闭面板")
                 Task { @MainActor in
                     self.hideSwitchPanel()
                 }
@@ -1695,9 +1854,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if globalEscKeyMonitor != nil {
-            Logger.info("==> ESC and arrow key monitor created successfully")
+            Logger.operation("ESC监听器", detail: "全局监听器创建成功")
         } else {
-            Logger.warning("==> Failed to create ESC key monitor")
+            Logger.operation("ESC监听器", detail: "全局监听器创建失败")
         }
 
         // 同时使用本地监听器
@@ -1716,13 +1875,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         localEscKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            Logger.info("==> Local keyDown: keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
+            Logger.operation("本地键盘", detail: "keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
 
             guard self.isPanelVisible else { return event }
 
             // ESC 键的 keyCode 是 53
             if event.keyCode == 53 {
-                Logger.info("==> Local ESC pressed, hiding panel")
+                Logger.operation("ESC按键", detail: "本地ESC按下，关闭面板")
                 Task { @MainActor in
                     self.hideSwitchPanel()
                 }
@@ -1755,7 +1914,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         if localEscKeyMonitor != nil {
-            Logger.info("==> Local ESC key monitor created successfully")
+            Logger.operation("ESC监听器", detail: "本地监听器创建成功")
         }
     }
 

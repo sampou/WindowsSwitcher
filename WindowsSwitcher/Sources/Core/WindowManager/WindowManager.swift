@@ -93,7 +93,6 @@ class WindowManager: WindowManagerProtocol {
         // 操作日志：开始激活窗口
         Logger.operation("窗口激活开始", detail: "\(window.appName) - \(window.windowTitle) (ID: \(window.id), PID: \(window.ownerPID))")
 
-        // 直接使用传入的窗口信息，避免不必要的缓存刷新
         // 获取应用实例
         guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else {
             Logger.warning("Failed to get NSRunningApplication for PID: \(window.ownerPID), trying bundleID")
@@ -101,47 +100,20 @@ class WindowManager: WindowManagerProtocol {
             // 降级：尝试通过 bundleIdentifier 查找应用
             let bundleID = window.bundleIdentifier
             if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
-                let result = appByBundle.activate(options: [.activateIgnoringOtherApps, .activateAllWindows])
-                Logger.info("Fallback activation result: \(result) for \(appByBundle.localizedName ?? "unknown")")
+                let result = appByBundle.activate(options: [.activateIgnoringOtherApps])
                 Logger.operation("窗口激活", detail: "通过 bundleID 激活", result: result ? "成功" : "失败")
             }
             return
         }
 
-        // 更新窗口的 lastActiveTime（简化操作）
-        let newActiveTime = Date()
-        if var cachedWindow = windowCache[window.id] {
-            windowCache[window.id] = WindowModel(
-                id: cachedWindow.id,
-                appName: cachedWindow.appName,
-                bundleIdentifier: cachedWindow.bundleIdentifier,
-                windowTitle: cachedWindow.windowTitle,
-                appIcon: cachedWindow.appIcon,
-                frame: cachedWindow.frame,
-                isMinimized: cachedWindow.isMinimized,
-                isHidden: cachedWindow.isHidden,
-                isOnScreen: cachedWindow.isOnScreen,
-                lastActiveTime: newActiveTime,
-                windowLayer: cachedWindow.windowLayer,
-                ownerPID: cachedWindow.ownerPID,
-                isStandardWindow: cachedWindow.isStandardWindow
+        // 持久化保存窗口活动时间（异步执行，不阻塞激活）
+        DispatchQueue.global(qos: .utility).async {
+            WindowActivityStore.shared.saveLastActiveTime(
+                bundleIdentifier: window.bundleIdentifier,
+                windowTitle: window.windowTitle,
+                time: Date()
             )
         }
-
-        // 持久化保存窗口活动时间
-        WindowActivityStore.shared.saveLastActiveTime(
-            bundleIdentifier: window.bundleIdentifier,
-            windowTitle: window.windowTitle,
-            time: newActiveTime
-        )
-
-        // 执行激活（带重试机制）
-        performActivation(window: window, app: app, retryCount: 0)
-    }
-
-    /// 执行窗口激活（带重试机制）
-    private func performActivation(window: WindowModel, app: NSRunningApplication, retryCount: Int) {
-        let maxRetries = 3
 
         // 检查目标应用是否已经是前台应用
         let isFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
@@ -149,30 +121,22 @@ class WindowManager: WindowManagerProtocol {
         if isFrontmost {
             // 同一应用内切换窗口：直接聚焦目标窗口
             Logger.operation("应用内切换", detail: "\(window.appName) - \(window.windowTitle)", result: "直接聚焦")
-            focusWindow(window, retryCount: retryCount)
+            focusWindowQuick(window)
         } else {
             // 不同应用间切换：先激活应用，再聚焦窗口
-            Logger.operation("跨应用切换", detail: "激活 \(window.appName) - \(window.windowTitle)", result: "先激活应用")
-            let activateResult = app.activate(options: [.activateIgnoringOtherApps])
-            if !activateResult {
-                Logger.warning("NSRunningApplication.activate returned false for \(window.appName)")
-
-                if retryCount < maxRetries {
-                    let delay = 0.05 * Double(retryCount + 1)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                        self?.performActivation(window: window, app: app, retryCount: retryCount + 1)
-                    }
-                    return
-                }
-            }
-
-            // 激活应用后聚焦目标窗口（减少延迟）
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.focusWindow(window, retryCount: 0)
-            }
+            Logger.operation("跨应用切换", detail: "激活 \(window.appName) - \(window.windowTitle)", result: "激活应用")
+            let _ = app.activate(options: [.activateIgnoringOtherApps])
+            // 跨应用切换也需要聚焦具体窗口
+            focusWindowQuick(window)
         }
 
         Logger.operation("窗口激活完成", detail: "\(window.appName) - \(window.windowTitle)")
+    }
+
+    /// 快速聚焦窗口（简化版，减少 AX 调用）
+    private func focusWindowQuick(_ window: WindowModel) {
+        guard let win = axWindow(for: window) else { return }
+        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
     }
 
     /// 聚焦指定窗口
