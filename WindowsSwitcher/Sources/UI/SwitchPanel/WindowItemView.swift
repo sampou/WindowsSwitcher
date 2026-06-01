@@ -69,13 +69,14 @@ struct WindowItemView: View {
     private var previewArea: some View {
         ZStack {
             RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
-                .fill(DesignTokens.Colors.secondaryBackground)
+                .fill(Color.clear)
 
             if let image = previewImage {
-                // 根据实际窗口比例显示
+                // 填充模式，完全填满容器，去掉白色边框
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .aspectRatio(contentMode: .fill)
+                    .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
             } else {
                 Image(nsImage: window.appIcon)

@@ -221,13 +221,14 @@ class SilentInstaller: ObservableObject {
         let sourceAppPath = sourcePath
 
         // 使用 osascript 执行 AppleScript，会弹出系统授权对话框
-        // 1. 先清除旧应用的扩展属性（避免指纹验证问题）
-        // 2. 删除旧版本
-        // 3. 使用 ditto 复制新版本（不保留隔离属性）
-        // 4. 修复权限
-        // 5. 清除新应用的扩展属性
+        // 1. 终止运行中的 WindowsSwitcher 进程
+        // 2. 清除旧应用的扩展属性（避免指纹验证问题）
+        // 3. 删除旧版本
+        // 4. 使用 ditto 复制新版本（不保留隔离属性）
+        // 5. 修复权限
+        // 6. 清除新应用的扩展属性
         let script = """
-        do shell script "if [ -d '\(targetPath)' ]; then xattr -cr '\(targetPath)'; rm -rf '\(targetPath)'; fi" with administrator privileges
+        do shell script "killall WindowsSwitcher 2>/dev/null; sleep 1; if [ -d '\(targetPath)' ]; then xattr -cr '\(targetPath)'; rm -rf '\(targetPath)'; fi" with administrator privileges
         do shell script "ditto --noqtn --norsrc '\(sourceAppPath)' '\(targetPath)'" with administrator privileges
         do shell script "chmod -R 755 '\(targetPath)/Contents/MacOS/'" with administrator privileges
         do shell script "xattr -cr '\(targetPath)'" with administrator privileges
@@ -887,6 +888,19 @@ class UpdateDownloadManager: NSObject, ObservableObject {
     func installUpdate() {
         guard let fileURL = _localFileURL else {
             Logger.operation("安装更新", detail: "没有下载文件", result: "失败")
+            return
+        }
+
+        // 弹出确认对话框：安装需要关闭当前应用
+        let alert = NSAlert()
+        alert.messageText = "安装更新"
+        alert.informativeText = "安装需要关闭当前应用，安装完成后将自动重启。是否继续？"
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        alert.alertStyle = .informational
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            Logger.operation("安装更新", detail: "用户取消安装")
             return
         }
 

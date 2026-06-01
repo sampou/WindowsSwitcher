@@ -216,21 +216,7 @@ final class PreviewGenerator: @unchecked Sendable {
         ) else { return nil }
 
         let targetSize = NSSize(width: size.width, height: size.height)
-        let nsImage = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-
-        // 高质量缩放
-        let resizedImage = NSImage(size: targetSize)
-        resizedImage.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        nsImage.draw(
-            in: NSRect(origin: .zero, size: targetSize),
-            from: NSRect(origin: .zero, size: nsImage.size),
-            operation: .copy,
-            fraction: 1.0
-        )
-        resizedImage.unlockFocus()
-
-        return resizedImage
+        return resizeCGImage(cgImage, to: targetSize)
     }
 
     private static func captureWindowFullResolution(_ windowID: CGWindowID, windowFrame: CGRect) -> NSImage? {
@@ -245,5 +231,28 @@ final class PreviewGenerator: @unchecked Sendable {
 
         let logicalSize = NSSize(width: windowFrame.width, height: windowFrame.height)
         return NSImage(cgImage: cgImage, size: logicalSize)
+    }
+
+    /// 使用 CGContext 高性能缩放 CGImage，比 lockFocus + draw 快得多
+    private static func resizeCGImage(_ cgImage: CGImage, to targetSize: NSSize) -> NSImage? {
+        let width = Int(targetSize.width * 2)  // Retina 2x
+        let height = Int(targetSize.height * 2)
+        guard width > 0 && height > 0 else { return nil }
+
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+
+        context.interpolationQuality = .high
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        guard let resizedCGImage = context.makeImage() else { return nil }
+        return NSImage(cgImage: resizedCGImage, size: targetSize)
     }
 }

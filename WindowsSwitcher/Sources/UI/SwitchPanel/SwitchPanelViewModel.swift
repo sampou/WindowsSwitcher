@@ -43,7 +43,7 @@ class SwitchPanelViewModel: ObservableObject {
 
     // 刷新窗口列表，确保显示最新的活动窗口
     func refreshWindows() {
-        let fresh = windowManager.getAllWindows()
+        let fresh = windowManager.getAllWindows(forceRefresh: false)
         updateWindows(fresh)
     }
 
@@ -366,7 +366,7 @@ class SwitchPanelViewModel: ObservableObject {
     private func refreshWindowsAfterDelay() {
         Task {
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms (从300ms减少，大幅提升响应速度)
-            let fresh = windowManager.getAllWindows()
+            let fresh = windowManager.getAllWindows(forceRefresh: false)
             windows = fresh
             applyFilter()
         }

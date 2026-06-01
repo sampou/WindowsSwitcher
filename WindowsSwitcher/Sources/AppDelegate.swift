@@ -126,6 +126,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupAutoUpdateCheck()
         Logger.info("9. Auto update check setup complete")
 
+        // 监听 DMG 挂载，检测新版本安装
+        setupDMGMountMonitor()
+        Logger.info("10. DMG mount monitor setup complete")
+
         Logger.info("=== Deferred initialization completed ===")
     }
 
@@ -165,6 +169,98 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func handleShowInstallProgress() {
         Logger.operation("静默安装", detail: "显示安装进度窗口")
         showInstallProgress()
+    }
+
+    // MARK: - DMG 挂载监听
+
+    /// 监听 DMG 挂载，检测新版本安装
+    private func setupDMGMountMonitor() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleVolumeDidMount(_:)),
+            name: NSWorkspace.didMountNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleVolumeDidMount(_ notification: Notification) {
+        guard let volumeURL = notification.userInfo?["NSDevicePath"] as? String else { return }
+
+        // 检查挂载卷中是否包含 WindowsSwitcher.app
+        let appPath = "\(volumeURL)/WindowsSwitcher.app"
+        guard FileManager.default.fileExists(atPath: appPath) else { return }
+
+        Logger.operation("DMG 挂载检测", detail: "检测到包含 WindowsSwitcher.app 的卷: \(volumeURL)")
+
+        // 读取挂载卷中应用的版本号
+        let dmgPlistPath = "\(appPath)/Contents/Info.plist"
+        guard let dmgVersion = readVersionFromPlist(at: dmgPlistPath) else {
+            Logger.operation("DMG 挂载检测", detail: "无法读取 DMG 中应用版本号")
+            return
+        }
+
+        // 读取当前应用的版本号
+        let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let currentBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+
+        Logger.operation("DMG 挂载检测", detail: "当前版本: \(currentVersion)(\(currentBuild)), DMG 版本: \(dmgVersion.version)(\(dmgVersion.build))")
+
+        // 比较版本号：DMG 版本是否比当前版本新
+        guard isDmgVersionNewer(dmgVersion: dmgVersion, currentVersion: currentVersion, currentBuild: currentBuild) else {
+            Logger.operation("DMG 挂载检测", detail: "DMG 版本不比当前版本新，忽略")
+            return
+        }
+
+        // 弹出提示：检测到新版本，是否关闭应用并安装
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.showDMGUpdateAlert(dmgAppPath: appPath, version: dmgVersion.version)
+        }
+    }
+
+    /// 从 Info.plist 读取版本号
+    private func readVersionFromPlist(at path: String) -> (version: String, build: String)? {
+        guard let data = FileManager.default.contents(atPath: path),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] else {
+            return nil
+        }
+        let version = plist["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let build = plist["CFBundleVersion"] as? String ?? "0"
+        return (version, build)
+    }
+
+    /// 比较版本号
+    private func isDmgVersionNewer(dmgVersion: (version: String, build: String), currentVersion: String, currentBuild: String) -> Bool {
+        // 先比较构建号
+        let dmgBuild = Int(dmgVersion.build) ?? 0
+        let curBuild = Int(currentBuild) ?? 0
+        if dmgBuild != curBuild {
+            return dmgBuild > curBuild
+        }
+        // 构建号相同则比较版本号
+        return dmgVersion.version.compare(currentVersion, options: .numeric) == .orderedDescending
+    }
+
+    /// 显示 DMG 更新提示
+    private func showDMGUpdateAlert(dmgAppPath: String, version: String) {
+        let alert = NSAlert()
+        alert.messageText = "检测到新版本 v\(version)"
+        alert.informativeText = "已检测到 WindowsSwitcher 安装包，需要关闭当前应用才能完成安装。关闭后将自动完成安装并重启。"
+        alert.addButton(withTitle: "关闭并安装")
+        alert.addButton(withTitle: "稍后")
+        alert.alertStyle = .informational
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            // 使用后台脚本执行：终止当前应用 → 复制新版本 → 启动新版本
+            let targetPath = "/Applications/WindowsSwitcher.app"
+            let script = """
+            killall WindowsSwitcher 2>/dev/null; sleep 1; rm -rf '\(targetPath)'; cp -R '\(dmgAppPath)' '\(targetPath)'; sleep 0.5; open '\(targetPath)'
+            """
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = ["-c", script]
+            try? process.run()
+            NSApp.terminate(nil)
+        }
     }
 
     /// 首次启动时检查版本更新
@@ -1327,10 +1423,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 如果修饰键已经释放，直接切换窗口
         if !modifiersPressed {
             Logger.operation("快速切换", detail: "修饰键已释放，直接切换")
-            // 强制刷新缓存，确保获取最新窗口
-            windowManager.refreshCache()
-            // 获取窗口列表
-            let windows = windowManager.getAllWindows()
+            // 获取窗口列表（强制刷新，确保最新）
+            let windows = windowManager.getAllWindows(forceRefresh: true)
             // 切换到下一个窗口（索引1），与正常切换逻辑一致
             if windows.count >= 2 {
                 let targetIndex = reversed ? windows.count - 1 : 1
@@ -1344,11 +1438,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 取消之前的定时器
         cancelPanelShowDelay()
 
-        // 强制刷新缓存，确保获取最新窗口
-        windowManager.refreshCache()
-        // 获取窗口列表，找到目标窗口
-        let windows = windowManager.getAllWindows()
+        // 获取窗口列表（强制刷新，确保最新）
+        let windows = windowManager.getAllWindows(forceRefresh: true)
         Logger.operation("快速切换", detail: "获取到 \(windows.count) 个窗口")
+
+        // 调试：打印 Chrome 窗口信息
+        let chromeWindows = windows.filter { $0.bundleIdentifier.contains("chrome") || $0.appName.contains("Chrome") }
+        Logger.operation("快速切换", detail: "Chrome窗口: \(chromeWindows.count)个, 标题: \(chromeWindows.prefix(3).map { $0.windowTitle.isEmpty ? "(空)" : $0.windowTitle })")
 
         guard windows.count >= 2 else {
             Logger.operation("快速切换", detail: "窗口数量不足，返回")
@@ -1449,8 +1545,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 2. 实时获取所有窗口（强制刷新缓存，确保获取最新窗口）
         let t0 = CFAbsoluteTimeGetCurrent()
         windowManager.refreshCache()  // 强制刷新缓存，确保新窗口被包含
-        var windows = windowManager.getAllWindows()
+        var windows = windowManager.getAllWindows(forceRefresh: true)
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
+
+        // 调试：打印 Chrome 窗口数量
+        let chromeWindows = windows.filter { $0.bundleIdentifier.contains("chrome") || $0.appName.contains("Chrome") }
+        Logger.info("==> Chrome windows: \(chromeWindows.count), titles: \(chromeWindows.map { $0.windowTitle })")
 
         // 3. 如果是 appSwitchMode，只保留当前应用的窗口
         if appSwitchMode, let currentApp = previousFrontmostApp?.localizedName {
@@ -1501,26 +1601,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 4. 按最近活跃时间排序
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // 检查是否所有窗口的 lastActiveTime 都相同（首次运行或刚重启）
-        let firstWindowTime = windows.first?.lastActiveTime ?? Date()
-        let allSameTime = windows.allSatisfy { $0.lastActiveTime == firstWindowTime }
-
+        // 排序逻辑：与 WindowManager.getAllWindows() 保持一致
+        // - 按 lastActiveTime 降序（最近活跃的排第一位）
+        // - 时间相同时，按 windowID 降序（新窗口ID大，排在前面）
         let sortedWindows: [WindowModel]
-        if allSameTime {
-            // 首次运行时：直接按 windowID 降序排序
-            sortedWindows = windows.sorted { w1, w2 in
-                w1.id > w2.id
+        sortedWindows = windows.sorted { w1, w2 in
+            if w1.lastActiveTime != w2.lastActiveTime {
+                return w1.lastActiveTime > w2.lastActiveTime
             }
-            Logger.debug("==> All windows have same lastActiveTime, using windowID for sorting")
-        } else {
-            // 按 lastActiveTime 降序排序（最前台的窗口已经在之前更新为 now，会排在最前面）
-            sortedWindows = windows.sorted { w1, w2 in
-                if w1.lastActiveTime != w2.lastActiveTime {
-                    return w1.lastActiveTime > w2.lastActiveTime
-                }
-                // 如果时间相同，按 windowID 降序排序
-                return w1.id > w2.id
-            }
+            // 时间相同时，windowID 大的排前面（新窗口）
+            return w1.id > w2.id
         }
 
         // 打印排序结果日志
@@ -1814,19 +1904,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Logger.operation("ESC监听器", detail: "开始设置")
 
-        // 使用全局监听器监听键盘事件
+        // 使用 CGEvent Tap 来捕获所有键盘事件（包括组合键如 Option+ESC）
+        // 这是解决修饰键按住时 ESC 无法关闭面板的关键
+        setupCGEventTapForESC()
+
+        // 保留 NSEvent 监听器作为备用（处理方向键等）
         globalEscKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return }
             Logger.operation("全局键盘", detail: "keyCode=\(event.keyCode), isRepeat=\(event.isARepeat), isPanelVisible=\(self.isPanelVisible)")
 
             guard self.isPanelVisible else { return }
 
-            // ESC 键的 keyCode 是 53
+            // ESC 键已由 CGEvent Tap 处理，这里只处理方向键
             if event.keyCode == 53 {
-                Logger.operation("ESC按键", detail: "全局ESC按下，关闭面板")
-                Task { @MainActor in
-                    self.hideSwitchPanel()
-                }
                 return
             }
 
@@ -1868,8 +1958,71 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupLocalEscKeyMonitor()
     }
 
+    /// 使用 CGEvent Tap 监听 ESC 键（支持组合键）
+    private func setupCGEventTapForESC() {
+        // 检查辅助功能权限
+        guard AXIsProcessTrusted() else {
+            Logger.warning("ESC监听器: 缺少辅助功能权限，无法使用 CGEvent Tap")
+            return
+        }
+
+        // 创建事件 tap
+        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(eventMask),
+            callback: { proxy, type, event, refcon -> Unmanaged<CGEvent>? in
+                guard let refcon = refcon else {
+                    return Unmanaged.passUnretained(event)
+                }
+
+                let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
+
+                // 只处理 keyDown 事件
+                if type == .keyDown {
+                    let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+                    // ESC 键的 keyCode 是 53
+                    if keyCode == 53 && appDelegate.isPanelVisible {
+                        Logger.operation("ESC按键", detail: "CGEvent Tap 捕获 ESC，关闭面板")
+                        Task { @MainActor in
+                            appDelegate.hideSwitchPanel()
+                        }
+                        // 返回 nil 阻止事件继续传递
+                        return nil
+                    }
+                }
+
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            Logger.error("ESC监听器: 无法创建 CGEvent Tap")
+            return
+        }
+
+        escEventTap = tap
+
+        // 创建 run loop source 并添加到当前 run loop
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        escRunLoopSource = runLoopSource
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+
+        // 启用 tap
+        CGEvent.tapEnable(tap: tap, enable: true)
+
+        Logger.operation("ESC监听器", detail: "CGEvent Tap 创建成功")
+    }
+
     // 设置本地 ESC 键监听器
     private var localEscKeyMonitor: Any?
+
+    // CGEvent Tap 用于捕获组合键（如 Option+ESC）
+    private var escEventTap: CFMachPort?
+    private var escRunLoopSource: CFRunLoopSource?
 
     private func setupLocalEscKeyMonitor() {
         // 移除旧的本地监听器
@@ -1932,6 +2085,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let monitor = localEscKeyMonitor {
             NSEvent.removeMonitor(monitor)
             localEscKeyMonitor = nil
+        }
+
+        // 清理 CGEvent Tap
+        if let tap = escEventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            escEventTap = nil
+        }
+        if let source = escRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            escRunLoopSource = nil
         }
     }
 

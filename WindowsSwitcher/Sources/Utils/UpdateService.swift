@@ -113,6 +113,34 @@ class UpdateService: ObservableObject {
 
     private let config = ConfigManager.shared
     private var autoCheckTimer: Timer?
+    private var dailyCheckTimer: Timer?
+
+    // MARK: - 检查频率控制
+
+    /// 最小检查间隔（4 小时），防止频繁检查触发 API 限制
+    private let minCheckInterval: TimeInterval = 4 * 60 * 60
+
+    /// 每日检查时间（小时，24 小时制）
+    private let dailyCheckHour: Int = 10  // 上午 10 点
+
+    /// 上次检查时间（存储在 UserDefaults）
+    private var lastCheckTime: Date? {
+        get { UserDefaults.standard.object(forKey: "UpdateService.lastCheckTime") as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: "UpdateService.lastCheckTime") }
+    }
+
+    /// 距离下次可检查的时间
+    var timeUntilNextCheck: TimeInterval {
+        guard let last = lastCheckTime else { return 0 }
+        let elapsed = Date().timeIntervalSince(last)
+        return max(0, minCheckInterval - elapsed)
+    }
+
+    /// 是否可以检查（距离上次检查超过最小间隔）
+    var canCheck: Bool {
+        guard let last = lastCheckTime else { return true }
+        return Date().timeIntervalSince(last) >= minCheckInterval
+    }
 
     private init() {}
 
@@ -162,6 +190,17 @@ class UpdateService: ObservableObject {
             Logger.operation("版本检查", detail: "已在检查中，跳过")
             return
         }
+
+        // 检查频率限制
+        if !canCheck {
+            let remaining = timeUntilNextCheck
+            let remainingMinutes = Int(remaining / 60)
+            Logger.operation("版本检查", detail: "检查间隔不足，还需等待 \(remainingMinutes) 分钟")
+            return
+        }
+
+        // 记录检查时间
+        lastCheckTime = Date()
 
         // 从配置中获取 API URL
         let urlString = config.config.update.apiURL
@@ -264,27 +303,64 @@ class UpdateService: ObservableObject {
 
     // MARK: - 自动检查
 
-    /// 启动自动检查定时器
+    /// 启动自动检查（启动时检查 + 每日定时检查）
     func startAutoCheck() {
         stopAutoCheck()
 
-        let interval = config.config.update.checkInterval
-        autoCheckTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task {
-                await self?.checkForUpdateAndShowAlert()
-            }
-        }
-
-        // 立即检查一次
+        // 启动时检查一次（会自动判断是否超过最小间隔）
         Task {
             await checkForUpdateAndShowAlert()
         }
+
+        // 启动每日定时检查
+        startDailyCheckTimer()
     }
 
     /// 停止自动检查
     func stopAutoCheck() {
         autoCheckTimer?.invalidate()
         autoCheckTimer = nil
+        dailyCheckTimer?.invalidate()
+        dailyCheckTimer = nil
+    }
+
+    /// 启动每日定时检查
+    private func startDailyCheckTimer() {
+        dailyCheckTimer?.invalidate()
+
+        // 计算距离下次检查时间的时间间隔
+        let now = Date()
+        let calendar = Calendar.current
+
+        // 今天的检查时间
+        let todayCheckTime = calendar.date(bySettingHour: dailyCheckHour, minute: 0, second: 0, of: now) ?? now
+
+        var nextCheckTime: Date
+        if now < todayCheckTime {
+            // 还没到今天的检查时间
+            nextCheckTime = todayCheckTime
+        } else {
+            // 已经过了今天的检查时间，安排明天
+            nextCheckTime = calendar.date(byAdding: .day, value: 1, to: todayCheckTime) ?? now.addingTimeInterval(86400)
+        }
+
+        let interval = nextCheckTime.timeIntervalSince(now)
+        Logger.operation("版本检查", detail: "下次检查时间: \(nextCheckTime), 距今 \(Int(interval/3600)) 小时")
+
+        dailyCheckTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task {
+                await self?.checkForUpdateAndShowAlert()
+            }
+            // 重新安排明天的检查
+            self?.startDailyCheckTimer()
+        }
+    }
+
+    /// 强制检查（忽略频率限制）
+    func forceCheckForUpdate() async {
+        // 重置检查时间
+        lastCheckTime = nil
+        await checkForUpdate()
     }
 
     // MARK: - 下载和安装

@@ -12,7 +12,7 @@ enum WindowEvent {
 }
 
 protocol WindowManagerProtocol {
-    func getAllWindows() -> [WindowModel]
+    func getAllWindows(forceRefresh: Bool) -> [WindowModel]
     func getWindows(for appName: String) -> [WindowModel]
     func activateWindow(_ window: WindowModel)
     func closeWindow(_ window: WindowModel)
@@ -33,7 +33,7 @@ class WindowManager: WindowManagerProtocol {
     // 窗口列表缓存（避免频繁调用 CGWindowListCopyWindowInfo）
     private var cachedWindows: [WindowModel] = []
     private var cacheTimestamp: Date?
-    private let cacheTTL: TimeInterval = 0.3 // 300ms 缓存，支持快速切换
+    private let cacheTTL: TimeInterval = 0.1 // 100ms 缓存，支持快速切换
 
     // 应用信息缓存（PID -> (bundleID, icon, isHidden)）
     private var appInfoCache: [pid_t: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)] = [:]
@@ -56,10 +56,16 @@ class WindowManager: WindowManagerProtocol {
         observers.removeAll()
     }
 
-    func getAllWindows() -> [WindowModel] {
+    func getAllWindows(forceRefresh: Bool = false) -> [WindowModel] {
+        // 强制刷新时清除缓存时间戳
+        if forceRefresh {
+            cacheTimestamp = nil
+        }
+
         // 使用缓存，避免频繁调用
         let now = Date()
-        if let timestamp = cacheTimestamp,
+        if !forceRefresh,
+           let timestamp = cacheTimestamp,
            now.timeIntervalSince(timestamp) < cacheTTL,
            !cachedWindows.isEmpty {
             return cachedWindows
@@ -126,8 +132,11 @@ class WindowManager: WindowManagerProtocol {
             // 不同应用间切换：先激活应用，再聚焦窗口
             Logger.operation("跨应用切换", detail: "激活 \(window.appName) - \(window.windowTitle)", result: "激活应用")
             let _ = app.activate(options: [.activateIgnoringOtherApps])
-            // 跨应用切换也需要聚焦具体窗口
-            focusWindowQuick(window)
+            // 跨应用切换需要短暂延迟再聚焦，等待应用激活完成
+            // 某些重型应用（如 Navicat）激活较慢，立即调用 AX API 会超时或匹配失败
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.focusWindowQuick(window)
+            }
         }
 
         Logger.operation("窗口激活完成", detail: "\(window.appName) - \(window.windowTitle)")
@@ -413,12 +422,19 @@ class WindowManager: WindowManagerProtocol {
 
         // BUG-011: lastActiveTime 始终为 Date()，无法反映真实 LRU 顺序
         // 优先级：内存缓存 > 持久化存储 > 当前时间
-        let lastActive = windowCache[windowID]?.lastActiveTime
-            ?? WindowActivityStore.shared.getLastActiveTime(
+        // 新窗口（不在缓存中）且在屏幕上：直接用 Date()，避免 WindowActivityStore
+        // 返回旧时间戳导致新窗口排序靠后（如同名浏览器标签）
+        let lastActive: Date
+        if let cached = windowCache[windowID]?.lastActiveTime {
+            lastActive = cached
+        } else if isOnScreen {
+            lastActive = Date()
+        } else {
+            lastActive = WindowActivityStore.shared.getLastActiveTime(
                 bundleIdentifier: appInfo.bundleIdentifier,
                 windowTitle: windowTitle
-            )
-            ?? Date()
+            ) ?? Date()
+        }
 
         Logger.debug("Window \(appName) - \(windowTitle): lastActiveTime = \(lastActive)")
 
