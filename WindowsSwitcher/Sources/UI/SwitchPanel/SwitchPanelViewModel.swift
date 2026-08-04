@@ -43,7 +43,7 @@ class SwitchPanelViewModel: ObservableObject {
 
     // 刷新窗口列表，确保显示最新的活动窗口
     func refreshWindows() {
-        let fresh = windowManager.getAllWindows(forceRefresh: false)
+        let fresh = windowManager.getAllWindows(forceRefresh: true)
         updateWindows(fresh)
     }
 
@@ -366,7 +366,7 @@ class SwitchPanelViewModel: ObservableObject {
     private func refreshWindowsAfterDelay() {
         Task {
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms (从300ms减少，大幅提升响应速度)
-            let fresh = windowManager.getAllWindows(forceRefresh: false)
+            let fresh = windowManager.getAllWindows(forceRefresh: true)
             windows = fresh
             applyFilter()
         }
@@ -384,14 +384,21 @@ class SwitchPanelViewModel: ObservableObject {
     private func loadVisiblePreviews() {
         // 限制并发数量，避免 CPU 过载
         let windowsToLoad = Array(filteredWindows.prefix(12))
+        let sizeConfig = config.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
 
         Task(priority: .userInitiated) {
-            // 并发生成预览，提升加载速度
             await withTaskGroup(of: Void.self) { group in
                 for window in windowsToLoad {
                     group.addTask {
-                        // 使用实时预览获取最新内容（同时会更新缓存）
-                        if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: CGSize(width: 200, height: 112)) {
+                        // 1. 立即显示缓存图（无论新旧，避免空白）
+                        if let cached = await self.previewGenerator.getCachedPreview(for: window.id) {
+                            await MainActor.run {
+                                self.previewImages[window.id] = cached
+                            }
+                        }
+                        // 2. 异步强制生成最新截图，确保内容实时
+                        if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: previewSize) {
                             await MainActor.run {
                                 self.previewImages[window.id] = image
                             }

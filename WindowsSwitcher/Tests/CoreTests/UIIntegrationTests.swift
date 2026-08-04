@@ -108,11 +108,11 @@ final class UIIntegrationTests: XCTestCase {
         ConfigManager.shared.config.behavior.sortOrder = .recent
     }
 
-    func testShowMinimizedToggle() {
-        ConfigManager.shared.config.behavior.showMinimizedWindows = false
+    func testShowOffScreenToggle() {
+        ConfigManager.shared.config.behavior.showOffScreenWindows = false
         viewModel.applyFilter()
         XCTAssertFalse(viewModel.filteredWindows.contains { $0.isMinimized })
-        ConfigManager.shared.config.behavior.showMinimizedWindows = true
+        ConfigManager.shared.config.behavior.showOffScreenWindows = true
     }
 
     // MARK: - DesignTokens 集成验证

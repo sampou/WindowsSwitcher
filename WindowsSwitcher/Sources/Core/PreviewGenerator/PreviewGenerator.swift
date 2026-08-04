@@ -7,8 +7,11 @@ struct PreviewCacheConfig {
     static let maxMemorySize = 100
     /// 磁盘缓存最大大小（字节）
     static let maxDiskCacheSize: Int64 = 200 * 1024 * 1024  // 200MB
-    /// 缓存有效期（秒）- 短缓存确保实时性
-    static let cacheExpiry: TimeInterval = 2.0  // 2秒，平衡实时性和性能
+    /// 后台刷新间隔（秒）：超过此时间认为缓存"陈旧"，后台需重新截图
+    /// 注意：缓存不会被此 TTL 丢弃，仅用于判断是否需要后台刷新
+    static let refreshInterval: TimeInterval = 5.0  // 5秒后认为陈旧，后台刷新
+    /// 磁盘缓存有效期（秒）：磁盘文件超过此时间视为过期，清理并重新生成
+    static let diskCacheExpiry: TimeInterval = 30.0  // 30秒
     /// 最大并发生成数
     static let maxConcurrentGeneration = 4
 }
@@ -30,18 +33,16 @@ actor PreviewCache {
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
 
-    /// 获取缓存的预览图
+    /// 获取缓存的预览图（长期保留，不因 TTL 丢弃，用于即时显示）
+    /// 返回内存或磁盘中的缓存图，无论新旧。是否需要后台刷新由 isStale 判断
     func get(for windowID: CGWindowID) -> NSImage? {
         let key = "\(windowID)"
 
         if let entry = memoryCache[key] {
-            let age = Date().timeIntervalSince(entry.timestamp)
-            if age < PreviewCacheConfig.cacheExpiry {
-                return entry.image
-            }
+            return entry.image
         }
 
-        // 尝试从磁盘加载
+        // 尝试从磁盘加载（永久保留，仅磁盘过期才清理）
         if let image = loadFromDisk(key: key) {
             let entry = CachedEntry(image: image, timestamp: Date(), windowID: windowID)
             memoryCache[key] = entry
@@ -51,6 +52,16 @@ actor PreviewCache {
         return nil
     }
 
+    /// 判断指定窗口的缓存是否陈旧（需要后台重新截图）
+    /// 缓存不存在或超过 refreshInterval 即视为陈旧
+    func isStale(for windowID: CGWindowID) -> Bool {
+        let key = "\(windowID)"
+        if let entry = memoryCache[key] {
+            return Date().timeIntervalSince(entry.timestamp) >= PreviewCacheConfig.refreshInterval
+        }
+        return true
+    }
+
     /// 设置缓存
     func set(_ image: NSImage, for windowID: CGWindowID) {
         let key = "\(windowID)"
@@ -58,9 +69,9 @@ actor PreviewCache {
         memoryCache[key] = entry
         limitMemoryCacheSize()
 
-        // 异步存入磁盘
+        // 异步存入磁盘（低优先级，避免影响切换流畅度）
         Task(priority: .background) {
-            await saveToDisk(image: image, key: key)
+            await self.saveToDisk(image: image, key: key)
         }
     }
 
@@ -68,6 +79,9 @@ actor PreviewCache {
     func invalidate(for windowID: CGWindowID) {
         let key = "\(windowID)"
         memoryCache.removeValue(forKey: key)
+        // 同步清理磁盘缓存文件
+        let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
     /// 清空所有缓存
@@ -75,6 +89,43 @@ actor PreviewCache {
         memoryCache.removeAll()
         try? FileManager.default.removeItem(at: cacheDirectory)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+    }
+
+    /// 清理磁盘缓存中过期或超额的文件（控制磁盘占用）
+    func cleanupDiskCacheIfNeeded() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: cacheDirectory,
+                                                       includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                                                       options: [.skipsHiddenFiles]) else { return }
+
+        let expiry = PreviewCacheConfig.diskCacheExpiry
+        let now = Date()
+        var totalSize: Int64 = 0
+        var fileInfos: [(url: URL, date: Date, size: Int64)] = []
+
+        for file in files where file.pathExtension == "png" {
+            let attrs = try? fm.attributesOfItem(atPath: file.path)
+            let date = (attrs?[.modificationDate] as? Date) ?? .distantPast
+            let size = (attrs?[.size] as? Int64) ?? 0
+            totalSize += size
+            // 删除已过期的缓存文件
+            if now.timeIntervalSince(date) > expiry {
+                try? fm.removeItem(at: file)
+                totalSize -= size
+            } else {
+                fileInfos.append((file, date, size))
+            }
+        }
+
+        // 若仍超过磁盘配额，按最旧优先删除
+        if totalSize > PreviewCacheConfig.maxDiskCacheSize {
+            fileInfos.sort { $0.date < $1.date }
+            for info in fileInfos {
+                if totalSize <= PreviewCacheConfig.maxDiskCacheSize { break }
+                try? fm.removeItem(at: info.url)
+                totalSize -= info.size
+            }
+        }
     }
 
     private func limitMemoryCacheSize() {
@@ -99,6 +150,13 @@ actor PreviewCache {
 
     private func loadFromDisk(key: String) -> NSImage? {
         let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
+        // 磁盘文件超过 diskCacheExpiry 才视为过期清理（长期保留，支持跨启动复用）
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let modDate = attrs[.modificationDate] as? Date,
+           Date().timeIntervalSince(modDate) > PreviewCacheConfig.diskCacheExpiry {
+            try? FileManager.default.removeItem(at: fileURL)
+            return nil
+        }
         guard FileManager.default.fileExists(atPath: fileURL.path),
               let image = NSImage(contentsOf: fileURL) else {
             return nil
@@ -116,6 +174,28 @@ final class PreviewGenerator: @unchecked Sendable {
         attributes: .concurrent
     )
     private let semaphore = DispatchSemaphore(value: PreviewCacheConfig.maxConcurrentGeneration)
+    private var diskCleanupTimer: DispatchSourceTimer?
+
+    init() {
+        // 启动时清理一次磁盘缓存（控制磁盘占用，删除过期文件）
+        Task(priority: .background) { [cache] in
+            await cache.cleanupDiskCacheIfNeeded()
+        }
+        // 每小时定期清理一次磁盘缓存，防止长期运行累积
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 3600, repeating: 3600)
+        timer.setEventHandler { [cache] in
+            Task(priority: .background) {
+                await cache.cleanupDiskCacheIfNeeded()
+            }
+        }
+        timer.resume()
+        diskCleanupTimer = timer
+    }
+
+    deinit {
+        diskCleanupTimer?.cancel()
+    }
 
     /// 生成单个窗口预览（带缓存）
     func generatePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
@@ -140,6 +220,8 @@ final class PreviewGenerator: @unchecked Sendable {
                     Task {
                         await cacheRef.set(image, for: windowID)
                     }
+                    // 同步更新内存缓存镜像（供主线程同步快速读取）
+                    self.updateSyncCache(windowID: windowID, image: image)
                 }
             }
         }
@@ -163,6 +245,69 @@ final class PreviewGenerator: @unchecked Sendable {
                     Task {
                         await cacheRef.set(image, for: windowID)
                     }
+                    // 同步更新内存缓存镜像
+                    self.updateSyncCache(windowID: windowID, image: image)
+                }
+            }
+        }
+    }
+
+    /// 仅从缓存获取预览图（不触发生成），用于面板唤起时快速填充
+    /// 返回 nil 表示缓存未命中，需要后续异步生成
+    func getCachedPreview(for windowID: CGWindowID) async -> NSImage? {
+        return await cache.get(for: windowID)
+    }
+
+    /// 同步从内存缓存获取预览图（不触发生成，不读磁盘）
+    /// 用于面板唤起时瞬时填充，避免空白
+    func getCachedPreviewSync(for windowID: CGWindowID) -> NSImage? {
+        syncCacheLock.lock()
+        defer { syncCacheLock.unlock() }
+        return syncMemoryCache[windowID]
+    }
+
+    /// 内存缓存镜像（供主线程同步快速读取，避免 actor 异步开销）
+    private var syncMemoryCache: [CGWindowID: NSImage] = [:]
+    private let syncCacheLock = NSLock()
+
+    /// 更新内存缓存镜像（线程安全）
+    private func updateSyncCache(windowID: CGWindowID, image: NSImage) {
+        syncCacheLock.lock()
+        syncMemoryCache[windowID] = image
+        // 限制镜像大小，与 memoryCache 一致
+        if syncMemoryCache.count > PreviewCacheConfig.maxMemorySize {
+            // 简单丢弃一部分（按 key 任意），避免无限增长
+            if let firstKey = syncMemoryCache.keys.first {
+                syncMemoryCache.removeValue(forKey: firstKey)
+            }
+        }
+        syncCacheLock.unlock()
+    }
+
+    /// 移除同步镜像缓存中的单个条目
+    private func removeSyncCache(windowID: CGWindowID) {
+        syncCacheLock.lock()
+        syncMemoryCache.removeValue(forKey: windowID)
+        syncCacheLock.unlock()
+    }
+
+    /// 清空同步镜像缓存
+    private func clearSyncCache() {
+        syncCacheLock.lock()
+        syncMemoryCache.removeAll()
+        syncCacheLock.unlock()
+    }
+
+    /// 批量预取预览到缓存（不返回结果，仅用于后台预热缓存）
+    /// 只刷新陈旧的缓存（isStale），避免对新鲜缓存重复截图
+    /// 面板可见时不应调用（面板有自己的加载逻辑）
+    func prefetchPreviews(for windows: [WindowModel], size: CGSize) async {
+        await withTaskGroup(of: Void.self) { group in
+            for window in windows {
+                // 只对陈旧的缓存重新截图，新鲜的跳过
+                guard await cache.isStale(for: window.id) else { continue }
+                group.addTask { [self] in
+                    _ = await self.generatePreview(for: window, size: size)
                 }
             }
         }
@@ -197,10 +342,12 @@ final class PreviewGenerator: @unchecked Sendable {
     /// 使缓存失效
     func invalidateCache(for windowID: CGWindowID) async {
         await cache.invalidate(for: windowID)
+        removeSyncCache(windowID: windowID)
     }
 
     func clearCache() async {
         await cache.clear()
+        clearSyncCache()
     }
 
     // MARK: - 私有方法
@@ -233,16 +380,27 @@ final class PreviewGenerator: @unchecked Sendable {
         return NSImage(cgImage: cgImage, size: logicalSize)
     }
 
-    /// 使用 CGContext 高性能缩放 CGImage，比 lockFocus + draw 快得多
+    /// 使用 CGContext 高性能缩放 CGImage，保持源图宽高比（aspect fit），比 lockFocus + draw 快得多
+    /// 窄窗口（如 iPhone 镜像）不会被横向拉伸，在 targetSize 内居中适配，多余区域透明
     private static func resizeCGImage(_ cgImage: CGImage, to targetSize: NSSize) -> NSImage? {
-        let width = Int(targetSize.width * 2)  // Retina 2x
-        let height = Int(targetSize.height * 2)
-        guard width > 0 && height > 0 else { return nil }
+        let canvasWidth = Int(targetSize.width * 2)  // Retina 2x
+        let canvasHeight = Int(targetSize.height * 2)
+        guard canvasWidth > 0 && canvasHeight > 0 else { return nil }
+
+        // 按源图宽高比计算实际绘制尺寸（aspect fit 进 targetSize）
+        let srcW = CGFloat(cgImage.width)
+        let srcH = CGFloat(cgImage.height)
+        guard srcW > 0 && srcH > 0 else { return nil }
+        let scale = min(CGFloat(canvasWidth) / srcW, CGFloat(canvasHeight) / srcH)
+        let drawW = srcW * scale
+        let drawH = srcH * scale
+        let drawX = (CGFloat(canvasWidth) - drawW) / 2
+        let drawY = (CGFloat(canvasHeight) - drawH) / 2
 
         guard let context = CGContext(
             data: nil,
-            width: width,
-            height: height,
+            width: canvasWidth,
+            height: canvasHeight,
             bitsPerComponent: 8,
             bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
@@ -250,9 +408,11 @@ final class PreviewGenerator: @unchecked Sendable {
         ) else { return nil }
 
         context.interpolationQuality = .high
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        context.clear(CGRect(x: 0, y: 0, width: canvasWidth, height: canvasHeight))
+        context.draw(cgImage, in: CGRect(x: drawX, y: drawY, width: drawW, height: drawH))
 
         guard let resizedCGImage = context.makeImage() else { return nil }
+        // NSImage size 用 targetSize，但像素保持窗口真实比例，渲染时不再变形
         return NSImage(cgImage: resizedCGImage, size: targetSize)
     }
 }

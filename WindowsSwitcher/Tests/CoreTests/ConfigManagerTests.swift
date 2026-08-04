@@ -46,14 +46,14 @@ final class ConfigManagerTests: XCTestCase {
         XCTAssertEqual(ConfigManager.shared.config.behavior.sortOrder, .appName)
     }
 
-    func testUpdateBehaviorShowMinimized() {
-        ConfigManager.shared.updateBehavior { $0.showMinimizedWindows = false }
-        XCTAssertFalse(ConfigManager.shared.config.behavior.showMinimizedWindows)
+    func testUpdateBehaviorShowOffScreenDisabled() {
+        ConfigManager.shared.updateBehavior { $0.showOffScreenWindows = false }
+        XCTAssertFalse(ConfigManager.shared.config.behavior.showOffScreenWindows)
     }
 
-    func testUpdateBehaviorShowHidden() {
-        ConfigManager.shared.updateBehavior { $0.showHiddenWindows = true }
-        XCTAssertTrue(ConfigManager.shared.config.behavior.showHiddenWindows)
+    func testUpdateBehaviorShowOffScreenEnabled() {
+        ConfigManager.shared.updateBehavior { $0.showOffScreenWindows = true }
+        XCTAssertTrue(ConfigManager.shared.config.behavior.showOffScreenWindows)
     }
 
     func testUpdateBehaviorPreviewInterval() {
@@ -92,14 +92,14 @@ final class ConfigManagerTests: XCTestCase {
 
     func testResetRestoresAllDefaults() {
         ConfigManager.shared.updateAppearance { $0.panelOpacity = 0.1; $0.theme = .dark }
-        ConfigManager.shared.updateBehavior { $0.sortOrder = .windowTitle; $0.showMinimizedWindows = false }
+        ConfigManager.shared.updateBehavior { $0.sortOrder = .windowTitle; $0.showOffScreenWindows = true }
         ConfigManager.shared.updateHotKeys { $0.switchKeyCode = 99 }
         ConfigManager.shared.reset()
         let c = ConfigManager.shared.config
         XCTAssertEqual(c.appearance.panelOpacity, 0.95, accuracy: 0.001)
         XCTAssertEqual(c.appearance.theme, .auto)
         XCTAssertEqual(c.behavior.sortOrder, .recent)
-        XCTAssertTrue(c.behavior.showMinimizedWindows)
+        XCTAssertFalse(c.behavior.showOffScreenWindows)
         XCTAssertEqual(c.hotKeys.switchKeyCode, 48)
     }
 
@@ -133,10 +133,10 @@ final class ConfigModelSubstructTests: XCTestCase {
     func testHotKeyConfigDefaults() {
         let hk = HotKeyConfig()
         XCTAssertEqual(hk.switchKeyCode, 48)
-        XCTAssertEqual(hk.switchModifiers, 256)
-        XCTAssertEqual(hk.reverseSwitchModifiers, 131072)
+        XCTAssertEqual(hk.switchModifiers, 2048)
+        XCTAssertEqual(hk.reverseSwitchModifiers, 2560)
         XCTAssertEqual(hk.appSwitchKeyCode, 50)
-        XCTAssertEqual(hk.appSwitchModifiers, 256)
+        XCTAssertEqual(hk.appSwitchModifiers, 2048)
     }
 
     func testAppearanceConfigDefaults() {
@@ -151,8 +151,7 @@ final class ConfigModelSubstructTests: XCTestCase {
     func testBehaviorConfigDefaults() {
         let b = BehaviorConfig()
         XCTAssertEqual(b.sortOrder, .recent)
-        XCTAssertTrue(b.showMinimizedWindows)
-        XCTAssertFalse(b.showHiddenWindows)
+        XCTAssertFalse(b.showOffScreenWindows)
         XCTAssertEqual(b.previewUpdateInterval, 0.1, accuracy: 0.001)
         XCTAssertEqual(b.panelDisplayDelay, 0.0, accuracy: 0.001)
     }
@@ -224,7 +223,7 @@ final class ConfigModelSubstructTests: XCTestCase {
         config.appearance.theme = .dark
         config.appearance.panelOpacity = 0.8
         config.behavior.sortOrder = .windowTitle
-        config.behavior.showHiddenWindows = true
+        config.behavior.showOffScreenWindows = true
         config.hotKeys.switchKeyCode = 36
 
         let data = try JSONEncoder().encode(config)
@@ -233,7 +232,7 @@ final class ConfigModelSubstructTests: XCTestCase {
         XCTAssertEqual(decoded.appearance.theme, .dark)
         XCTAssertEqual(decoded.appearance.panelOpacity, 0.8, accuracy: 0.001)
         XCTAssertEqual(decoded.behavior.sortOrder, .windowTitle)
-        XCTAssertTrue(decoded.behavior.showHiddenWindows)
+        XCTAssertTrue(decoded.behavior.showOffScreenWindows)
         XCTAssertEqual(decoded.hotKeys.switchKeyCode, 36)
     }
 }

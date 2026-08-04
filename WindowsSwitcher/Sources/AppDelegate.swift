@@ -35,6 +35,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var deferredInitCompleted = false
     private var dockPreviewConfigCancellable: AnyCancellable?
 
+    // 后台预取定时器：定期生成所有窗口预览并缓存，唤起切换器时直接命中
+    private var previewPrefetchTimer: DispatchSourceTimer?
+
     // 监听切换器快捷键的修饰键状态
     private var wasSwitchModifierPressed = false  // 跟踪切换器快捷键修饰键状态
     private var panelShowTime: CFAbsoluteTime = 0  // 面板显示时间，用于忽略假释放事件
@@ -130,7 +133,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupDMGMountMonitor()
         Logger.info("10. DMG mount monitor setup complete")
 
+        // 启动后台预览预取（定期缓存所有窗口预览，唤起切换器时直接命中）
+        startPreviewPrefetcher()
+        Logger.info("11. Preview prefetcher started")
+
         Logger.info("=== Deferred initialization completed ===")
+    }
+
+    // MARK: - 后台预览预取
+    /// 启动后台定时器，定期生成所有窗口预览并预热缓存
+    /// 面板可见时跳过（面板有自己的实时加载逻辑），避免重复截图
+    private func startPreviewPrefetcher() {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + 3, repeating: 6)  // 首次3秒后，之后每6秒（短于缓存TTL 10秒）
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            // 面板可见时不预取，避免与面板加载冲突
+            if self.isPanelVisible { return }
+            let windows = self.windowManager.getAllWindows(forceRefresh: false)
+            guard !windows.isEmpty else { return }
+            let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
+            let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
+            Task(priority: .background) {
+                await self.previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+            }
+        }
+        timer.resume()
+        previewPrefetchTimer = timer
+    }
+
+    /// 唤起切换器时，同步用缓存的预览图填充 viewModel（命中内存缓存瞬时完成，避免后面窗口空白）
+    @MainActor
+    private func prefillCachedPreviews(for windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+        var filled = 0
+        for window in windows.prefix(20) {
+            // 直接查内存缓存，同步填充，面板显示前完成
+            if let cached = previewGenerator.getCachedPreviewSync(for: window.id) {
+                viewModel.previewImages[window.id] = cached
+                filled += 1
+            }
+        }
+        Logger.info("==> Prefilled \(filled)/\(min(windows.count, 20)) cached previews (sync)")
     }
 
     /// 设置自动更新检查
@@ -629,22 +672,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func hideDockPreviewPanel() {
         guard let window = dockPreviewWindow else { return }
 
-        let config = ConfigManager.shared.config.dockPreview
-        if config.showAnimation {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.08  // 缩短动画时间
-                context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                window.animator().alphaValue = 0
-            } completionHandler: { [weak self] in
-                window.orderOut(nil)
-                Task { @MainActor in
-                    self?.dockPreviewWindow = nil
-                }
-            }
-        } else {
-            window.orderOut(nil)
-            dockPreviewWindow = nil
-        }
+        // 立即置 nil 防止重复创建和动画回调丢失
+        dockPreviewWindow = nil
+        window.orderOut(nil)
     }
 
     // MARK: - 大预览窗口
@@ -1059,6 +1089,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.orderOut(nil)
         switchPanelWindow = nil
         Logger.info("Switch panel hidden immediately")
+
+        // 面板关闭后立即预取一次，刷新缓存以便下次快速唤起
+        triggerPreviewPrefetch()
+    }
+
+    /// 触发一次后台预览预取（面板关闭后调用，刷新缓存）
+    private func triggerPreviewPrefetch() {
+        let windows = windowManager.getAllWindows(forceRefresh: false)
+        guard !windows.isEmpty else { return }
+        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
+        Task(priority: .background) { [previewGenerator] in
+            await previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+        }
     }
 
     // MARK: - 快捷键注册
@@ -1159,7 +1203,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
 
-            Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers)), appSwitchReverse=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchReverseModifiers))")
+            Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=\(HotKeyFormatter.format(keyCode: appSwitchKeyCode, modifiers: appSwitchModifiers)), appSwitchReverse=\(HotKeyFormatter.format(keyCode: appSwitchReverseKeyCode, modifiers: appSwitchReverseModifiers))")
         } else {
             Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=DISABLED")
         }
@@ -1242,20 +1286,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         Logger.info("Permission check - Accessibility: \(permissionManager.accessibilityStatus.rawValue), Screen Recording: \(permissionManager.screenRecordingStatus.rawValue)")
 
-        // 检查屏幕录制权限 - 只有在没有权限且未请求过时才提示
+        // 先调用 macOS 原生 API。旧版只打开设置页面，从未触发系统授权提示。
         let screenPermissionKey = "hasRequestedScreenPermission"
         let hasRequestedScreen = UserDefaults.standard.bool(forKey: screenPermissionKey)
 
-        if !permissionManager.screenRecordingStatus.isAuthorized && !hasRequestedScreen {
-            showDetailedPermissionAlert(
-                for: "屏幕录制",
-                description: permissionManager.getScreenRecordingPermissionDescription(),
-                permissionKey: screenPermissionKey,
-                openSettingsAction: { permissionManager.openScreenRecordingSettings() }
-            )
-        } else if permissionManager.screenRecordingStatus.isAuthorized {
+        if permissionManager.screenRecordingStatus.isAuthorized {
             UserDefaults.standard.set(false, forKey: screenPermissionKey)
             Logger.info("Screen recording permission granted")
+        } else {
+            Logger.info("Requesting native screen recording permission")
+            permissionManager.requestScreenRecordingPermission { [weak self] isAuthorized in
+                guard let self else { return }
+                if isAuthorized {
+                    UserDefaults.standard.set(false, forKey: screenPermissionKey)
+                    Logger.info("Screen recording permission granted after native request")
+                    return
+                }
+
+                // 系统已拒绝或没有弹出原生提示时，保留设置页面兜底。
+                guard !hasRequestedScreen else { return }
+                self.showDetailedPermissionAlert(
+                    for: "屏幕录制",
+                    description: permissionManager.getScreenRecordingPermissionDescription(),
+                    permissionKey: screenPermissionKey,
+                    openSettingsAction: { permissionManager.openScreenRecordingSettings() }
+                )
+            }
         }
 
         // 辅助功能权限检查 - 只有在没有权限且未请求过时才提示
@@ -1750,6 +1806,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Logger.info("==> Panel position: x=\(x), y=\(y), screenFrame=\(screenFrame), panelSize=\(newSize)")
             panel.setFrameOrigin(NSPoint(x: x, y: y))
         }
+
+        // 先用后台缓存的预览图填充，避免后面窗口空白（命中缓存时瞬时显示）
+        prefillCachedPreviews(for: sortedWindows, viewModel: vm)
 
         // 先加载第一个窗口的预览图，减少空白闪烁
         preloadFirstPreview(for: sortedWindows, viewModel: vm)

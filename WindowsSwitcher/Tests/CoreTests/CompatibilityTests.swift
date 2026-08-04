@@ -96,11 +96,18 @@ final class CompatibilityTests: XCTestCase {
         let json = """
         {"appearance":{"panelOpacity":0.9,"panelCornerRadius":12,"previewWidth":640,
         "previewHeight":360,"previewSize":"中","switcherColumns":0,"theme":"auto","futureField":"ignored"},
-        "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
-        "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0,"defaultSelectSecond":false},
-        "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
-        "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256},
-        "dockPreview":{"enabled":true,"hoverDelay":0.35,"hideDelay":0.2,"maxPreviewCount":4,"previewWidth":104,"previewHeight":58,"showAnimation":true}}
+        "behavior":{"sortOrder":"recent","showOffScreenWindows":false,
+        "previewUpdateInterval":0.1,"panelDisplayDelay":0.0,"defaultSelectSecond":false,
+        "showBackgroundPreview":true,"launchAtLogin":false},
+        "hotKeys":{"switchKeyCode":48,"switchModifiers":2048,
+        "reverseSwitchModifiers":2560,"appSwitchKeyCode":50,"appSwitchModifiers":2048,
+        "appSwitchReverseKeyCode":50,"appSwitchReverseModifiers":2560,"appSwitchEnabled":true},
+        "dockPreview":{"enabled":true,"hoverDelay":0.05,"hideDelay":0.1,"maxPreviewCount":4,
+        "previewWidth":104,"previewHeight":58,"showAnimation":true,"verticalSpacing":0,
+        "horizontalSpacing":0,"showAppIcon":true},
+        "update":{"autoCheckEnabled":false,"autoDownloadEnabled":false,"silentInstallEnabled":false,
+        "checkInterval":86400,"apiURL":"https://api.github.com/repos/sampou/WindowsSwitcher/releases/latest",
+        "releasesPageURL":"https://github.com/sampou/WindowsSwitcher/releases","githubToken":""}}
         """
         let data = json.data(using: .utf8)!
         let config = try JSONDecoder().decode(ConfigModel.self, from: data)
@@ -108,15 +115,22 @@ final class CompatibilityTests: XCTestCase {
     }
 
     func testConfigDecodesWithMissingFields() throws {
-        // 缺少 appearance/behavior 字段时使用默认值，hotKeys 需提供完整字段
+        // 使用当前 schema 的完整嵌套字段，额外字段缺失时由字段默认值覆盖
         let json = """
         {"appearance":{"panelOpacity":0.95,"panelCornerRadius":12,"previewWidth":640,
         "previewHeight":360,"previewSize":"中","switcherColumns":0,"theme":"auto"},
-        "behavior":{"sortOrder":"recent","showMinimizedWindows":true,
-        "showHiddenWindows":false,"previewUpdateInterval":0.1,"panelDisplayDelay":0.0,"defaultSelectSecond":false},
-        "hotKeys":{"switchKeyCode":48,"switchModifiers":256,
-        "reverseSwitchModifiers":131072,"appSwitchKeyCode":50,"appSwitchModifiers":256},
-        "dockPreview":{"enabled":true,"hoverDelay":0.35,"hideDelay":0.2,"maxPreviewCount":4,"previewWidth":104,"previewHeight":58,"showAnimation":true}}
+        "behavior":{"sortOrder":"recent","showOffScreenWindows":false,
+        "previewUpdateInterval":0.1,"panelDisplayDelay":0.0,"defaultSelectSecond":false,
+        "showBackgroundPreview":true,"launchAtLogin":false},
+        "hotKeys":{"switchKeyCode":48,"switchModifiers":2048,
+        "reverseSwitchModifiers":2560,"appSwitchKeyCode":50,"appSwitchModifiers":2048,
+        "appSwitchReverseKeyCode":50,"appSwitchReverseModifiers":2560,"appSwitchEnabled":true},
+        "dockPreview":{"enabled":true,"hoverDelay":0.05,"hideDelay":0.1,"maxPreviewCount":4,
+        "previewWidth":104,"previewHeight":58,"showAnimation":true,"verticalSpacing":0,
+        "horizontalSpacing":0,"showAppIcon":true},
+        "update":{"autoCheckEnabled":false,"autoDownloadEnabled":false,"silentInstallEnabled":false,
+        "checkInterval":86400,"apiURL":"https://api.github.com/repos/sampou/WindowsSwitcher/releases/latest",
+        "releasesPageURL":"https://github.com/sampou/WindowsSwitcher/releases","githubToken":""}}
         """
         let data = json.data(using: .utf8)!
         let config = try JSONDecoder().decode(ConfigModel.self, from: data)

@@ -313,7 +313,7 @@ private class TestWindowManager: WindowManagerProtocol {
         self.testWindows = windows
     }
 
-    nonisolated func getAllWindows() -> [WindowModel] {
+    nonisolated func getAllWindows(forceRefresh: Bool = false) -> [WindowModel] {
         return testWindows
     }
 
@@ -329,6 +329,7 @@ private class TestWindowManager: WindowManagerProtocol {
     nonisolated func minimizeWindow(_ window: WindowModel) {}
     nonisolated func hideWindow(_ window: WindowModel) {}
     nonisolated func observeWindowChanges(_ handler: @escaping (WindowEvent) -> Void) {}
+    nonisolated func refreshCache() {}
     nonisolated func startMonitoring() {}
     nonisolated func stopMonitoring() {}
 }

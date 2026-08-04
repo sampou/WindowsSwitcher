@@ -6,7 +6,7 @@
 #   bash build-release.sh [修复项目数]
 #   例如：bash build-release.sh 2  # 修复了2个项目，版本号递增0.0.2
 
-set -e
+set -euo pipefail
 
 # 获取修复项目数（默认为1）
 FIX_COUNT=${1:-1}
@@ -16,6 +16,17 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT_DIR="$PROJECT_DIR/release"
 BUILD_DIR="$PROJECT_DIR/build"
 INFO_PLIST="$PROJECT_DIR/WindowsSwitcher/Sources/Info.plist"
+SIGNING_IDENTITY="${WINDOWSSWITCHER_SIGN_IDENTITY:-WindowsSwitcher Local Signing}"
+SIGNING_KEYCHAIN="${WINDOWSSWITCHER_SIGN_KEYCHAIN:-$(security default-keychain -d user | sed -E 's/^[[:space:]]*"([^"]+)"[[:space:]]*$/\1/')}"
+ENTITLEMENTS="$PROJECT_DIR/WindowsSwitcher/Sources/WindowsSwitcher.entitlements"
+INSTALL_PATH="/Applications/WindowsSwitcher.app"
+
+# 在修改版本号前确认签名环境，避免预检失败仍然递增版本。
+if ! security find-identity -v -p codesigning "$SIGNING_KEYCHAIN" | grep -Fq "$SIGNING_IDENTITY"; then
+    echo "❌ 找不到本地签名身份：$SIGNING_IDENTITY"
+    echo "   请先在登录钥匙串中配置该身份，或设置 WINDOWSSWITCHER_SIGN_IDENTITY。"
+    exit 1
+fi
 
 # 从 Info.plist 读取当前版本号
 CURRENT_VERSION=$(grep -A1 "CFBundleShortVersionString" "$INFO_PLIST" | grep "<string>" | sed 's/.*<string>\([0-9.]*\)<\/string>.*/\1/')
@@ -59,6 +70,14 @@ echo "🔧 清理旧的构建..."
 rm -rf "$BUILD_DIR" "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
+# 先使用无签名构建，再用本机固定身份签名，避免 Xcode 自动签名受团队配置影响。
+XCODE_SIGNING_ARGS=(
+    CODE_SIGNING_ALLOWED=NO
+    CODE_SIGNING_REQUIRED=NO
+    CODE_SIGN_IDENTITY=""
+    DEVELOPMENT_TEAM=""
+)
+
 # Release 构建
 echo ""
 echo "🏗️  开始 Release 构建..."
@@ -67,6 +86,7 @@ xcodebuild -project WindowsSwitcher.xcodeproj \
   -scheme WindowsSwitcher \
   -configuration Release \
   -derivedDataPath build \
+  "${XCODE_SIGNING_ARGS[@]}" \
   clean build \
   | tail -20
 
@@ -79,6 +99,20 @@ fi
 
 echo ""
 echo "✅ 构建成功！"
+
+# 使用稳定的本地身份签名，确保 macOS 权限和应用身份可持续匹配。
+echo ""
+echo "🔐 使用本地签名身份：$SIGNING_IDENTITY"
+codesign --force \
+  --deep \
+  --options runtime \
+  --timestamp=none \
+  --entitlements "$ENTITLEMENTS" \
+  --keychain "$SIGNING_KEYCHAIN" \
+  --sign "$SIGNING_IDENTITY" \
+  "$APP_PATH"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+echo "✅ 应用签名校验通过"
 
 # 创建 ZIP 压缩包
 echo ""
@@ -99,8 +133,8 @@ DMG_BACKGROUND="$PROJECT_DIR/scripts/dmg-background.png"
 # 删除旧的 DMG（如果存在）
 rm -f "$DMG_FINAL"
 
-# 使用 create-dmg 创建带自定义样式的 DMG
-create-dmg \
+# 使用 create-dmg 创建带自定义样式的 DMG；失败时回退到基础 hdiutil
+if ! create-dmg \
   --volname "Windows Switcher" \
   --volicon "$DMG_ICON" \
   --background "$DMG_BACKGROUND" \
@@ -113,11 +147,34 @@ create-dmg \
   --app-drop-link 500 200 \
   "$DMG_FINAL" \
   "$APP_PATH" 2>&1 | grep -v "^ "
+then
+  echo "⚠️  create-dmg 失败，改用 hdiutil 直接创建 DMG..."
+  STAGE_DIR="$BUILD_DIR/dmg-stage"
+  rm -rf "$STAGE_DIR"
+  mkdir -p "$STAGE_DIR"
+  cp -R "$APP_PATH" "$STAGE_DIR/"
+  hdiutil create \
+    -volname "Windows Switcher" \
+    -srcfolder "$STAGE_DIR" \
+    -ov \
+    -format UDZO \
+    "$DMG_FINAL"
+fi
 
-# 清理临时 DMG 文件
+# 清理临时 DMG 文件和 staging 目录
 rm -f "$OUTPUT_DIR"/rw.*.dmg 2>/dev/null
+rm -rf "$BUILD_DIR/dmg-stage" 2>/dev/null
 
+[[ -f "$DMG_FINAL" ]] || { echo "❌ DMG 创建失败：找不到 $DMG_FINAL"; exit 1; }
 echo "✅ DMG 创建成功：$DMG_FINAL"
+
+# 产物校验通过后自动安装到 /Applications。
+echo ""
+echo "📥 安装应用到 $INSTALL_PATH ..."
+mkdir -p "$INSTALL_PATH"
+rsync -aE --delete --checksum "$APP_PATH/" "$INSTALL_PATH/"
+codesign --verify --deep --strict --verbose=2 "$INSTALL_PATH"
+echo "✅ 安装完成：$INSTALL_PATH"
 
 # 显示结果
 echo ""

@@ -39,7 +39,7 @@ final class DockPreviewManualTests: XCTestCase {
 
     func testHoverDelayDefault() {
         let config = ConfigManager.shared.config.dockPreview
-        XCTAssertEqual(config.hoverDelay, 0.35, "默认悬停延迟应该是 350ms")
+        XCTAssertEqual(config.hoverDelay, 0.05, "默认悬停延迟应该是 50ms")
     }
 
     func testHoverDelayCustomValues() {
@@ -57,8 +57,8 @@ final class DockPreviewManualTests: XCTestCase {
     }
 
     func testHoverDelayMinimum() {
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.1 }
-        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.1, "悬停延迟应该支持最小值 100ms")
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.05 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.05, "悬停延迟应该支持最小值 50ms")
     }
 
     func testHoverDelayMaximum() {

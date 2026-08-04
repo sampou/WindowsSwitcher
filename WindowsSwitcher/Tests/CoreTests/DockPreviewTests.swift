@@ -56,8 +56,8 @@ final class DockPreviewTests: XCTestCase {
         let config = DockPreviewConfig()
 
         XCTAssertTrue(config.enabled, "默认应该启用")
-        XCTAssertEqual(config.hoverDelay, 0.35, "悬停延迟默认 350ms")
-        XCTAssertEqual(config.hideDelay, 0.2, "隐藏延迟默认 200ms")
+        XCTAssertEqual(config.hoverDelay, 0.05, "悬停延迟默认 50ms")
+        XCTAssertEqual(config.hideDelay, 0.1, "隐藏延迟默认 100ms")
         XCTAssertEqual(config.maxPreviewCount, 4, "最大预览数默认 4")
         XCTAssertEqual(config.previewWidth, 104, "预览宽度默认 104pt")
         XCTAssertEqual(config.previewHeight, 58, "预览高度默认 58pt")
@@ -120,7 +120,7 @@ final class DockPreviewTests: XCTestCase {
 
     func testHoverDelayConfiguration() {
         let config = ConfigManager.shared.config.dockPreview
-        XCTAssertGreaterThanOrEqual(config.hoverDelay, 0.1, "悬停延迟应该 >= 100ms")
+        XCTAssertGreaterThanOrEqual(config.hoverDelay, 0.05, "悬停延迟应该 >= 50ms")
         XCTAssertLessThanOrEqual(config.hoverDelay, 1.0, "悬停延迟应该 <= 1000ms")
     }
 
@@ -189,12 +189,12 @@ final class DockPreviewTests: XCTestCase {
         XCTAssertEqual(ConfigManager.shared.config.dockPreview.maxPreviewCount, 4)
     }
 
-    // MARK: - F12-T30 悬停延迟范围测试 (100ms-1000ms)
+    // MARK: - F12-T30 悬停延迟范围测试 (50ms-1000ms)
 
     func testHoverDelayRange() {
         // 测试最小值
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.1 }
-        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.1, "应该能设置为 100ms")
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.05 }
+        XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.05, "应该能设置为 50ms")
 
         // 测试最大值
         ConfigManager.shared.updateDockPreview { $0.hoverDelay = 1.0 }
@@ -205,7 +205,7 @@ final class DockPreviewTests: XCTestCase {
         XCTAssertEqual(ConfigManager.shared.config.dockPreview.hoverDelay, 0.35, "应该能设置为 350ms")
 
         // 恢复默认值
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.35 }
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.05 }
     }
 
     // MARK: - 通知测试

@@ -26,6 +26,18 @@ class DockEventMonitor: ObservableObject {
     private var hoverTimer: Timer?
     private var hideTimer: Timer?  // 延迟隐藏计时器
 
+    // MARK: - 性能优化：节流与缓存
+    private var lastMouseMovedTime: CFTimeInterval = 0
+    private let mouseMovedThrottle: CFTimeInterval = 0.03  // 30ms 节流（约 33fps），避免高频 mouseMoved 拖垮 CPU
+    private var cachedDockFrame: CGRect?
+    private var dockFrameCacheTime: Date?
+
+    // Dock 图标布局缓存（仅在 Dock 区域内有效，避免每次 mouseMoved 都遍历 AX 树）
+    private var dockIconLayoutCache: [(bundleID: String, frame: CGRect)]?
+    private var dockIconLayoutCacheTime: Date?
+    private let iconLayoutCacheExpiry: TimeInterval = 0.5  // 500ms 内复用图标布局
+    private var lastHoveredBundleID: String?  // 上次悬停的图标，用于快速判断是否变化
+
     // MARK: - 缓存
     private var dockAppsListCache: [(String, String)]?
     private var dockAppsListCacheTime: Date?
@@ -78,10 +90,17 @@ class DockEventMonitor: ObservableObject {
     }
 
     private func handleMouseMoved(_ event: NSEvent) {
+        // 节流：限制 mouseMoved 处理频率，避免高频事件持续占用 CPU
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastMouseMovedTime < mouseMovedThrottle {
+            return
+        }
+        lastMouseMovedTime = now
+
         let location = NSEvent.mouseLocation
         mouseLocation = location
 
-        let dockFrame = getDockFrame()
+        let dockFrame = getCachedDockFrame()
         let expandedDockFrame = dockFrame.insetBy(dx: -30, dy: -30)
         let isInDockArea = expandedDockFrame.contains(location)
 
@@ -100,7 +119,7 @@ class DockEventMonitor: ObservableObject {
 
         // 检查是否在 Dock 区域或预览窗口内
         if isInDockArea {
-            // 在 Dock 区域，尝试检测具体应用图标
+            // 在 Dock 区域，尝试检测具体应用图标（使用缓存的图标布局）
             if let iconInfo = getDockIconInfoAtLocation(location) {
                 // 成功检测到图标，启动悬停计时器
                 startHoverTimer(for: iconInfo)
@@ -124,6 +143,19 @@ class DockEventMonitor: ObservableObject {
         }
     }
 
+    /// 获取 Dock frame（带缓存，1 秒内复用，避免每次 mouseMoved 都读 UserDefaults）
+    private func getCachedDockFrame() -> CGRect {
+        if let frame = cachedDockFrame,
+           let time = dockFrameCacheTime,
+           Date().timeIntervalSince(time) < 1.0 {
+            return frame
+        }
+        let frame = getDockFrame()
+        cachedDockFrame = frame
+        dockFrameCacheTime = Date()
+        return frame
+    }
+
     /// 检查鼠标是否在预览窗口区域内
     func checkMouseInPreviewWindow(previewFrame: CGRect) {
         let isInPreview = previewFrame.contains(mouseLocation)
@@ -135,7 +167,7 @@ class DockEventMonitor: ObservableObject {
             hideTimer = nil
         } else {
             // 鼠标离开预览窗口，检查是否也在 Dock 区域
-            let dockFrame = getDockFrame()
+            let dockFrame = getCachedDockFrame()
             let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(mouseLocation)
 
             if !isInDockArea {
@@ -179,6 +211,11 @@ class DockEventMonitor: ObservableObject {
         dockAppsListCacheTime = nil
         runningAppsLookup = [:]
         runningAppsLookupTime = nil
+        dockIconLayoutCache = nil
+        dockIconLayoutCacheTime = nil
+        lastHoveredBundleID = nil
+        cachedDockFrame = nil
+        dockFrameCacheTime = nil
     }
 
     // 获取 Dock 图标信息（包含精确位置）
@@ -188,7 +225,29 @@ class DockEventMonitor: ObservableObject {
         // 转换到 AX 坐标系
         let axLocation = CGPoint(x: location.x, y: screenHeight - location.y)
 
-        // 找到 Dock 进程
+        // 优先使用缓存的图标布局做命中测试（避免每次 mouseMoved 都遍历 AX 树）
+        if let layout = getCachedDockIconLayout() {
+            for icon in layout {
+                if icon.frame.contains(axLocation) {
+                    // 转换回 macOS 屏幕坐标系
+                    let macFrame = CGRect(
+                        x: icon.frame.origin.x,
+                        y: screenHeight - icon.frame.origin.y - icon.frame.size.height,
+                        width: icon.frame.size.width,
+                        height: icon.frame.size.height
+                    )
+                    let center = CGPoint(x: macFrame.midX, y: macFrame.midY)
+                    // 若悬停的是同一图标，无需重复查询 bundleID
+                    if lastHoveredBundleID == icon.bundleID {
+                        return DockIconInfo(bundleID: icon.bundleID, frame: macFrame, center: center)
+                    }
+                    lastHoveredBundleID = icon.bundleID
+                    return DockIconInfo(bundleID: icon.bundleID, frame: macFrame, center: center)
+                }
+            }
+        }
+
+        // 缓存未命中或为空，回退到 AX 实时遍历
         guard let dockApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.dock" }) else {
             return nil
         }
@@ -202,6 +261,9 @@ class DockEventMonitor: ObservableObject {
             return nil
         }
 
+        // 本次遍历得到的图标布局，用于更新缓存
+        var layoutSnapshot: [(bundleID: String, frame: CGRect)] = []
+
         for child in children {
             var roleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleRef)
@@ -211,8 +273,6 @@ class DockEventMonitor: ObservableObject {
                 var listChildrenRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(child, kAXChildrenAttribute as CFString, &listChildrenRef) == .success,
                    let listChildren = listChildrenRef as? [AXUIElement] {
-
-                    Logger.debug("[Dock AX] AX 图标元素总数: \(listChildren.count)")
 
                     for (childIdx, listChild) in listChildren.enumerated() {
                         var positionRef: CFTypeRef?
@@ -230,22 +290,24 @@ class DockEventMonitor: ObservableObject {
 
                         let iconRect = CGRect(origin: position, size: size)
 
+                        // 收集图标布局用于缓存（无论是否命中都记录）
+                        var cachedBundleID: String?
+                        if cachedBundleID == nil {
+                            cachedBundleID = getBundleIDFromDockIcon(listChild)
+                        }
+                        if cachedBundleID == nil {
+                            cachedBundleID = getBundleIDByDockIndex(childIdx)
+                        }
+                        if cachedBundleID == nil {
+                            cachedBundleID = getBundleIDFromRunningApps(listChild)
+                        }
+                        if let bid = cachedBundleID {
+                            layoutSnapshot.append((bid, iconRect))
+                        }
+
                         if iconRect.contains(axLocation) {
                             // 尝试多种方式获取 bundleID
-                            var bundleID: String?
-
-                            // 方法1: 从图标元素获取
-                            bundleID = getBundleIDFromDockIcon(listChild)
-
-                            // 方法2: 通过索引获取（后备方案）
-                            if bundleID == nil {
-                                bundleID = getBundleIDByDockIndex(childIdx)
-                            }
-
-                            // 方法3: 通过图标描述匹配运行中的应用（适用于未保留在程序坞的应用）
-                            if bundleID == nil {
-                                bundleID = getBundleIDFromRunningApps(listChild)
-                            }
+                            var bundleID: String? = cachedBundleID
 
                             if let bundleID = bundleID {
                                 // 转换回 macOS 屏幕坐标系
@@ -257,7 +319,9 @@ class DockEventMonitor: ObservableObject {
                                 )
                                 let center = CGPoint(x: macFrame.midX, y: macFrame.midY)
 
-                                Logger.debug("[Dock AX] getDockIconInfoAtLocation 成功: \(bundleID), center=\(center)")
+                                // 更新布局缓存
+                                updateDockIconLayoutCache(layoutSnapshot)
+                                lastHoveredBundleID = bundleID
                                 return DockIconInfo(bundleID: bundleID, frame: macFrame, center: center)
                             }
                         }
@@ -266,7 +330,26 @@ class DockEventMonitor: ObservableObject {
             }
         }
 
+        // 遍历完未命中，仍更新布局缓存（供下次快速命中）
+        updateDockIconLayoutCache(layoutSnapshot)
         return nil
+    }
+
+    /// 获取缓存的 Dock 图标布局（带位置），iconLayoutCacheExpiry 内复用
+    private func getCachedDockIconLayout() -> [(bundleID: String, frame: CGRect)]? {
+        guard let cache = dockIconLayoutCache,
+              let time = dockIconLayoutCacheTime,
+              Date().timeIntervalSince(time) < iconLayoutCacheExpiry else {
+            return nil
+        }
+        return cache
+    }
+
+    /// 更新 Dock 图标布局缓存
+    private func updateDockIconLayoutCache(_ layout: [(bundleID: String, frame: CGRect)]) {
+        guard !layout.isEmpty else { return }
+        dockIconLayoutCache = layout
+        dockIconLayoutCacheTime = Date()
     }
 
     // 转换屏幕坐标

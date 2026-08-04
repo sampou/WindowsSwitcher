@@ -248,18 +248,16 @@ final class FilterCriteriaTests: XCTestCase {
     func testDefaultValues() {
         let c = FilterCriteria()
         XCTAssertEqual(c.searchText, "")
-        XCTAssertTrue(c.showMinimized)
-        XCTAssertFalse(c.showHidden)
+        XCTAssertFalse(c.showOffScreen)
         XCTAssertNil(c.appName)
         XCTAssertFalse(c.currentSpaceOnly)
     }
 
     func testCustomInit() {
-        let c = FilterCriteria(searchText: "test", showMinimized: false,
-                               showHidden: true, appName: "Safari", currentSpaceOnly: true)
+        let c = FilterCriteria(searchText: "test", showOffScreen: true,
+                               appName: "Safari", currentSpaceOnly: true)
         XCTAssertEqual(c.searchText, "test")
-        XCTAssertFalse(c.showMinimized)
-        XCTAssertTrue(c.showHidden)
+        XCTAssertTrue(c.showOffScreen)
         XCTAssertEqual(c.appName, "Safari")
         XCTAssertTrue(c.currentSpaceOnly)
     }
@@ -286,24 +284,24 @@ final class FilterCriteriaTests: XCTestCase {
         XCTAssertEqual(result.first?.appName, "Safari")
     }
 
-    func testShowHiddenFalseExcludesHidden() {
+    func testShowOffScreenFalseExcludesHidden() {
         let engine = FilterEngine()
         let windows = [
             makeWindow(id: 1, app: "A", hidden: false),
             makeWindow(id: 2, app: "B", hidden: true)
         ]
-        let result = engine.filter(windows, by: FilterCriteria(showHidden: false))
+        let result = engine.filter(windows, by: FilterCriteria(showOffScreen: false))
         XCTAssertEqual(result.count, 1)
         XCTAssertFalse(result.first!.isHidden)
     }
 
-    func testShowHiddenTrueIncludesHidden() {
+    func testShowOffScreenTrueIncludesHidden() {
         let engine = FilterEngine()
         let windows = [
             makeWindow(id: 1, app: "A", hidden: false),
             makeWindow(id: 2, app: "B", hidden: true)
         ]
-        let result = engine.filter(windows, by: FilterCriteria(showMinimized: true, showHidden: true))
+        let result = engine.filter(windows, by: FilterCriteria(showOffScreen: true))
         XCTAssertEqual(result.count, 2)
     }
 
@@ -396,12 +394,12 @@ final class SwitchPanelViewModelNotificationTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedIndex, viewModel.filteredWindows.count - 1)
     }
 
-    // applyFilter respects showMinimized config
-    func testApplyFilterRespectsShowMinimizedConfig() {
-        ConfigManager.shared.updateBehavior { $0.showMinimizedWindows = false }
+    // applyFilter respects showOffScreen config
+    func testApplyFilterRespectsShowOffScreenConfig() {
+        ConfigManager.shared.updateBehavior { $0.showOffScreenWindows = false }
         viewModel.applyFilter()
         XCTAssertFalse(viewModel.filteredWindows.contains { $0.isMinimized })
-        ConfigManager.shared.updateBehavior { $0.showMinimizedWindows = true }
+        ConfigManager.shared.updateBehavior { $0.showOffScreenWindows = true }
     }
 
     // searchText empty restores all

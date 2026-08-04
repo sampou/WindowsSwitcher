@@ -184,7 +184,7 @@ final class DockPreviewIntegrationTests: XCTestCase {
         XCTAssertEqual(config.hoverDelay, 0.5, "悬停延迟应该能正确配置")
 
         // 恢复默认
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.35 }
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.05 }
     }
 
     // MARK: - F12-INT11: 选择窗口后隐藏预览测试
@@ -361,14 +361,14 @@ final class DockPreviewErrorHandlingTests: XCTestCase {
 
     func testConfigOutOfRangeHandling() {
         // 测试超出范围的配置值
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.05 } // 小于最小值
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.01 } // 小于最小值
 
         // 验证配置被正确限制
         let config = ConfigManager.shared.config.dockPreview
-        XCTAssertGreaterThanOrEqual(config.hoverDelay, 0.1, "悬停延迟应该被限制在最小值以上")
+        XCTAssertEqual(config.hoverDelay, 0.05, "悬停延迟应该被限制为最小值 50ms")
 
         // 恢复默认
-        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.35 }
+        ConfigManager.shared.updateDockPreview { $0.hoverDelay = 0.05 }
     }
 
     // MARK: - F12-ERR03: 空 Bundle ID 处理

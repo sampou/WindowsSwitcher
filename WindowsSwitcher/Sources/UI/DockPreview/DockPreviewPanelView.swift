@@ -140,13 +140,13 @@ class DockPreviewManager: ObservableObject {
 
     /// 检查鼠标是否在预览窗口内
     private func checkMouseInPreviewWindow(_ location: CGPoint) {
-        guard isPreviewVisible else { return }
-
-        // 扩大检测区域，增加 10 像素的容差
+        // 即使预览不可见也需要更新鼠标状态，避免 isMouseInPreviewWindow 卡在 true
         let expandedFrame = previewWindowFrame.insetBy(dx: -10, dy: -10)
-        let isInPreview = expandedFrame.contains(location)
+        let isInPreview = isPreviewVisible && expandedFrame.contains(location)
 
         eventMonitor.isMouseInPreviewWindow = isInPreview
+
+        guard isPreviewVisible else { return }
 
         if isInPreview {
             // 鼠标在预览窗口内，保持显示
@@ -841,8 +841,9 @@ struct DockPreviewItemView: View {
     @ViewBuilder
     private var previewContent: some View {
         ZStack {
+            // 透明背景：窗口预览图按真实比例显示时不露出灰色填充边框
             RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
-                .fill(DesignTokens.Colors.secondaryBackground)
+                .fill(Color.clear)
 
             // 优先显示预览图，其次显示缓存图片，最后显示占位图标
             if let image = previewImage ?? cachedImage {

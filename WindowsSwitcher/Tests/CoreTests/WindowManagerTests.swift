@@ -9,25 +9,25 @@ final class WindowManagerTests: XCTestCase {
     func testFilterBySearchText() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "Safari", showMinimized: true, showHidden: true)
+        let criteria = FilterCriteria(searchText: "Safari", showOffScreen: true)
         let result = engine.filter(windows, by: criteria)
         XCTAssertTrue(result.allSatisfy { $0.appName.contains("Safari") || $0.windowTitle.contains("Safari") })
     }
 
-    func testFilterExcludesMinimized() {
+    func testFilterExcludesOffScreenWhenDisabled() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "", showMinimized: false, showHidden: true)
+        let criteria = FilterCriteria(searchText: "", showOffScreen: false)
         let result = engine.filter(windows, by: criteria)
-        XCTAssertFalse(result.contains { $0.isMinimized })
+        XCTAssertFalse(result.contains { $0.isMinimized || $0.isHidden })
     }
 
-    func testFilterExcludesHidden() {
+    func testFilterIncludesOffScreenWhenEnabled() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "", showMinimized: true, showHidden: false)
+        let criteria = FilterCriteria(searchText: "", showOffScreen: true)
         let result = engine.filter(windows, by: criteria)
-        XCTAssertFalse(result.contains { $0.isHidden })
+        XCTAssertTrue(result.contains { $0.isMinimized || $0.isHidden })
     }
 
     func testSortByAppName() {
@@ -140,7 +140,7 @@ final class WindowManagerTests: XCTestCase {
 
     func testEmptyWindowList() {
         let engine = FilterEngine()
-        let result = engine.filter([], by: FilterCriteria(searchText: "test", showMinimized: true, showHidden: true))
+        let result = engine.filter([], by: FilterCriteria(searchText: "test", showOffScreen: true))
         XCTAssertTrue(result.isEmpty)
     }
 
@@ -148,7 +148,7 @@ final class WindowManagerTests: XCTestCase {
         let engine = FilterEngine()
         let windows = makeMockWindows()
         // 小写模糊匹配
-        let criteria = FilterCriteria(searchText: "saf", showMinimized: true, showHidden: true)
+        let criteria = FilterCriteria(searchText: "saf", showOffScreen: true)
         let result = engine.filter(windows, by: criteria)
         XCTAssertFalse(result.isEmpty)
         XCTAssertTrue(result.allSatisfy {

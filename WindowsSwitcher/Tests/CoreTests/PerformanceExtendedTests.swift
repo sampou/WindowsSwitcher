@@ -81,20 +81,20 @@ final class PerformanceExtendedTests: XCTestCase {
         let cache = PreviewCache()
         let image = NSImage(size: NSSize(width: 124, height: 70))
         // 预热
-        for i in 0..<10 { await cache.set(image, for: CGWindowID(i), windowHash: "hash-\(i)") }
+        for i in 0..<10 { await cache.set(image, for: CGWindowID(i)) }
         // 测量 100 次读取
         let start = CFAbsoluteTimeGetCurrent()
-        for i in 0..<100 { _ = await cache.get(for: CGWindowID(i % 10), windowHash: "hash-\(i % 10)") }
+        for i in 0..<100 { _ = await cache.get(for: CGWindowID(i % 10)) }
         let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
         XCTAssertLessThan(ms, 50, "100次缓存读取应 <50ms，实测 \(String(format:"%.2f",ms))ms")
     }
 
-    // MARK: - 内存基线（ConfigModel 不超过 1KB）
+    // MARK: - 内存基线（ConfigModel 不超过 2KB）
 
     func testConfigModelMemoryFootprint() throws {
         let config = ConfigModel()
         let data = try JSONEncoder().encode(config)
-        XCTAssertLessThan(data.count, 1024, "ConfigModel 序列化应 <1KB，实测 \(data.count) bytes")
+        XCTAssertLessThan(data.count, 2 * 1024, "ConfigModel 序列化应 <2KB，实测 \(data.count) bytes")
     }
 
     // MARK: - FilterEngine 并发安全

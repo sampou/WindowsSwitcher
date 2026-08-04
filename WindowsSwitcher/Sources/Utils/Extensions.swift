@@ -99,11 +99,17 @@ class PermissionManager: ObservableObject {
     }
 
     // MARK: - 请求屏幕录制权限
-    func requestScreenRecordingPermission() {
-        CGRequestScreenCaptureAccess()
+    func requestScreenRecordingPermission(completion: ((Bool) -> Void)? = nil) {
+        // 只有调用系统请求 API 才会触发 macOS 的原生屏幕录制授权提示。
+        _ = CGRequestScreenCaptureAccess()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.checkAllPermissions()
+            guard let self else {
+                completion?(false)
+                return
+            }
+            self.checkAllPermissions()
+            completion?(self.screenRecordingStatus.isAuthorized)
             NotificationCenter.default.post(name: .permissionStatusChanged, object: nil)
         }
     }

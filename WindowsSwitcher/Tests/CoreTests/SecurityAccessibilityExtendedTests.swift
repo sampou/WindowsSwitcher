@@ -24,12 +24,14 @@ final class SecurityExtendedTests: XCTestCase {
     // MARK: - 配置数据安全
 
     func testConfigContainsNoSensitiveFields() throws {
-        let data = try JSONEncoder().encode(ConfigModel())
+        let config = ConfigModel()
+        let data = try JSONEncoder().encode(config)
         let json = String(data: data, encoding: .utf8) ?? ""
-        for keyword in ["password", "token", "secret", "apiKey", "privateKey", "credential"] {
+        for keyword in ["password", "secret", "apiKey", "privateKey", "credential"] {
             XCTAssertFalse(json.lowercased().contains(keyword),
                            "配置不应包含敏感字段：\(keyword)")
         }
+        XCTAssertTrue(config.update.githubToken.isEmpty, "默认配置不应包含 GitHub Token")
     }
 
     func testConfigStorageKeyIsNamespaced() {
@@ -40,10 +42,10 @@ final class SecurityExtendedTests: XCTestCase {
 
     func testConfigResetClearsAllFields() {
         ConfigManager.shared.updateAppearance { $0.panelOpacity = 0.1 }
-        ConfigManager.shared.updateBehavior { $0.showHiddenWindows = true }
+        ConfigManager.shared.updateBehavior { $0.showOffScreenWindows = true }
         ConfigManager.shared.reset()
         XCTAssertEqual(ConfigManager.shared.config.appearance.panelOpacity, 0.95, accuracy: 0.001)
-        XCTAssertFalse(ConfigManager.shared.config.behavior.showHiddenWindows)
+        XCTAssertFalse(ConfigManager.shared.config.behavior.showOffScreenWindows)
     }
 
     // MARK: - 输入验证：FilterCriteria 边界

@@ -68,6 +68,7 @@ struct WindowItemView: View {
     // MARK: - 预览图
     private var previewArea: some View {
         ZStack {
+            // 透明背景：窗口预览图按真实比例显示时不露出填充边框
             RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
                 .fill(Color.clear)
 

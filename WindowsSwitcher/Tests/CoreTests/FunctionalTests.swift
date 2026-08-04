@@ -139,12 +139,11 @@ final class F02PreviewTests: XCTestCase {
         // 模拟 30fps × 1s = 30 次更新
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<30 {
-                let hash = "hash-\(i % 10)"
-                group.addTask { await cache.set(image, for: CGWindowID(i % 10), windowHash: hash) }
+                group.addTask { await cache.set(image, for: CGWindowID(i % 10)) }
             }
         }
         // 不崩溃即通过
-        let result = await cache.get(for: 0, windowHash: "hash-0")
+        let result = await cache.get(for: 0)
         XCTAssertNotNil(result)
     }
 
@@ -162,21 +161,22 @@ final class F02PreviewTests: XCTestCase {
         await generator.clearCache()
     }
 
-    // AC-03: 预览缓存过期后重新生成
-    func testAC03_PreviewCacheExpiry() async {
+    // AC-03: 预览缓存陈旧状态
+    func testAC03_PreviewCacheStaleness() async {
         let cache = PreviewCache()
-        await cache.setExpiry(0.01) // 10ms 过期
         let img = NSImage(size: NSSize(width: 124, height: 70))
-        await cache.set(img, for: 1, windowHash: "hash-1")
-        try? await Task.sleep(nanoseconds: 20_000_000) // 等 20ms
-        let result = await cache.get(for: 1, windowHash: "hash-1")
-        XCTAssertNil(result, "过期缓存应返回 nil")
+
+        let initiallyStale = await cache.isStale(for: 1)
+        XCTAssertTrue(initiallyStale, "未缓存的窗口应视为陈旧")
+        await cache.set(img, for: 1)
+        let freshlyStale = await cache.isStale(for: 1)
+        XCTAssertFalse(freshlyStale, "刚写入的缓存不应视为陈旧")
     }
 
     // AC-03: 无效窗口 ID 返回 nil
     func testAC03_InvalidWindowIDReturnsNil() async {
         let cache = PreviewCache()
-        let result = await cache.get(for: CGWindowID(999999), windowHash: "invalid")
+        let result = await cache.get(for: CGWindowID(999999))
         XCTAssertNil(result)
     }
 
@@ -184,11 +184,12 @@ final class F02PreviewTests: XCTestCase {
     func testAC03_CacheEvictsOldestWhenFull() async {
         let cache = PreviewCache()
         let img = NSImage(size: NSSize(width: 1, height: 1))
-        // 写入 81 条（maxSize=80），第 1 条应被淘汰
-        for i in 0..<81 {
-            await cache.set(img, for: CGWindowID(i), windowHash: "hash-\(i)")
+        // 写满内存缓存后再写入一条，最旧条目应被淘汰
+        let entryCount = PreviewCacheConfig.maxMemorySize + 1
+        for i in 0..<entryCount {
+            await cache.set(img, for: CGWindowID(i))
         }
-        let first = await cache.get(for: CGWindowID(0), windowHash: "hash-0")
+        let first = await cache.get(for: CGWindowID(0))
         XCTAssertNil(first, "最旧条目应被淘汰")
     }
 }
@@ -296,6 +297,42 @@ final class F04WindowManagementTests: XCTestCase {
         all.forEach { vm.closeWindow($0) }
         XCTAssertNil(vm.selectedWindow)
     }
+
+    func testAC06_RefreshWindowsUsesForceRefresh() {
+        let windows = (1...4).map { makeWindow(id: CGWindowID($0), app: "App\($0)", offset: -Double($0)) }
+        let manager = RecordingWindowManager(windows: windows)
+        let vm = SwitchPanelViewModel(
+            windows: windows,
+            windowManager: manager,
+            previewGenerator: PreviewGenerator(),
+            filterEngine: FilterEngine()
+        )
+
+        vm.refreshWindows()
+
+        XCTAssertEqual(manager.forceRefreshRequests, [true])
+        XCTAssertEqual(vm.filteredWindows.count, windows.count)
+    }
+
+    func testAC06_CloseWindowRefreshesWithForceRefresh() async {
+        let windows = (1...4).map { makeWindow(id: CGWindowID($0), app: "App\($0)", offset: -Double($0)) }
+        let manager = RecordingWindowManager(windows: windows)
+        let vm = SwitchPanelViewModel(
+            windows: windows,
+            windowManager: manager,
+            previewGenerator: PreviewGenerator(),
+            filterEngine: FilterEngine()
+        )
+
+        guard let first = vm.filteredWindows.first else { return XCTFail() }
+        vm.closeWindow(first)
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        XCTAssertEqual(manager.forceRefreshRequests, [true])
+        XCTAssertEqual(vm.filteredWindows.count, windows.count - 1)
+        XCTAssertFalse(vm.filteredWindows.contains { $0.id == first.id })
+    }
 }
 
 // MARK: - AC-07：智能筛选（F05）
@@ -361,13 +398,13 @@ final class F05FilterTests: XCTestCase {
         XCTAssertFalse(result.isEmpty)
     }
 
-    // AC-07: showMinimized=false 过滤最小化窗口
-    func testAC07_ShowMinimizedFalseFilters() {
+    // AC-07: showOffScreen=false 过滤离屏窗口
+    func testAC07_ShowOffScreenFalseFilters() {
         let windows = [
             makeWindow(id: 1, app: "A", offset: -1, minimized: false),
             makeWindow(id: 2, app: "B", offset: -2, minimized: true),
         ]
-        let result = engine.filter(windows, by: FilterCriteria(showMinimized: false))
+        let result = engine.filter(windows, by: FilterCriteria(showOffScreen: false))
         XCTAssertFalse(result.contains { $0.isMinimized })
     }
 }
@@ -453,15 +490,13 @@ final class F07SettingsTests: XCTestCase {
     func testAC09_BehaviorSettingsPersist() throws {
         ConfigManager.shared.updateBehavior {
             $0.sortOrder = .windowTitle
-            $0.showMinimizedWindows = false
-            $0.showHiddenWindows = true
+            $0.showOffScreenWindows = true
             $0.previewUpdateInterval = 0.2
         }
         let data = try JSONEncoder().encode(ConfigManager.shared.config)
         let decoded = try JSONDecoder().decode(ConfigModel.self, from: data)
         XCTAssertEqual(decoded.behavior.sortOrder, .windowTitle)
-        XCTAssertFalse(decoded.behavior.showMinimizedWindows)
-        XCTAssertTrue(decoded.behavior.showHiddenWindows)
+        XCTAssertTrue(decoded.behavior.showOffScreenWindows)
         XCTAssertEqual(decoded.behavior.previewUpdateInterval, 0.2, accuracy: 0.001)
     }
 
@@ -565,8 +600,8 @@ final class F08HotKeyTests: XCTestCase {
     func testAC10_DefaultHotKeyConfig() {
         let hk = HotKeyConfig()
         XCTAssertEqual(hk.switchKeyCode, 48)          // Tab
-        XCTAssertEqual(hk.switchModifiers, 256)        // Cmd
-        XCTAssertEqual(hk.reverseSwitchModifiers, 131072) // Cmd+Shift
+        XCTAssertEqual(hk.switchModifiers, 2048)       // Option
+        XCTAssertEqual(hk.reverseSwitchModifiers, 2560) // Option+Shift
         XCTAssertEqual(hk.appSwitchKeyCode, 50)        // `
     }
 
@@ -597,6 +632,57 @@ final class PanelAnimatorTests: XCTestCase {
         // hide: 0.15s = 150ms ≤ 300ms
         XCTAssertLessThanOrEqual(0.15, 0.3)
     }
+}
+
+// MARK: - Test WindowManager
+
+private final class RecordingWindowManager: WindowManagerProtocol {
+    private let lock = NSLock()
+    private var windows: [WindowModel]
+    private(set) var forceRefreshRequests: [Bool] = []
+
+    init(windows: [WindowModel]) {
+        self.windows = windows
+    }
+
+    func getAllWindows(forceRefresh: Bool = false) -> [WindowModel] {
+        lock.lock()
+        forceRefreshRequests.append(forceRefresh)
+        let currentWindows = windows
+        lock.unlock()
+        return currentWindows
+    }
+
+    func getWindows(for appName: String) -> [WindowModel] {
+        lock.lock()
+        let currentWindows = windows.filter { $0.appName == appName }
+        lock.unlock()
+        return currentWindows
+    }
+
+    func activateWindow(_ window: WindowModel) {}
+
+    func closeWindow(_ window: WindowModel) {
+        lock.lock()
+        windows.removeAll { $0.id == window.id }
+        lock.unlock()
+    }
+
+    func minimizeWindow(_ window: WindowModel) {
+        closeWindow(window)
+    }
+
+    func hideWindow(_ window: WindowModel) {
+        closeWindow(window)
+    }
+
+    func observeWindowChanges(_ handler: @escaping (WindowEvent) -> Void) {}
+
+    func refreshCache() {}
+
+    func startMonitoring() {}
+
+    func stopMonitoring() {}
 }
 
 // MARK: - Helpers

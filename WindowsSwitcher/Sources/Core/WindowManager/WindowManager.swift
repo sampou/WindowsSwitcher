@@ -37,11 +37,18 @@ class WindowManager: WindowManagerProtocol {
 
     // 应用信息缓存（PID -> (bundleID, icon, isHidden)）
     private var appInfoCache: [pid_t: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)] = [:]
-    private let appInfoCacheLock = NSLock()
+
+    // 线程安全锁：保护 windowCache、cachedWindows、cacheTimestamp、appInfoCache
+    // 后台预取线程和主线程并发读写这些 Dictionary 会触发 EXC_BAD_ACCESS
+    private let stateLock = NSLock()
 
     // 焦点窗口轮询定时器（用于监听同一应用内的窗口切换，如 Command+`）
     private var focusPollingTimer: Timer?
     private var lastFocusedWindowID: CGWindowID?
+
+    // 记录刚激活的窗口（防止 didActivateApplicationNotification 错误更新其他窗口）
+    private var lastActivatedWindowID: CGWindowID?
+    private var lastActivatedTime: Date?
 
     private init() {}
 
@@ -57,6 +64,9 @@ class WindowManager: WindowManagerProtocol {
     }
 
     func getAllWindows(forceRefresh: Bool = false) -> [WindowModel] {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+
         // 强制刷新时清除缓存时间戳
         if forceRefresh {
             cacheTimestamp = nil
@@ -88,7 +98,9 @@ class WindowManager: WindowManagerProtocol {
 
     /// 强制刷新窗口缓存
     func refreshCache() {
+        stateLock.lock()
         cacheTimestamp = nil
+        stateLock.unlock()
     }
 
     func getWindows(for appName: String) -> [WindowModel] {
@@ -100,24 +112,51 @@ class WindowManager: WindowManagerProtocol {
         Logger.operation("窗口激活开始", detail: "\(window.appName) - \(window.windowTitle) (ID: \(window.id), PID: \(window.ownerPID))")
 
         // 获取应用实例
-        guard let app = NSRunningApplication(processIdentifier: window.ownerPID) else {
+        let app: NSRunningApplication
+        if let runningApp = NSRunningApplication(processIdentifier: window.ownerPID) {
+            app = runningApp
+        } else {
             Logger.warning("Failed to get NSRunningApplication for PID: \(window.ownerPID), trying bundleID")
 
             // 降级：尝试通过 bundleIdentifier 查找应用
             let bundleID = window.bundleIdentifier
-            if let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first {
-                let result = appByBundle.activate(options: [.activateIgnoringOtherApps])
-                Logger.operation("窗口激活", detail: "通过 bundleID 激活", result: result ? "成功" : "失败")
+            guard let appByBundle = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
+                Logger.warning("Failed to find NSRunningApplication for bundleID: \(bundleID)")
+                return
             }
-            return
+            let result = appByBundle.activate(options: [.activateIgnoringOtherApps])
+            Logger.operation("窗口激活", detail: "通过 bundleID 激活", result: result ? "成功" : "失败")
+            app = appByBundle
         }
+
+        // 立即更新目标窗口的 lastActiveTime（避免 didActivateApplicationNotification 更新错误的窗口）
+        let now = Date()
+        stateLock.lock()
+        windowCache[window.id] = WindowModel(
+            id: window.id,
+            appName: window.appName,
+            bundleIdentifier: window.bundleIdentifier,
+            windowTitle: window.windowTitle,
+            appIcon: window.appIcon,
+            frame: window.frame,
+            isMinimized: window.isMinimized,
+            isHidden: window.isHidden,
+            isOnScreen: window.isOnScreen,
+            lastActiveTime: now,
+            windowLayer: window.windowLayer,
+            ownerPID: window.ownerPID,
+            isStandardWindow: window.isStandardWindow
+        )
+        lastActivatedWindowID = window.id
+        lastActivatedTime = now
+        stateLock.unlock()
 
         // 持久化保存窗口活动时间（异步执行，不阻塞激活）
         DispatchQueue.global(qos: .utility).async {
             WindowActivityStore.shared.saveLastActiveTime(
                 bundleIdentifier: window.bundleIdentifier,
                 windowTitle: window.windowTitle,
-                time: Date()
+                time: now
             )
         }
 
@@ -125,16 +164,16 @@ class WindowManager: WindowManagerProtocol {
         let isFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
 
         if isFrontmost {
-            // 同一应用内切换窗口：直接聚焦目标窗口
-            Logger.operation("应用内切换", detail: "\(window.appName) - \(window.windowTitle)", result: "直接聚焦")
-            focusWindowQuick(window)
+            // 同一应用内切换窗口：在后台线程聚焦目标窗口，避免 AX API 阻塞主线程
+            Logger.operation("应用内切换", detail: "\(window.appName) - \(window.windowTitle)", result: "后台聚焦")
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.focusWindowQuick(window)
+            }
         } else {
-            // 不同应用间切换：先激活应用，再聚焦窗口
+            // 不同应用间切换：先激活应用，再聚焦目标窗口
             Logger.operation("跨应用切换", detail: "激活 \(window.appName) - \(window.windowTitle)", result: "激活应用")
             let _ = app.activate(options: [.activateIgnoringOtherApps])
-            // 跨应用切换需要短暂延迟再聚焦，等待应用激活完成
-            // 某些重型应用（如 Navicat）激活较慢，立即调用 AX API 会超时或匹配失败
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.focusWindowQuick(window)
             }
         }
@@ -142,10 +181,14 @@ class WindowManager: WindowManagerProtocol {
         Logger.operation("窗口激活完成", detail: "\(window.appName) - \(window.windowTitle)")
     }
 
-    /// 快速聚焦窗口（简化版，减少 AX 调用）
-    private func focusWindowQuick(_ window: WindowModel) {
-        guard let win = axWindow(for: window) else { return }
-        AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+    /// 快速聚焦窗口（提升窗口层级并设置焦点）
+    @discardableResult
+    private func focusWindowQuick(_ window: WindowModel) -> Bool {
+        guard let win = axWindow(for: window) else { return false }
+        let result = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        Logger.operation("AX Raise", detail: "\(window.appName) - \(window.windowTitle)", result: result == .success ? "成功" : "失败(\(result.rawValue))")
+        return result == .success
     }
 
     /// 聚焦指定窗口
@@ -224,10 +267,35 @@ class WindowManager: WindowManagerProtocol {
             let pid = app.processIdentifier
             Logger.debug("==> External app activated: \(app.localizedName ?? "unknown"), PID: \(pid)")
 
+            // 检查是否是刚激活的窗口所在的应用（500ms 内）
+            // 如果是，且检测到的焦点窗口不同于刚激活的窗口，跳过更新，避免错误更新同应用的其他窗口
+            self.stateLock.lock()
+            if let activatedID = self.lastActivatedWindowID,
+               let activatedTime = self.lastActivatedTime,
+               Date().timeIntervalSince(activatedTime) < 0.5 {
+                // 获取刚激活窗口所属的应用PID
+                if let activatedWindow = self.windowCache[activatedID],
+                   activatedWindow.ownerPID == pid {
+                    self.stateLock.unlock()
+                    // 同一应用的激活事件，检查焦点窗口是否匹配
+                    let focusedWindowID = self.getFocusedWindowID(pid: pid)
+                    if focusedWindowID != activatedID {
+                        // AX API 返回了同应用的其他窗口，跳过更新
+                        Logger.debug("==> Skipping wrong window update: activated=\(activatedID), detected=\(focusedWindowID ?? 0)")
+                        return
+                    }
+                } else {
+                    self.stateLock.unlock()
+                }
+            } else {
+                self.stateLock.unlock()
+            }
+
             // 使用 AX API 获取当前焦点窗口（窗口级别追踪）
             let focusedWindowID = self.getFocusedWindowID(pid: pid)
             let now = Date()
 
+            self.stateLock.lock()
             if let windowID = focusedWindowID, var model = self.windowCache[windowID] {
                 // 只更新焦点窗口的 lastActiveTime
                 model = WindowModel(
@@ -247,11 +315,13 @@ class WindowManager: WindowManagerProtocol {
                 )
                 self.windowCache[windowID] = model
                 self.lastFocusedWindowID = windowID
+                self.stateLock.unlock()
                 Logger.debug("==> Updated lastActiveTime for focused window: \(model.windowTitle)")
             } else {
                 // 如果无法获取焦点窗口，更新该应用最新的窗口（降级方案）
                 let appWindows = self.windowCache.filter { $0.value.ownerPID == pid }
                     .sorted { $0.value.lastActiveTime > $1.value.lastActiveTime }
+                self.stateLock.unlock()
                 if let first = appWindows.first {
                     var model = first.value
                     model = WindowModel(
@@ -269,13 +339,17 @@ class WindowManager: WindowManagerProtocol {
                         ownerPID: model.ownerPID,
                         isStandardWindow: model.isStandardWindow
                     )
+                    self.stateLock.lock()
                     self.windowCache[model.id] = model
+                    self.stateLock.unlock()
                     Logger.debug("==> Fallback: Updated lastActiveTime for newest window: \(model.windowTitle)")
                 }
             }
 
             // 清除缓存以便重新排序
+            self.stateLock.lock()
             self.cacheTimestamp = nil
+            self.stateLock.unlock()
         }
         observers.append(token)
 
@@ -328,6 +402,7 @@ class WindowManager: WindowManagerProtocol {
             lastFocusedWindowID = focusedWindowID
             let now = Date()
 
+            stateLock.lock()
             if var model = windowCache[focusedWindowID] {
                 model = WindowModel(
                     id: model.id,
@@ -345,13 +420,18 @@ class WindowManager: WindowManagerProtocol {
                     isStandardWindow: model.isStandardWindow
                 )
                 windowCache[focusedWindowID] = model
+                stateLock.unlock()
                 Logger.debug("==> Focus window changed (same app): \(model.windowTitle)")
 
                 // 清除缓存以便重新排序
+                stateLock.lock()
                 cacheTimestamp = nil
+                stateLock.unlock()
 
                 // 通知事件处理器
                 eventHandler?(.windowStateChanged(model))
+            } else {
+                stateLock.unlock()
             }
         }
     }
@@ -402,6 +482,7 @@ class WindowManager: WindowManagerProtocol {
         )
 
         // 使用应用信息缓存，避免重复调用 NSRunningApplication
+        // 线程安全：由 getAllWindows 的 stateLock 保护
         let appInfo: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)
         if let cached = appInfoCache[ownerPID] {
             appInfo = cached
@@ -411,9 +492,7 @@ class WindowManager: WindowManagerProtocol {
             let icon = app?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
             let isHidden = app?.isHidden ?? false
             appInfo = (bundleID, icon, isHidden)
-            appInfoCacheLock.lock()
             appInfoCache[ownerPID] = appInfo
-            appInfoCacheLock.unlock()
         }
 
         // BUG-001: 通过 AX API 读取最小化状态，降级方案：isOnScreen=false && layer==0

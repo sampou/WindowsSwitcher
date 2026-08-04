@@ -45,7 +45,7 @@ final class PerformanceTests: XCTestCase {
         await withTaskGroup(of: Void.self) { group in
             for i in 0..<50 {
                 group.addTask {
-                    await cache.set(image, for: CGWindowID(i), windowHash: "hash-\(i)")
+                    await cache.set(image, for: CGWindowID(i))
                 }
             }
         }
