@@ -35,20 +35,25 @@ private enum SpaceAPI {
     }
 }
 
-// MARK: - Fuzzy match
+// MARK: - Search normalization and fuzzy match
 
-private func fuzzyMatch(_ query: String, in text: String) -> Bool {
-    guard !query.isEmpty else { return true }
-    let q = query.lowercased()
-    let t = text.lowercased()
-    if t.contains(q) { return true }
+private func normalizeSearchText(_ text: String) -> String {
+    text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
+}
+
+private func fuzzyMatch(_ normalizedQuery: String, in text: String) -> Bool {
+    guard !normalizedQuery.isEmpty else { return true }
+    let normalizedText = normalizeSearchText(text)
+    if normalizedText.contains(normalizedQuery) { return true }
     // character-subsequence fuzzy
-    var qi = q.startIndex
-    for ch in t {
-        guard qi < q.endIndex else { return true }
-        if ch == q[qi] {
-            qi = q.index(after: qi)
-            if qi == q.endIndex { return true }
+    var queryIndex = normalizedQuery.startIndex
+    for character in normalizedText {
+        guard queryIndex < normalizedQuery.endIndex else { return true }
+        if character == normalizedQuery[queryIndex] {
+            queryIndex = normalizedQuery.index(after: queryIndex)
+            if queryIndex == normalizedQuery.endIndex { return true }
         }
     }
     return false
@@ -69,11 +74,14 @@ struct FilterCriteria {
 
 class FilterEngine {
 
+    private let ordering = WindowOrdering()
+
     func filter(_ windows: [WindowModel], by criteria: FilterCriteria) -> [WindowModel] {
         // Space filter: fetch once, degrade gracefully if API unavailable
         let spaceWindowIDs: Set<CGWindowID>? = criteria.currentSpaceOnly
             ? SpaceAPI.windowIDsOnCurrentSpace()
             : nil
+        let normalizedQuery = normalizeSearchText(criteria.searchText)
 
         return windows.filter { window in
             if !criteria.showOffScreen && (window.isMinimized || window.isHidden) { return false }
@@ -90,10 +98,8 @@ class FilterEngine {
             }
 
             // T-034: fuzzy search on app name + window title + bundle identifier
-            if !criteria.searchText.isEmpty {
-                return fuzzyMatch(criteria.searchText, in: window.appName)
-                    || fuzzyMatch(criteria.searchText, in: window.windowTitle)
-                    || fuzzyMatch(criteria.searchText, in: window.bundleIdentifier)
+            if !normalizedQuery.isEmpty {
+                return matchScore(query: normalizedQuery, window: window) != nil
             }
 
             return true
@@ -102,71 +108,64 @@ class FilterEngine {
 
     // T-036: multi-criteria sort
     func sort(_ windows: [WindowModel], by order: SortOrder) -> [WindowModel] {
-        switch order {
-        case .recent:      return windows.sorted { $0.lastActiveTime > $1.lastActiveTime }
-        case .appName:     return windows.sorted { $0.appName.localizedCompare($1.appName) == .orderedAscending }
-        case .windowTitle: return windows.sorted { $0.windowTitle.localizedCompare($1.windowTitle) == .orderedAscending }
-        case .appGroup:    return sortByAppGroup(windows, targetAppBundleID: nil)
-        }
+        ordering.sort(windows, by: order)
     }
 
     // 应用分组排序：将最活跃应用的窗口排前面
     func sortByAppGroup(_ windows: [WindowModel], targetAppBundleID: String?) -> [WindowModel] {
-        if let targetID = targetAppBundleID {
-            return sortByAppGroupWithTarget(windows, targetAppBundleID: targetID)
-        }
-
-        // 按应用分组，最活跃应用的窗口在前
-        var appGroups: [String: [WindowModel]] = [:]
-        for window in windows {
-            appGroups[window.bundleIdentifier, default: []].append(window)
-        }
-
-        // 计算每个应用的最晚活跃时间
-        var appLastActive: [String: Date] = [:]
-        for (bundleID, appWindows) in appGroups {
-            appLastActive[bundleID] = appWindows.map { $0.lastActiveTime }.max() ?? Date.distantPast
-        }
-
-        // 按应用活跃时间排序
-        let sortedBundleIDs = appGroups.keys.sorted {
-            appLastActive[$0] ?? Date.distantPast > appLastActive[$1] ?? Date.distantPast
-        }
-
-        // 按活跃时间排序每个应用的窗口，然后组合
-        var result: [WindowModel] = []
-        for bundleID in sortedBundleIDs {
-            let sortedWindows = (appGroups[bundleID] ?? []).sorted { $0.lastActiveTime > $1.lastActiveTime }
-            result.append(contentsOf: sortedWindows)
-        }
-
-        return result
+        ordering.sortByAppGroup(windows, targetAppBundleID: targetAppBundleID)
     }
 
     // 带目标应用的应用分组排序
     func sortByAppGroupWithTarget(_ windows: [WindowModel], targetAppBundleID: String) -> [WindowModel] {
-        var targetAppWindows: [WindowModel] = []
-        var otherAppWindows: [WindowModel] = []
-
-        for window in windows {
-            if window.bundleIdentifier == targetAppBundleID {
-                targetAppWindows.append(window)
-            } else {
-                otherAppWindows.append(window)
-            }
-        }
-
-        // 按活跃时间排序
-        targetAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
-        otherAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
-
-        // 目标应用窗口在前
-        var result = targetAppWindows
-        result.append(contentsOf: otherAppWindows)
-        return result
+        ordering.sortByAppGroup(windows, targetAppBundleID: targetAppBundleID)
     }
 
     func filterAndSort(_ windows: [WindowModel], criteria: FilterCriteria, order: SortOrder) -> [WindowModel] {
-        sort(filter(windows, by: criteria), by: order)
+        filterAndSort(windows, criteria: criteria, order: order, activitySequence: [:])
+    }
+
+    func filterAndSort(
+        _ windows: [WindowModel],
+        criteria: FilterCriteria,
+        order: SortOrder,
+        activitySequence: [CGWindowID: UInt64]
+    ) -> [WindowModel] {
+        let filtered = filter(windows, by: criteria)
+        let normalizedQuery = normalizeSearchText(criteria.searchText)
+        guard !normalizedQuery.isEmpty else {
+            return ordering.sort(filtered, by: order, activitySequence: activitySequence)
+        }
+
+        let fallbackOrder = ordering.sort(filtered, by: order, activitySequence: activitySequence)
+        let fallbackRank = Dictionary(uniqueKeysWithValues: fallbackOrder.enumerated().map { ($0.element.id, $0.offset) })
+
+        return filtered.sorted { lhs, rhs in
+            let lhsScore = matchScore(query: normalizedQuery, window: lhs) ?? 0
+            let rhsScore = matchScore(query: normalizedQuery, window: rhs) ?? 0
+            if lhsScore != rhsScore { return lhsScore > rhsScore }
+            return (fallbackRank[lhs.id] ?? .max) < (fallbackRank[rhs.id] ?? .max)
+        }
+    }
+
+    private func matchScore(query: String, window: WindowModel) -> Int? {
+        let appName = normalizeSearchText(window.appName)
+        let windowTitle = normalizeSearchText(window.windowTitle)
+        let bundleIdentifier = normalizeSearchText(window.bundleIdentifier)
+
+        if appName == query { return 600 }
+        if appName.hasPrefix(query) { return 500 }
+        if windowTitle == query { return 450 }
+        if windowTitle.hasPrefix(query) { return 400 }
+        if appName.contains(query) || windowTitle.contains(query) { return 300 }
+        if bundleIdentifier == query { return 250 }
+        if bundleIdentifier.hasPrefix(query) { return 225 }
+        if bundleIdentifier.contains(query) { return 200 }
+        if fuzzyMatch(query, in: window.appName)
+            || fuzzyMatch(query, in: window.windowTitle)
+            || fuzzyMatch(query, in: window.bundleIdentifier) {
+            return 100
+        }
+        return nil
     }
 }

@@ -317,10 +317,6 @@ private class TestWindowManager: WindowManagerProtocol {
         return testWindows
     }
 
-    nonisolated func getWindows(for appName: String) -> [WindowModel] {
-        return testWindows.filter { $0.appName == appName }
-    }
-
     nonisolated func activateWindow(_ window: WindowModel) {
         activateCallCount += 1
     }

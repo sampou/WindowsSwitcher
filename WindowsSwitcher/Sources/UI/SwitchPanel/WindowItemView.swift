@@ -3,6 +3,10 @@ import AppKit
 
 /// T-042 窗口项组件 - 新设计：预览图 + 应用图标 + 标题，网格布局
 struct WindowItemView: View {
+    static let activationAccessibilityHint = "按下 Return 键切换到该窗口"
+    static let minimizeAccessibilityAction = "最小化窗口"
+    static let closeAccessibilityAction = "关闭窗口"
+
     let window: WindowModel
     let isSelected: Bool
     let previewImage: NSImage?
@@ -57,12 +61,27 @@ struct WindowItemView: View {
         }
         .onHover { isHovered = $0 }
         .onTapGesture(count: 1) {
-            onSelect()
-            onActivate()
+            performPrimaryAction()
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(window.appName)，\(window.windowTitle)\(isSelected ? "，已选中" : "")")
-        .accessibilityHint("双击切换到该窗口")
+        .accessibilityHint(Self.activationAccessibilityHint)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            performPrimaryAction()
+        }
+        .accessibilityAction(named: Text(Self.minimizeAccessibilityAction)) {
+            onMinimize()
+        }
+        .accessibilityAction(named: Text(Self.closeAccessibilityAction)) {
+            onClose()
+        }
+    }
+
+    /// 执行窗口项的主操作，供鼠标单击与辅助功能默认动作共享同一语义。
+    func performPrimaryAction() {
+        onSelect()
+        onActivate()
     }
 
     // MARK: - 预览图

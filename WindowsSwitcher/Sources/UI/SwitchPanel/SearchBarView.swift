@@ -2,8 +2,13 @@ import SwiftUI
 
 /// T-044 搜索栏组件：实时过滤
 struct SearchBarView: View {
+    static let defaultPlaceholder = "搜索应用、窗口或 Bundle ID..."
+    static let searchAccessibilityLabel = "搜索窗口"
+    static let searchAccessibilityHint = "输入应用名称、窗口标题或 Bundle Identifier 搜索"
+
     @Binding var text: String
-    var placeholder: String = "搜索窗口..."
+    var placeholder: String = SearchBarView.defaultPlaceholder
+    var requestsFocusOnAppear = false
 
     @FocusState private var isFocused: Bool
 
@@ -17,8 +22,8 @@ struct SearchBarView: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .focused($isFocused)
-                .accessibilityLabel("搜索窗口")
-                .accessibilityHint("输入应用名称或窗口标题搜索")
+                .accessibilityLabel(SearchBarView.searchAccessibilityLabel)
+                .accessibilityHint(SearchBarView.searchAccessibilityHint)
 
             if !text.isEmpty {
                 Button {
@@ -42,5 +47,12 @@ struct SearchBarView: View {
                 .stroke(isFocused ? DesignTokens.Colors.accent.opacity(0.6) : DesignTokens.Colors.separator, lineWidth: 1)
         )
         .animation(DesignTokens.Animation.itemHover, value: isFocused)
+        .onAppear {
+            guard requestsFocusOnAppear else { return }
+            // 等待 NSHostingView 完成首轮挂载后再请求焦点，避免请求被面板建窗过程覆盖。
+            DispatchQueue.main.async {
+                isFocused = true
+            }
+        }
     }
 }

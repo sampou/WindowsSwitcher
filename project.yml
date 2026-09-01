@@ -13,16 +13,16 @@ targets:
       - path: WindowsSwitcher/Sources
         excludes:
           - Info.plist
-    resources:
-      - path: WindowsSwitcher/Sources/Info.plist
-        buildPhase: none
-    info:
-      path: WindowsSwitcher/Sources/Info.plist
+      - path: WindowsSwitcher/Resources/Assets.xcassets
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.moeasy.windowsswitcher
         SWIFT_VERSION: "5.9"
         MACOSX_DEPLOYMENT_TARGET: "13.0"
         INFOPLIST_FILE: WindowsSwitcher/Sources/Info.plist
-        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: WindowsSwitcher/Sources/WindowsSwitcher.entitlements
+        CODE_SIGN_IDENTITY: WindowsSwitcher Local Signing
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
         ENABLE_HARDENED_RUNTIME: YES

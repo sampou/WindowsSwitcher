@@ -134,7 +134,7 @@ final class F02PreviewTests: XCTestCase {
 
     // AC-04: PreviewCache 并发写入不崩溃（模拟 15-30fps 更新）
     func testAC04_PreviewCacheConcurrentUpdates() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let image = NSImage(size: NSSize(width: 124, height: 70))
         // 模拟 30fps × 1s = 30 次更新
         await withTaskGroup(of: Void.self) { group in
@@ -163,7 +163,7 @@ final class F02PreviewTests: XCTestCase {
 
     // AC-03: 预览缓存陈旧状态
     func testAC03_PreviewCacheStaleness() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let img = NSImage(size: NSSize(width: 124, height: 70))
 
         let initiallyStale = await cache.isStale(for: 1)
@@ -175,14 +175,14 @@ final class F02PreviewTests: XCTestCase {
 
     // AC-03: 无效窗口 ID 返回 nil
     func testAC03_InvalidWindowIDReturnsNil() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let result = await cache.get(for: CGWindowID(999999))
         XCTAssertNil(result)
     }
 
     // AC-03: 缓存满时自动淘汰最旧条目
     func testAC03_CacheEvictsOldestWhenFull() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let img = NSImage(size: NSSize(width: 1, height: 1))
         // 写满内存缓存后再写入一条，最旧条目应被淘汰
         let entryCount = PreviewCacheConfig.maxMemorySize + 1
@@ -649,13 +649,6 @@ private final class RecordingWindowManager: WindowManagerProtocol {
         lock.lock()
         forceRefreshRequests.append(forceRefresh)
         let currentWindows = windows
-        lock.unlock()
-        return currentWindows
-    }
-
-    func getWindows(for appName: String) -> [WindowModel] {
-        lock.lock()
-        let currentWindows = windows.filter { $0.appName == appName }
         lock.unlock()
         return currentWindows
     }

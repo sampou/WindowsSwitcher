@@ -11,13 +11,7 @@ struct BackgroundPreviewContainer: View {
     var body: some View {
         ZStack {
             if let image = previewImage {
-                // 获取屏幕和窗口信息
-                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
                 let windowFrame = selectedWindow.frame
-
-                // 计算窗口在屏幕上的相对位置和大小
-                let viewWidth = screenFrame.width
-                let viewHeight = screenFrame.height
 
                 // 窗口的相对尺寸
                 let imgWidth = windowFrame.width
@@ -60,10 +54,63 @@ struct BackgroundPreviewContainer: View {
     }
 }
 
+/// 切换面板高度的纯计算器，供 SwiftUI 根视图和宿主 NSPanel 共用。
+enum SwitchPanelLayout {
+    static let itemVerticalSpacing: CGFloat = 8
+    static let bottomBarHeight: CGFloat = 20
+    static let panelPadding: CGFloat = 8
+    static let defaultMinimumHeight: CGFloat = 180
+
+    static func panelHeight(
+        windowCount: Int,
+        columnCount: Int,
+        itemHeight: CGFloat,
+        screenHeight: CGFloat,
+        searchAreaHeight: CGFloat
+    ) -> CGFloat {
+        let safeColumnCount = max(1, columnCount)
+        let rowCount = max(1, (windowCount + safeColumnCount - 1) / safeColumnCount)
+        let singleRowHeight = itemHeight
+            + itemVerticalSpacing
+            + panelPadding * 2
+            + bottomBarHeight
+            + searchAreaHeight
+        let contentHeight = CGFloat(rowCount) * (itemHeight + itemVerticalSpacing)
+            + panelPadding * 2
+            + bottomBarHeight
+            + searchAreaHeight
+        let baseMinimumHeight = max(
+            defaultMinimumHeight,
+            panelPadding * 2 + bottomBarHeight + searchAreaHeight
+        )
+        let minimumHeight = (1...4).contains(windowCount) ? singleRowHeight : baseMinimumHeight
+        let maximumHeight = screenHeight * 0.8
+        return min(max(contentHeight, minimumHeight), maximumHeight)
+    }
+}
+
 struct SwitchPanelView: View {
+    static let searchAreaHeight: CGFloat = 48
+
     @ObservedObject var viewModel: SwitchPanelViewModel
     @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
+    let focusSearchOnAppear: Bool
+
+    init(
+        viewModel: SwitchPanelViewModel,
+        focusSearchOnAppear: Bool = false,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.viewModel = viewModel
+        self.focusSearchOnAppear = focusSearchOnAppear
+        self.onDismiss = onDismiss
+    }
+
+    /// 搜索栏与 ViewModel 的唯一连接点，便于验证 UI 绑定契约。
+    var searchTextBinding: Binding<String> {
+        $viewModel.searchText
+    }
 
     // 动态获取预览尺寸
     private var previewSize: PreviewSize {
@@ -137,28 +184,13 @@ struct SwitchPanelView: View {
 
     // 面板自适应高度 - 完全贴合内容
     private var panelHeight: CGFloat {
-        let itemHeight = previewSize.itemDimensions.height
-        let actualItemHeight = itemHeight + 8  // 紧凑间距
-        let windowCount = viewModel.filteredWindows.count
-        let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
-
-        let bottomBarHeight: CGFloat = 20  // 精简底部栏
-        let panelPadding: CGFloat = 8
-
-        // 内容所需高度
-        let contentHeight = CGFloat(rowCount) * actualItemHeight + panelPadding * 2 + bottomBarHeight
-
-        // 最小高度
-        let minHeight: CGFloat
-        switch windowCount {
-        case 1, 2, 3, 4:
-            minHeight = actualItemHeight + panelPadding * 2 + bottomBarHeight
-        default:
-            minHeight = 180
-        }
-
-        let maxHeight = screenSize.height * 0.8
-        return min(max(contentHeight, minHeight), maxHeight)
+        SwitchPanelLayout.panelHeight(
+            windowCount: viewModel.filteredWindows.count,
+            columnCount: columnCount,
+            itemHeight: previewSize.itemDimensions.height,
+            screenHeight: screenSize.height,
+            searchAreaHeight: Self.searchAreaHeight
+        )
     }
 
     var body: some View {
@@ -167,9 +199,20 @@ struct SwitchPanelView: View {
             VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
 
-            // 窗口网格 - 平铺显示，与屏幕边框保持距离
-            windowGrid
-                .padding(DesignTokens.Panel.padding)
+            VStack(spacing: 0) {
+                SearchBarView(
+                    text: searchTextBinding,
+                    requestsFocusOnAppear: focusSearchOnAppear
+                )
+                    .padding(.horizontal, DesignTokens.Panel.padding)
+                    .padding(.top, DesignTokens.Panel.padding)
+                    .padding(.bottom, DesignTokens.Spacing.sm)
+
+                // 窗口网格 - 平铺显示，与屏幕边框保持距离
+                windowGrid
+                    .padding(.horizontal, DesignTokens.Panel.padding)
+                    .padding(.bottom, DesignTokens.Panel.padding)
+            }
         }
         // 增大面板尺寸以显示更多窗口
         .frame(width: panelWidth, height: panelHeight)

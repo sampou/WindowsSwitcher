@@ -10,6 +10,28 @@ private let carbonShiftKey: UInt32 = 512        // ⇧ Shift (shiftKey = 1 << 9)
 private let carbonOptionKey: UInt32 = 2048      // ⌥ Option (optionKey = 1 << 11)
 private let carbonControlKey: UInt32 = 4096     // ⌃ Control (controlKey = 1 << 12)
 
+/// 协调窗口销毁后的界面刷新与预览缓存清理。
+///
+/// 刷新动作在主线程同步发生，缓存清理通过独立任务异步执行，避免阻塞窗口列表更新。
+final class WindowDestroyedEventCoordinator {
+    private let previewCacheInvalidator: any PreviewCacheInvalidating
+
+    init(previewCacheInvalidator: any PreviewCacheInvalidating) {
+        self.previewCacheInvalidator = previewCacheInvalidator
+    }
+
+    /// 处理窗口销毁事件，并返回可供测试或调用方等待的缓存清理任务。
+    @discardableResult
+    @MainActor
+    func handle(windowID: CGWindowID, refreshWindows: () -> Void) -> Task<Void, Never> {
+        refreshWindows()
+        let previewCacheInvalidator = previewCacheInvalidator
+        return Task {
+            await previewCacheInvalidator.invalidateCache(for: windowID)
+        }
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
@@ -20,6 +42,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var globalEscKeyMonitor: Any?  // ESC 键全局监听器
     private let windowManager = WindowManager.shared
     private let previewGenerator = PreviewGenerator()
+    private lazy var windowDestroyedEventCoordinator = WindowDestroyedEventCoordinator(
+        previewCacheInvalidator: previewGenerator
+    )
     private let filterEngine = FilterEngine()
     private let configManager = ConfigManager.shared
     private let hotKeyManager = HotKeyManager()
@@ -350,7 +375,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .success:
                     Logger.operation("静默安装", detail: "安装成功", result: "成功")
                 case .failure(let error):
-                    Logger.operation("静默安装", detail: "安装失败: \(error.localizedDescription ?? "未知错误")", result: "失败")
+                    Logger.operation("静默安装", detail: "安装失败: \(error.localizedDescription)", result: "失败")
                 }
             }
         }
@@ -1061,8 +1086,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 立即隐藏切换面板（无动画，用于释放修饰键时）
+    @MainActor
     private func hideSwitchPanelImmediately() {
         Logger.panelState("隐藏", detail: "immediately, wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
+        switchPanelViewModel?.endSameAppSwitchSession()
 
         // 立即标记面板不可见
         isPanelVisible = false
@@ -1070,9 +1097,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 恢复焦点轮询
         windowManager.resumeFocusPolling()
-
-        // 停止刷新定时器
-        stopWindowRefreshTimer()
 
         // 移除 ESC 键监听器
         removeEscKeyMonitor()
@@ -1163,7 +1187,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 应用内切换快捷键（可自定义，可禁用）
         let appSwitchKeyCode = hotKeyConfig.appSwitchKeyCode
         let appSwitchModifiers = hotKeyConfig.appSwitchModifiers
-        let appSwitchReverseModifiers = hotKeyConfig.appSwitchReverseModifiers
         let appSwitchEnabled = hotKeyConfig.appSwitchEnabled
 
         if appSwitchEnabled {
@@ -1274,7 +1297,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func showSwitcherFromMenu() {
-        Task { @MainActor in self.showSwitchPanel() }
+        Task { @MainActor in self.showSwitchPanel(focusSearchOnAppear: true) }
     }
 
     private func requestPermissions() {
@@ -1557,7 +1580,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - 切换面板
     @MainActor
-    func showSwitchPanel(reversed: Bool = false, appSwitchMode: Bool = false) {
+    func showSwitchPanel(
+        reversed: Bool = false,
+        appSwitchMode: Bool = false,
+        focusSearchOnAppear: Bool = false
+    ) {
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
@@ -1573,6 +1600,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard !isPanelVisible else { return }
         isPanelVisible = true
+
+        // 暂停轮询前同步记录真实焦点窗口，替代面板打开时伪造 lastActiveTime。
+        if let previousPID {
+            windowManager.recordFocusedWindowActivity(pid: previousPID)
+        }
 
         // 暂停焦点轮询，避免窗口列表在切换过程中变化
         windowManager.pauseFocusPolling()
@@ -1592,8 +1624,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     Logger.debug("Window state changed: \(window.appName)")
                     // 窗口状态变化时刷新列表
                     self?.switchPanelViewModel?.refreshWindows()
-                default:
-                    break
+                case .windowCreated(let window):
+                    Logger.debug("Window created: \(window.appName) - \(window.windowTitle)")
+                    Logger.windowCreated(
+                        windowID: window.id,
+                        appName: window.appName,
+                        windowTitle: window.windowTitle,
+                        bundleIdentifier: window.bundleIdentifier
+                    )
+                    self?.switchPanelViewModel?.refreshWindows()
+                case .windowDestroyed(let windowID):
+                    Logger.debug("Window destroyed: \(windowID)")
+                    Logger.windowDestroyed(windowID: windowID)
+                    guard let self else { return }
+                    self.windowDestroyedEventCoordinator.handle(windowID: windowID) { [weak self] in
+                        self?.switchPanelViewModel?.refreshWindows()
+                    }
                 }
             }
         }
@@ -1608,66 +1654,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let chromeWindows = windows.filter { $0.bundleIdentifier.contains("chrome") || $0.appName.contains("Chrome") }
         Logger.info("==> Chrome windows: \(chromeWindows.count), titles: \(chromeWindows.map { $0.windowTitle })")
 
-        // 3. 如果是 appSwitchMode，只保留当前应用的窗口
-        if appSwitchMode, let currentApp = previousFrontmostApp?.localizedName {
-            windows = windows.filter { $0.appName == currentApp }
-            Logger.info("==> AppSwitchMode: filtered to \(windows.count) windows for \(currentApp)")
-        }
-
-        // 3. 在获取窗口后，立即更新当前前台窗口的 lastActiveTime
-        // 因为 previousPID 已经被切换成 WindowsSwitcher 自己了
-        let now = Date()
-        if let frontmostApp = NSWorkspace.shared.frontmostApplication,
-           frontmostApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-            let frontmostPID = frontmostApp.processIdentifier
-            Logger.info("==> Current frontmost app: \(frontmostApp.localizedName ?? "unknown"), PID: \(frontmostPID)")
-
-            // 找到该应用的所有窗口，更新最早活跃的那个（通常是用户正在使用的）
-            var maxTime: Date = .distantPast
-            var maxIndex: Int = -1
-            for (index, window) in windows.enumerated() where window.ownerPID == frontmostPID {
-                if window.lastActiveTime > maxTime {
-                    maxTime = window.lastActiveTime
-                    maxIndex = index
-                }
-            }
-
-            // 更新最前台的窗口
-            if maxIndex >= 0 {
-                let updatedWindow = WindowModel(
-                    id: windows[maxIndex].id,
-                    appName: windows[maxIndex].appName,
-                    bundleIdentifier: windows[maxIndex].bundleIdentifier,
-                    windowTitle: windows[maxIndex].windowTitle,
-                    appIcon: windows[maxIndex].appIcon,
-                    frame: windows[maxIndex].frame,
-                    isMinimized: windows[maxIndex].isMinimized,
-                    isHidden: windows[maxIndex].isHidden,
-                    isOnScreen: windows[maxIndex].isOnScreen,
-                    lastActiveTime: now,  // 更新为当前时间
-                    windowLayer: windows[maxIndex].windowLayer,
-                    ownerPID: windows[maxIndex].ownerPID,
-                    isStandardWindow: windows[maxIndex].isStandardWindow
-                )
-                windows[maxIndex] = updatedWindow
-                Logger.info("==> Updated frontmost window lastActiveTime: \(updatedWindow.windowTitle)")
-            }
+        // 3. 如果是 appSwitchMode，只保留当前 Bundle Identifier 的窗口
+        if appSwitchMode, let previousBundleID, !previousBundleID.isEmpty {
+            windows = windows.filter { $0.bundleIdentifier == previousBundleID }
+            Logger.info("==> AppSwitchMode: filtered to \(windows.count) windows for \(previousBundleID)")
         }
 
         // 4. 按最近活跃时间排序
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // 排序逻辑：与 WindowManager.getAllWindows() 保持一致
-        // - 按 lastActiveTime 降序（最近活跃的排第一位）
-        // - 时间相同时，按 windowID 降序（新窗口ID大，排在前面）
-        let sortedWindows: [WindowModel]
-        sortedWindows = windows.sorted { w1, w2 in
-            if w1.lastActiveTime != w2.lastActiveTime {
-                return w1.lastActiveTime > w2.lastActiveTime
-            }
-            // 时间相同时，windowID 大的排前面（新窗口）
-            return w1.id > w2.id
-        }
+        let sortedWindows = WindowOrdering().sort(
+            windows,
+            by: .recent,
+            activitySequence: windowManager.activitySequenceSnapshot()
+        )
 
         // 打印排序结果日志
         let first3 = sortedWindows.prefix(3).map { "\($0.appName):\($0.lastActiveTime.timeIntervalSinceNow)s" }
@@ -1683,29 +1683,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         Logger.info("==> SwitchPanelViewModel created: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms")
 
-        // 选中逻辑
-        if reversed && sortedWindows.count > 1 {
-            // 反向切换：选择第二个窗口（上一个最近使用的窗口）
-            vm.selectedIndex = 1
-            Logger.info("==> reversed mode: selecting index 1 (previous window)")
-        } else if appSwitchMode && sortedWindows.count > 1 {
-            // 同应用切换模式：默认选中第二个窗口（下一个要切换的窗口）
-            vm.selectedIndex = 1
-            Logger.info("==> AppSwitchMode: selecting index 1 (next window)")
-        } else if ConfigManager.shared.config.behavior.defaultSelectSecond && sortedWindows.count > 1 {
-            // 如果启用了"默认选中第二个窗口"选项，且窗口数量大于1
-            vm.selectedIndex = 1
-            Logger.info("==> defaultSelectSecond enabled, selecting index 1")
+        let initialIndex = SwitchPanelViewModel.initialSelectionIndex(
+            windowCount: sortedWindows.count,
+            reversed: reversed,
+            appSwitchMode: appSwitchMode,
+            defaultSelectSecond: ConfigManager.shared.config.behavior.defaultSelectSecond
+        )
+        vm.selectedIndex = initialIndex
+
+        if appSwitchMode, let previousBundleID, !previousBundleID.isEmpty {
+            vm.beginSameAppSwitchSession(
+                bundleIdentifier: previousBundleID,
+                initialIndex: initialIndex
+            )
         }
+        Logger.info("==> initial selection index: \(initialIndex)")
 
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口
         self.switchPanelViewModel = vm
 
-        // 4. 启动定时器定期刷新窗口列表（实时更新）
-        startWindowRefreshTimer(for: vm)
-
         let t3 = CFAbsoluteTimeGetCurrent()
-        let view = SwitchPanelView(viewModel: vm) { [weak self] in
+        let view = SwitchPanelView(
+            viewModel: vm,
+            focusSearchOnAppear: focusSearchOnAppear
+        ) { [weak self] in
             self?.hideSwitchPanel()
         }
         Logger.info("==> SwitchPanelView created: \((CFAbsoluteTimeGetCurrent() - t3)*1000)ms")
@@ -1743,7 +1744,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let windowCount = sortedWindows.count
         let desiredSpacing: CGFloat = 16
         let panelPadding: CGFloat = 8  // 减小内边距
-        let bottomBarHeight: CGFloat = 20  // 精简底部栏
 
         // 根据窗口数量动态计算合适的列数
         let columnCount: Int
@@ -1755,42 +1755,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             columnCount = max(1, min(8, min(windowCount, maxPossibleColumns)))
         }
 
-        let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
-
         // 获取屏幕尺寸
         let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
 
         // 计算内容所需尺寸（无额外空白）
-        let itemSpacing: CGFloat = 4  // 紧凑间距
         let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + panelPadding * 2
-        let contentHeight = CGFloat(rowCount) * (itemHeight + itemSpacing) + panelPadding * 2 + bottomBarHeight
 
         // 最小面板尺寸
         let minWidth: CGFloat
-        let minHeight: CGFloat
 
         switch windowCount {
         case 1:
             minWidth = itemWidth + panelPadding * 2 + 8
-            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
         case 2:
             minWidth = itemWidth * 2 + desiredSpacing + panelPadding * 2 + 8
-            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
         case 3, 4:
             let cols = min(windowCount, columnCount)
             minWidth = itemWidth * CGFloat(cols) + desiredSpacing * CGFloat(cols - 1) + panelPadding * 2 + 8
-            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
         default:
             minWidth = 350
-            minHeight = 200
         }
 
         let maxWidth = screenSize.width * 0.9
-        let maxHeight = screenSize.height * 0.8
 
         // 最终面板尺寸 - 完全贴合内容
         let panelWidth = min(max(contentWidth, minWidth), maxWidth)
-        let panelHeight = min(max(contentHeight, minHeight), maxHeight)
+        let panelHeight = SwitchPanelLayout.panelHeight(
+            windowCount: windowCount,
+            columnCount: columnCount,
+            itemHeight: itemHeight,
+            screenHeight: screenSize.height,
+            searchAreaHeight: SwitchPanelView.searchAreaHeight
+        )
 
         // 设置面板大小
         let newSize = NSSize(width: panelWidth, height: panelHeight)
@@ -2157,23 +2153,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // 定时刷新窗口列表 - 已禁用，避免快速切换时产生卡顿
-    private var windowRefreshTimer: Timer?
-
-    private func startWindowRefreshTimer(for vm: SwitchPanelViewModel) {
-        // 已禁用：不再定期刷新窗口列表，避免影响切换流畅度
-        // 窗口列表会在下次显示面板时自动刷新
-    }
-
-    private func stopWindowRefreshTimer() {
-        windowRefreshTimer?.invalidate()
-        windowRefreshTimer = nil
-    }
-
-
+    @MainActor
     func hideSwitchPanel() {
         // 操作日志：面板隐藏
         Logger.panelState("隐藏", detail: "wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
+        switchPanelViewModel?.endSameAppSwitchSession()
 
         // 立即标记面板不可见，避免状态不一致
         isPanelVisible = false
@@ -2183,9 +2167,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 恢复焦点轮询
         windowManager.resumeFocusPolling()
-
-        // 停止刷新定时器
-        stopWindowRefreshTimer()
 
         // 移除 ESC 键监听器
         removeEscKeyMonitor()

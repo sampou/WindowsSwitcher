@@ -196,11 +196,7 @@ class DockPreviewManager: ObservableObject {
             return
         }
 
-        // 按 lastActiveTime 降序排序，确保最新活跃的窗口在最前面
-        // 按窗口 ID 升序排列（最早的窗口排在前面）
-        // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
-        // 这与 Command+Tab 切换器的 lastActiveTime 降序排序完全独立
-        // 按窗口 ID 升序排列，最新创建的窗口排在最后面
+        // Dock 预览有意独立于切换面板，按窗口 ID 升序排列（最早窗口在前）。
         // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
         let sortedWindows = windows.sorted { $0.id < $1.id }
 
@@ -1061,8 +1057,6 @@ struct LargeDockPreviewView: View {
         // 完全参考切换器背景预览 BackgroundPreviewContainer 的布局方式
         ZStack {
             if let image = previewImage {
-                // 获取屏幕和窗口信息
-                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
                 let windowFrame = item.windowModel.frame
 
                 // 窗口的尺寸和位置
