@@ -35,6 +35,7 @@ final class WindowDestroyedEventCoordinator {
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
+    private var actionPanelWindow: NSPanel?
     private var settingsWindow: NSWindow?  // 设置窗口引用
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -46,6 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         previewCacheInvalidator: previewGenerator
     )
     private let filterEngine = FilterEngine()
+    private let windowLayoutService = WindowLayoutService()
     private let configManager = ConfigManager.shared
     private let hotKeyManager = HotKeyManager()
     private var isPanelVisible = false
@@ -1705,10 +1707,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let t3 = CFAbsoluteTimeGetCurrent()
         let view = SwitchPanelView(
             viewModel: vm,
-            focusSearchOnAppear: focusSearchOnAppear
-        ) { [weak self] in
-            self?.hideSwitchPanel()
-        }
+            focusSearchOnAppear: focusSearchOnAppear,
+            onOpenLayout: { [weak self] window in
+                self?.showActionPanel(for: window)
+            },
+            onDismiss: { [weak self] in
+                self?.hideSwitchPanel()
+            }
+        )
         Logger.info("==> SwitchPanelView created: \((CFAbsoluteTimeGetCurrent() - t3)*1000)ms")
 
         // 创建面板，使用较大尺寸以适应不同预览大小
@@ -1828,6 +1834,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 监听选中窗口变化，更新背景预览
         setupSelectedWindowObserver(for: vm)
+    }
+
+    // MARK: - 窗口布局 Action Panel
+
+    /// 从切换面板进入独立布局面板，不激活原窗口。
+    @MainActor
+    private func showActionPanel(for window: WindowModel) {
+        hideSwitchPanelImmediately()
+        hideActionPanel()
+
+        let panelSize = NSSize(width: 640, height: 430)
+        let view = ActionPanelView(
+            window: window,
+            layoutService: windowLayoutService,
+            onActivate: { [weak self] in
+                self?.windowManager.activateWindow(window)
+                self?.hideActionPanel()
+            },
+            onDismiss: { [weak self] in
+                self?.hideActionPanel()
+            }
+        )
+
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: panelSize),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.contentView = NSHostingView(rootView: view)
+        panel.setContentSize(panelSize)
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        actionPanelWindow = panel
+
+        Logger.panelState(
+            "布局面板显示",
+            detail: "窗口ID=\(window.id), 应用=\(window.appName)"
+        )
+    }
+
+    @MainActor
+    private func hideActionPanel() {
+        guard let panel = actionPanelWindow else { return }
+        panel.orderOut(nil)
+        actionPanelWindow = nil
+        Logger.panelState("布局面板隐藏")
     }
 
     // MARK: - 背景预览窗口

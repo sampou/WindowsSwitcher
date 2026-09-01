@@ -95,15 +95,18 @@ struct SwitchPanelView: View {
     @ObservedObject var viewModel: SwitchPanelViewModel
     @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
+    let onOpenLayout: (WindowModel) -> Void
     let focusSearchOnAppear: Bool
 
     init(
         viewModel: SwitchPanelViewModel,
         focusSearchOnAppear: Bool = false,
+        onOpenLayout: @escaping (WindowModel) -> Void = { _ in },
         onDismiss: @escaping () -> Void
     ) {
         self.viewModel = viewModel
         self.focusSearchOnAppear = focusSearchOnAppear
+        self.onOpenLayout = onOpenLayout
         self.onDismiss = onDismiss
     }
 
@@ -200,10 +203,24 @@ struct SwitchPanelView: View {
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
 
             VStack(spacing: 0) {
-                SearchBarView(
-                    text: searchTextBinding,
-                    requestsFocusOnAppear: focusSearchOnAppear
-                )
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    SearchBarView(
+                        text: searchTextBinding,
+                        requestsFocusOnAppear: focusSearchOnAppear
+                    )
+
+                    Button(action: openLayoutPanel) {
+                        Image(systemName: "rectangle.3.group")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                            .background(DesignTokens.Colors.secondaryBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.selectedWindow == nil)
+                    .accessibilityLabel("打开窗口布局面板")
+                    .accessibilityHint("也可按 L 键打开")
+                }
                     .padding(.horizontal, DesignTokens.Panel.padding)
                     .padding(.top, DesignTokens.Panel.padding)
                     .padding(.bottom, DesignTokens.Spacing.sm)
@@ -235,6 +252,7 @@ struct SwitchPanelView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
             },
             onDismiss: onDismiss,
+            onOpenActions: openLayoutPanel,
             onSelectIndex: { idx in
                 if viewModel.filteredWindows.indices.contains(idx) {
                     // 同时设置窗口 ID 和索引，确保同步
@@ -247,7 +265,12 @@ struct SwitchPanelView: View {
         ))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("窗口切换面板")
-        .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 Escape 退出")
+        .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 L 打开布局面板，按 Escape 退出")
+    }
+
+    private func openLayoutPanel() {
+        guard let selectedWindow = viewModel.selectedWindow else { return }
+        onOpenLayout(selectedWindow)
     }
 
     // MARK: - 窗口网格
@@ -343,6 +366,7 @@ struct KeyEventHandler: NSViewRepresentable {
     let onPrev: () -> Void
     let onConfirm: () -> Void
     let onDismiss: () -> Void
+    var onOpenActions: (() -> Void)? = nil
     var onSelectIndex: ((Int) -> Void)? = nil
     var onMoveUp: (() -> Void)? = nil    // 上方向键
     var onMoveDown: (() -> Void)? = nil  // 下方向键
@@ -353,6 +377,7 @@ struct KeyEventHandler: NSViewRepresentable {
         view.onPrev = onPrev
         view.onConfirm = onConfirm
         view.onDismiss = onDismiss
+        view.onOpenActions = onOpenActions
         view.onSelectIndex = onSelectIndex
         view.onMoveUp = onMoveUp
         view.onMoveDown = onMoveDown
@@ -364,6 +389,7 @@ struct KeyEventHandler: NSViewRepresentable {
         nsView.onPrev = onPrev
         nsView.onConfirm = onConfirm
         nsView.onDismiss = onDismiss
+        nsView.onOpenActions = onOpenActions
         nsView.onSelectIndex = onSelectIndex
         nsView.onMoveUp = onMoveUp
         nsView.onMoveDown = onMoveDown
@@ -375,6 +401,7 @@ class KeyCatchView: NSView {
     var onPrev: (() -> Void)?
     var onConfirm: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onOpenActions: (() -> Void)?
     var onSelectIndex: ((Int) -> Void)?
     var onMoveUp: (() -> Void)?
     var onMoveDown: (() -> Void)?
@@ -390,6 +417,13 @@ class KeyCatchView: NSView {
             Logger.keyEvent("ESC", action: "按下")
             Logger.info("==> ESC pressed, hiding panel")
             onDismiss?()
+            return
+        }
+
+        // L - 打开当前选中窗口的布局面板
+        if chars.lowercased() == "l" {
+            Logger.keyEvent("L", action: "打开窗口布局面板")
+            onOpenActions?()
             return
         }
 
