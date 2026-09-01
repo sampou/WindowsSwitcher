@@ -7,6 +7,16 @@ struct SameAppSwitchSession: Equatable {
     var selectedIndex: Int
 }
 
+/// 切换面板缩略图加载策略。
+///
+/// 面板中的每个窗口都必须进入缩略图加载队列；并发上限由 `PreviewGenerator`
+/// 统一控制，不能在界面层截断窗口集合，否则排在后面的窗口会永久显示占位图。
+enum SwitchPanelPreviewLoadPolicy {
+    static func windowsToLoad(from windows: [WindowModel]) -> [WindowModel] {
+        windows
+    }
+}
+
 @MainActor
 class SwitchPanelViewModel: ObservableObject {
     @Published var windows: [WindowModel] = []
@@ -445,8 +455,8 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadVisiblePreviews() {
-        // 限制并发数量，避免 CPU 过载
-        let windowsToLoad = Array(filteredWindows.prefix(12))
+        // 全部可见窗口都必须进入加载队列；并发压力由 PreviewGenerator 内部控制。
+        let windowsToLoad = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: filteredWindows)
         let sizeConfig = config.config.appearance.previewSize.dimensions
         let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
         let previewGenerator = previewGenerator

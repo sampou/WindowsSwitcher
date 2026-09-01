@@ -97,6 +97,17 @@ final class PreviewGeneratorTests: XCTestCase {
         XCTAssertEqual(nilResultCount, requestCount, "无效窗口并发预览应全部快速返回 nil")
     }
 
+    func testSwitchPanelPreviewPolicyLoadsEveryWindowWithoutTruncation() {
+        let windows = (0..<37).map {
+            makeInvalidWindow(id: CGWindowID(900_000 + $0))
+        }
+
+        let windowsToLoad = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: windows)
+
+        XCTAssertEqual(windowsToLoad.map(\.id), windows.map(\.id))
+        XCTAssertEqual(windowsToLoad.count, 37, "切换面板必须为全部窗口加载缩略图")
+    }
+
     func testGeneratePreviewSize() async {
         let generator = PreviewGenerator()
         // 使用真实存在的窗口（取第一个屏幕上的窗口）

@@ -192,15 +192,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 唤起切换器时，同步用缓存的预览图填充 viewModel（命中内存缓存瞬时完成，避免后面窗口空白）
     @MainActor
     private func prefillCachedPreviews(for windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+        let windowsToPrefill = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: windows)
         var filled = 0
-        for window in windows.prefix(20) {
+        for window in windowsToPrefill {
             // 直接查内存缓存，同步填充，面板显示前完成
             if let cached = previewGenerator.getCachedPreviewSync(for: window.id) {
                 viewModel.previewImages[window.id] = cached
                 filled += 1
             }
         }
-        Logger.info("==> Prefilled \(filled)/\(min(windows.count, 20)) cached previews (sync)")
+        Logger.info("==> Prefilled \(filled)/\(windowsToPrefill.count) cached previews (sync)")
     }
 
     /// 设置自动更新检查
