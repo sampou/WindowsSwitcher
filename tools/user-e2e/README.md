@@ -50,6 +50,9 @@ tools/user-e2e/.build/hotkey-injector global-layout
 
 # 自定义面板出现前的等待时间
 tools/user-e2e/.build/hotkey-injector global-layout --hold-ms 500
+
+# 保持修饰键并额外前进 3 个窗口后再发送 L，便于指定真实应用目标
+tools/user-e2e/.build/hotkey-injector global-layout --steps 3 --hold-ms 500
 ```
 
 ## 证据判定

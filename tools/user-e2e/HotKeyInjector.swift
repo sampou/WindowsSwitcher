@@ -58,7 +58,7 @@ private let usage = """
 用法：
   hotkey-injector [status]
   hotkey-injector global-reverse [--modifier command|option] [--hold-ms 0...5000]
-  hotkey-injector global-layout [--modifier command|option] [--hold-ms 0...5000]
+  hotkey-injector global-layout [--modifier command|option] [--hold-ms 0...5000] [--steps 0...50]
   hotkey-injector app-reverse [--hold-ms 0...5000]
 
 无参数及 status 只检查事件合成权限（通常由“辅助功能”授权），不会发送键鼠事件。
@@ -145,7 +145,11 @@ private func sendReverseHotKey(_ hotKey: HotKey, holdMilliseconds: UInt32) throw
 }
 
 /// 打开全局切换面板，在基础修饰键保持按下期间发送 L，再释放修饰键。
-private func sendGlobalLayoutHotKey(_ hotKey: HotKey, holdMilliseconds: UInt32) throws {
+private func sendGlobalLayoutHotKey(
+    _ hotKey: HotKey,
+    holdMilliseconds: UInt32,
+    additionalSteps: UInt32
+) throws {
     guard let source = CGEventSource(stateID: .hidSystemState) else {
         throw InjectorError.eventCreationFailed(keyCode: hotKey.keyCode, keyDown: true)
     }
@@ -166,6 +170,13 @@ private func sendGlobalLayoutHotKey(_ hotKey: HotKey, holdMilliseconds: UInt32) 
         try postKey(source: source, keyCode: hotKey.keyCode, keyDown: true, flags: baseFlags)
         usleep(12_000)
         try postKey(source: source, keyCode: hotKey.keyCode, keyDown: false, flags: baseFlags)
+
+        for _ in 0..<additionalSteps {
+            usleep(40_000)
+            try postKey(source: source, keyCode: hotKey.keyCode, keyDown: true, flags: baseFlags)
+            usleep(12_000)
+            try postKey(source: source, keyCode: hotKey.keyCode, keyDown: false, flags: baseFlags)
+        }
 
         if holdMilliseconds > 0 {
             usleep(holdMilliseconds * 1_000)
@@ -201,6 +212,7 @@ private func main() -> ExitCode {
 
     var modifier: BaseModifier
     var requestedHoldMilliseconds: UInt32?
+    var additionalSteps: UInt32 = 0
     switch command {
     case .status:
         guard arguments.count <= 1 else {
@@ -234,6 +246,15 @@ private func main() -> ExitCode {
                     return .invalidArguments
                 }
                 requestedHoldMilliseconds = parsedHold
+                index += 2
+            case "--steps" where command == .globalLayout:
+                guard index + 1 < arguments.count,
+                      let parsedSteps = UInt32(arguments[index + 1]),
+                      parsedSteps <= 50 else {
+                    FileHandle.standardError.write(Data((usage + "\n").utf8))
+                    return .invalidArguments
+                }
+                additionalSteps = parsedSteps
                 index += 2
             default:
                 FileHandle.standardError.write(Data((usage + "\n").utf8))
@@ -269,8 +290,12 @@ private func main() -> ExitCode {
 
     do {
         if command == .globalLayout {
-            try sendGlobalLayoutHotKey(hotKey, holdMilliseconds: holdMilliseconds)
-            print("sent=\(hotKey.name) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifier.rawValue) then=L holdMs=\(holdMilliseconds)")
+            try sendGlobalLayoutHotKey(
+                hotKey,
+                holdMilliseconds: holdMilliseconds,
+                additionalSteps: additionalSteps
+            )
+            print("sent=\(hotKey.name) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifier.rawValue) steps=\(additionalSteps) then=L holdMs=\(holdMilliseconds)")
         } else {
             try sendReverseHotKey(hotKey, holdMilliseconds: holdMilliseconds)
             print("sent=\(hotKey.name) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifier.rawValue)+shift holdMs=\(holdMilliseconds)")
