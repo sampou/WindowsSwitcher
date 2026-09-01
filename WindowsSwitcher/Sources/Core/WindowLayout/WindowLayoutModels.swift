@@ -35,6 +35,7 @@ enum WindowLayoutFailure: Error, Equatable {
 /// 窗口布局执行结果。
 enum WindowLayoutResult: Equatable {
     case applied(frame: CGRect, displayID: CGDirectDisplayID)
+    case constrained(frame: CGRect, displayID: CGDirectDisplayID)
     case skipped(WindowLayoutFailure)
 }
 

@@ -41,6 +41,7 @@
 		F48CE5016075D5BA92E5CD94 /* AccessibilityWindowBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D6593B32E3C8DD7838A1B7 /* AccessibilityWindowBackend.swift */; };
 		F807070A205E57B2BE9FC1D8 /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42D2830A2BFDD6EC96DF6ED1 /* ThemeManager.swift */; };
 		F9B60FF46CDD68A7605EE0E2 /* ConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F823438ED496D6EC5C8A2EA7 /* ConfigManager.swift */; };
+		FA2FE74C68BE8DF58A1A4B32 /* WindowLayoutService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBE921DFAE4BB599BB6C3FBD /* WindowLayoutService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -76,6 +77,7 @@
 		DAB08A430B1B9219CAF424D0 /* UpdateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateService.swift; sourceTree = "<group>"; };
 		DF52C2CEF6664D31AE467C1B /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		E74BE378AF2CB2C559C33365 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		EBE921DFAE4BB599BB6C3FBD /* WindowLayoutService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLayoutService.swift; sourceTree = "<group>"; };
 		F2B80398F273DCF7C8B12FF8 /* WindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowManager.swift; sourceTree = "<group>"; };
 		F6BCCF9227C24B94BA80F096 /* WindowsSwitcher.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WindowsSwitcher.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F823438ED496D6EC5C8A2EA7 /* ConfigManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigManager.swift; sourceTree = "<group>"; };
@@ -100,6 +102,7 @@
 				1B21D24B4D834483E666A241 /* ScreenResolver.swift */,
 				9C18A4DD41CA8BA57AC09109 /* WindowLayoutCalculator.swift */,
 				7E57454517A9FC6C977666AE /* WindowLayoutModels.swift */,
+				EBE921DFAE4BB599BB6C3FBD /* WindowLayoutService.swift */,
 			);
 			path = WindowLayout;
 			sourceTree = "<group>";
@@ -358,6 +361,7 @@
 				186211D28D42DB8043641BD9 /* WindowItemView.swift in Sources */,
 				E16444DB002E0E2B36CA0502 /* WindowLayoutCalculator.swift in Sources */,
 				6FD0DB31B162F8DCCC3A900E /* WindowLayoutModels.swift in Sources */,
+				FA2FE74C68BE8DF58A1A4B32 /* WindowLayoutService.swift in Sources */,
 				17DCE1B58A0FADC6DC6E3374 /* WindowManager.swift in Sources */,
 				25D24BBF4B974DD17F80F03D /* WindowModel.swift in Sources */,
 				09C612D51438F74F2E966462 /* WindowOrdering.swift in Sources */,

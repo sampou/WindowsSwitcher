@@ -16,7 +16,16 @@ struct AccessibilityWindowWriterConfiguration: Equatable {
 }
 
 /// 串行执行能力探测、位置/尺寸写入和回读验证。
-final class AccessibilityWindowWriter {
+protocol AccessibilityWindowWriting {
+    /// 探测目标窗口是否可执行布局命令。
+    func probe(_ model: WindowModel) -> Result<AccessibilityWindowCapabilities, WindowLayoutFailure>
+
+    /// 写入目标 frame，并通过回读区分精确成功、应用约束和失败。
+    func apply(targetFrame: CGRect, to model: WindowModel) -> AccessibilityWindowWriteResult
+}
+
+/// 串行执行能力探测、位置/尺寸写入和回读验证。
+final class AccessibilityWindowWriter: AccessibilityWindowWriting {
     private let backend: any AccessibilityWindowAccessing
     private let configuration: AccessibilityWindowWriterConfiguration
     private let executionLock = NSLock()
