@@ -2037,6 +2037,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
+            // 非激活切换面板不会收到前台应用中的 L 键，因此全局监听必须直接转发布局入口。
+            if event.keyCode == 37 {
+                Task { @MainActor in
+                    guard self.isPanelVisible,
+                          let selectedWindow = self.switchPanelViewModel?.selectedWindow else {
+                        Logger.warning("全局 L: 切换面板已关闭或没有选中窗口")
+                        return
+                    }
+                    Logger.keyEvent("L", action: "通过全局监听打开窗口布局面板")
+                    self.showActionPanel(for: selectedWindow)
+                }
+                return
+            }
+
             // 处理方向键
             guard let vm = self.switchPanelViewModel else { return }
             switch event.specialKey {
@@ -2161,6 +2175,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.hideSwitchPanel()
                 }
                 return nil // 阻止事件继续传递
+            }
+
+            if event.keyCode == 37 {
+                Task { @MainActor in
+                    guard self.isPanelVisible,
+                          let selectedWindow = self.switchPanelViewModel?.selectedWindow else {
+                        Logger.warning("本地 L: 切换面板已关闭或没有选中窗口")
+                        return
+                    }
+                    Logger.keyEvent("L", action: "通过本地监听打开窗口布局面板")
+                    self.showActionPanel(for: selectedWindow)
+                }
+                return nil
             }
 
             // 处理方向键

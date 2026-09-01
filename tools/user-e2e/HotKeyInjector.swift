@@ -12,6 +12,7 @@ private enum ExitCode: Int32 {
 private enum Command: String {
     case status
     case globalReverse = "global-reverse"
+    case globalLayout = "global-layout"
     case appReverse = "app-reverse"
 }
 
@@ -46,6 +47,7 @@ private enum KeyCode {
     static let leftOption: CGKeyCode = 58
     static let tab: CGKeyCode = 48
     static let grave: CGKeyCode = 50
+    static let l: CGKeyCode = 37
 }
 
 private enum InjectorError: Error {
@@ -56,10 +58,11 @@ private let usage = """
 用法：
   hotkey-injector [status]
   hotkey-injector global-reverse [--modifier command|option] [--hold-ms 0...5000]
+  hotkey-injector global-layout [--modifier command|option] [--hold-ms 0...5000]
   hotkey-injector app-reverse [--hold-ms 0...5000]
 
 无参数及 status 只检查事件合成权限（通常由“辅助功能”授权），不会发送键鼠事件。
-只有 global-reverse 和 app-reverse 会执行一次明确的热键注入。
+只有 global-reverse、global-layout 和 app-reverse 会执行一次明确的热键注入。
 """
 
 /// 构造并发送单个键盘事件。调用方负责维护完整的按下、释放顺序。
@@ -141,6 +144,48 @@ private func sendReverseHotKey(_ hotKey: HotKey, holdMilliseconds: UInt32) throw
     }
 }
 
+/// 打开全局切换面板，在基础修饰键保持按下期间发送 L，再释放修饰键。
+private func sendGlobalLayoutHotKey(_ hotKey: HotKey, holdMilliseconds: UInt32) throws {
+    guard let source = CGEventSource(stateID: .hidSystemState) else {
+        throw InjectorError.eventCreationFailed(keyCode: hotKey.keyCode, keyDown: true)
+    }
+
+    let baseFlags = hotKey.modifier.flag
+    var needsModifierCleanup = false
+
+    do {
+        try postKey(
+            source: source,
+            keyCode: hotKey.modifier.keyCode,
+            keyDown: true,
+            flags: baseFlags
+        )
+        needsModifierCleanup = true
+        usleep(12_000)
+
+        try postKey(source: source, keyCode: hotKey.keyCode, keyDown: true, flags: baseFlags)
+        usleep(12_000)
+        try postKey(source: source, keyCode: hotKey.keyCode, keyDown: false, flags: baseFlags)
+
+        if holdMilliseconds > 0 {
+            usleep(holdMilliseconds * 1_000)
+        }
+
+        try postKey(source: source, keyCode: KeyCode.l, keyDown: true, flags: baseFlags)
+        usleep(12_000)
+        try postKey(source: source, keyCode: KeyCode.l, keyDown: false, flags: baseFlags)
+        // 给主线程足够时间把切换面板替换为 Action Panel，再释放全局修饰键。
+        usleep(100_000)
+        try postKey(source: source, keyCode: hotKey.modifier.keyCode, keyDown: false, flags: [])
+        needsModifierCleanup = false
+    } catch {
+        if needsModifierCleanup {
+            releaseModifiersBestEffort(source: source, baseModifier: hotKey.modifier)
+        }
+        throw error
+    }
+}
+
 private func printPermissionStatus() -> Bool {
     let granted = CGPreflightPostEventAccess()
     print("post-event-access=\(granted ? "granted" : "denied")")
@@ -155,7 +200,7 @@ private func main() -> ExitCode {
     }
 
     var modifier: BaseModifier
-    var holdMilliseconds: UInt32 = 0
+    var requestedHoldMilliseconds: UInt32?
     switch command {
     case .status:
         guard arguments.count <= 1 else {
@@ -163,7 +208,7 @@ private func main() -> ExitCode {
             return .invalidArguments
         }
         modifier = .command
-    case .globalReverse:
+    case .globalReverse, .globalLayout:
         modifier = .command
     case .appReverse:
         modifier = .option
@@ -173,7 +218,7 @@ private func main() -> ExitCode {
         var index = 1
         while index < arguments.count {
             switch arguments[index] {
-            case "--modifier" where command == .globalReverse:
+            case "--modifier" where command == .globalReverse || command == .globalLayout:
                 guard index + 1 < arguments.count,
                       let parsedModifier = BaseModifier(rawValue: arguments[index + 1]) else {
                     FileHandle.standardError.write(Data((usage + "\n").utf8))
@@ -188,7 +233,7 @@ private func main() -> ExitCode {
                     FileHandle.standardError.write(Data((usage + "\n").utf8))
                     return .invalidArguments
                 }
-                holdMilliseconds = parsedHold
+                requestedHoldMilliseconds = parsedHold
                 index += 2
             default:
                 FileHandle.standardError.write(Data((usage + "\n").utf8))
@@ -196,6 +241,8 @@ private func main() -> ExitCode {
             }
         }
     }
+
+    let holdMilliseconds = requestedHoldMilliseconds ?? (command == .globalLayout ? 350 : 0)
 
     let hasPermission = printPermissionStatus()
     guard command != .status else {
@@ -212,6 +259,8 @@ private func main() -> ExitCode {
     switch command {
     case .globalReverse:
         hotKey = HotKey(name: command.rawValue, keyCode: KeyCode.tab, modifier: modifier)
+    case .globalLayout:
+        hotKey = HotKey(name: command.rawValue, keyCode: KeyCode.tab, modifier: modifier)
     case .appReverse:
         hotKey = HotKey(name: command.rawValue, keyCode: KeyCode.grave, modifier: modifier)
     case .status:
@@ -219,8 +268,13 @@ private func main() -> ExitCode {
     }
 
     do {
-        try sendReverseHotKey(hotKey, holdMilliseconds: holdMilliseconds)
-        print("sent=\(hotKey.name) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifier.rawValue)+shift holdMs=\(holdMilliseconds)")
+        if command == .globalLayout {
+            try sendGlobalLayoutHotKey(hotKey, holdMilliseconds: holdMilliseconds)
+            print("sent=\(hotKey.name) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifier.rawValue) then=L holdMs=\(holdMilliseconds)")
+        } else {
+            try sendReverseHotKey(hotKey, holdMilliseconds: holdMilliseconds)
+            print("sent=\(hotKey.name) keyCode=\(hotKey.keyCode) modifiers=\(hotKey.modifier.rawValue)+shift holdMs=\(holdMilliseconds)")
+        }
         return .success
     } catch InjectorError.eventCreationFailed(let keyCode, let keyDown) {
         FileHandle.standardError.write(
