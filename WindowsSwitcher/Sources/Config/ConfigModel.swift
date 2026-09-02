@@ -41,6 +41,28 @@ struct HotKeyConfig: Codable, Equatable {
     var appSwitchReverseKeyCode: UInt32 = 50  // ` (Grave)
     var appSwitchReverseModifiers: UInt32 = 2560 // Option+Shift
     var appSwitchEnabled: Bool = true    // 是否启用同应用窗口切换快捷键
+    var windowLayout: WindowLayoutHotKeyConfig = WindowLayoutHotKeyConfig()
+
+    private enum CodingKeys: String, CodingKey {
+        case switchKeyCode, switchModifiers, reverseSwitchModifiers
+        case appSwitchKeyCode, appSwitchModifiers, appSwitchReverseKeyCode
+        case appSwitchReverseModifiers, appSwitchEnabled, windowLayout
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switchKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .switchKeyCode) ?? 48
+        switchModifiers = try container.decodeIfPresent(UInt32.self, forKey: .switchModifiers) ?? 2048
+        reverseSwitchModifiers = try container.decodeIfPresent(UInt32.self, forKey: .reverseSwitchModifiers) ?? 2560
+        appSwitchKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .appSwitchKeyCode) ?? 50
+        appSwitchModifiers = try container.decodeIfPresent(UInt32.self, forKey: .appSwitchModifiers) ?? 2048
+        appSwitchReverseKeyCode = try container.decodeIfPresent(UInt32.self, forKey: .appSwitchReverseKeyCode) ?? 50
+        appSwitchReverseModifiers = try container.decodeIfPresent(UInt32.self, forKey: .appSwitchReverseModifiers) ?? 2560
+        appSwitchEnabled = try container.decodeIfPresent(Bool.self, forKey: .appSwitchEnabled) ?? true
+        windowLayout = try container.decodeIfPresent(WindowLayoutHotKeyConfig.self, forKey: .windowLayout) ?? .init()
+    }
 }
 
 struct AppearanceConfig: Codable, Equatable {

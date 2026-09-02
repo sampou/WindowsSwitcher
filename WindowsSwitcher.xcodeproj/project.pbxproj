@@ -27,6 +27,7 @@
 		7017CD893FDDC5DD49FF8AE0 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A0F070F39D7A2AF099617C /* HotKeyManager.swift */; };
 		74028FE34D99EC425A507242 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */; };
 		7805487D329D7C4313E07206 /* FilterEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 443479EAF286E51D759D961E /* FilterEngine.swift */; };
+		877DAF1E5B3CB7E31C38A5D5 /* WindowLayoutHotKeyConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A2F5A0FB1A3E0C1BE78698 /* WindowLayoutHotKeyConfig.swift */; };
 		94A08668C4A186E1CF922AEB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74BE378AF2CB2C559C33365 /* SettingsView.swift */; };
 		9980E92A9A32D04895F08DF0 /* PanelAnimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C8DC9AFAEABD1F7F1D6856E /* PanelAnimator.swift */; };
 		ACFDC0896F460E875B5629FE /* LaunchAtLoginManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31A14A9B33753DD4E64BE707 /* LaunchAtLoginManager.swift */; };
@@ -62,6 +63,7 @@
 		6CC11176E9A1F286871185CB /* PreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewView.swift; sourceTree = "<group>"; };
 		7E57454517A9FC6C977666AE /* WindowLayoutModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLayoutModels.swift; sourceTree = "<group>"; };
 		80D6593B32E3C8DD7838A1B7 /* AccessibilityWindowBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityWindowBackend.swift; sourceTree = "<group>"; };
+		89A2F5A0FB1A3E0C1BE78698 /* WindowLayoutHotKeyConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowLayoutHotKeyConfig.swift; sourceTree = "<group>"; };
 		8C38CD175227896FA7CECDEE /* ActionPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionPanelView.swift; sourceTree = "<group>"; };
 		8C6CE0E9A951EE3447DB5428 /* DockPreviewPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DockPreviewPanelView.swift; sourceTree = "<group>"; };
 		903B32FE26DCC997DA1DA6AB /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -103,6 +105,7 @@
 				6412086E0231F1B8DFCB0D38 /* AccessibilityWindowWriter.swift */,
 				1B21D24B4D834483E666A241 /* ScreenResolver.swift */,
 				9C18A4DD41CA8BA57AC09109 /* WindowLayoutCalculator.swift */,
+				89A2F5A0FB1A3E0C1BE78698 /* WindowLayoutHotKeyConfig.swift */,
 				7E57454517A9FC6C977666AE /* WindowLayoutModels.swift */,
 				EBE921DFAE4BB599BB6C3FBD /* WindowLayoutService.swift */,
 			);
@@ -372,6 +375,7 @@
 				DF73AD143367AE42C2FF2BFD /* UpdateService.swift in Sources */,
 				186211D28D42DB8043641BD9 /* WindowItemView.swift in Sources */,
 				E16444DB002E0E2B36CA0502 /* WindowLayoutCalculator.swift in Sources */,
+				877DAF1E5B3CB7E31C38A5D5 /* WindowLayoutHotKeyConfig.swift in Sources */,
 				6FD0DB31B162F8DCCC3A900E /* WindowLayoutModels.swift in Sources */,
 				FA2FE74C68BE8DF58A1A4B32 /* WindowLayoutService.swift in Sources */,
 				17DCE1B58A0FADC6DC6E3374 /* WindowManager.swift in Sources */,

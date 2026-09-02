@@ -137,6 +137,35 @@ final class ConfigModelSubstructTests: XCTestCase {
         XCTAssertEqual(hk.reverseSwitchModifiers, 2560)
         XCTAssertEqual(hk.appSwitchKeyCode, 50)
         XCTAssertEqual(hk.appSwitchModifiers, 2048)
+        XCTAssertTrue(hk.windowLayout.isEnabled)
+        XCTAssertEqual(hk.windowLayout.openPanel, WindowLayoutHotKeyDefaults.openPanel)
+        XCTAssertEqual(hk.windowLayout.commands.count, 12)
+    }
+
+    func testOldHotKeyJSONInjectsWindowLayoutDefaults() throws {
+        let json = """
+        {
+          "switchKeyCode": 48,
+          "switchModifiers": 2048,
+          "appSwitchKeyCode": 50,
+          "appSwitchModifiers": 2048
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(HotKeyConfig.self, from: json)
+
+        XCTAssertEqual(decoded.windowLayout, WindowLayoutHotKeyConfig())
+    }
+
+    func testClearedLayoutShortcutRemainsClearedAfterRoundTrip() throws {
+        var value = WindowLayoutHotKeyConfig()
+        value.setChord(nil, for: .leftHalf)
+        let data = try JSONEncoder().encode(value)
+
+        let decoded = try JSONDecoder().decode(WindowLayoutHotKeyConfig.self, from: data)
+
+        XCTAssertNil(decoded.chord(for: .leftHalf))
+        XCTAssertEqual(decoded.chord(for: .rightHalf), value.chord(for: .rightHalf))
     }
 
     func testAppearanceConfigDefaults() {

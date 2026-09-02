@@ -3,13 +3,27 @@ import XCTest
 @testable import WindowsSwitcher
 
 final class ActionPanelViewTests: XCTestCase {
+    func testPanelHeightIsStableAndBoundedBeforeFeedbackAppears() {
+        XCTAssertEqual(ActionPanelLayoutMetrics.panelHeight(forVisibleScreenHeight: 1_080), 680)
+        XCTAssertEqual(ActionPanelLayoutMetrics.panelHeight(forVisibleScreenHeight: 640), 576)
+        XCTAssertEqual(ActionPanelLayoutMetrics.panelHeight(forVisibleScreenHeight: 500), 520)
+    }
+
     func testActionCatalogCoversEveryLayoutCommandExactlyOnce() {
-        let commands = WindowLayoutAction.all.map(\.command)
+        let commands = WindowLayoutActionCatalog.actions.map(\.command)
 
         XCTAssertEqual(commands.count, WindowLayoutCommand.allCases.count)
         for command in WindowLayoutCommand.allCases {
             XCTAssertEqual(commands.filter { $0 == command }.count, 1)
         }
+    }
+
+    func testActionCatalogUsesTwelveUniqueStableIdentifiers() {
+        let identifiers = WindowLayoutActionCatalog.actions.map(\.id)
+
+        XCTAssertEqual(identifiers.count, 12)
+        XCTAssertEqual(Set(identifiers).count, 12)
+        XCTAssertEqual(Set(identifiers), Set(WindowLayoutActionID.allCases))
     }
 
     func testAppliedAndConstrainedResultsUseDifferentFeedback() {

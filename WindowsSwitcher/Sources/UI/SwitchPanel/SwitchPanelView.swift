@@ -421,7 +421,9 @@ class KeyCatchView: NSView {
         }
 
         // L - 打开当前选中窗口的布局面板
-        if chars.lowercased() == "l" {
+        let modifiers = KeyChord.carbonModifiers(from: event.modifierFlags)
+        let switchModifiers = ConfigManager.shared.config.hotKeys.switchModifiers
+        if event.keyCode == 37 && (modifiers == 0 || modifiers == switchModifiers) {
             Logger.keyEvent("L", action: "打开窗口布局面板")
             onOpenActions?()
             return

@@ -1,28 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// Action Panel 中展示的布局动作。
-struct WindowLayoutAction: Identifiable, Equatable {
-    let command: WindowLayoutCommand
-    let title: String
-    let symbolName: String
+/// 布局面板的稳定尺寸规则。
+enum ActionPanelLayoutMetrics {
+    static let width: CGFloat = 460
+    static let minimumHeight: CGFloat = 520
+    static let preferredHeight: CGFloat = 680
+    static let screenVerticalMargin: CGFloat = 64
 
-    var id: String { title }
-
-    static let all: [WindowLayoutAction] = [
-        WindowLayoutAction(command: .leftHalf, title: "左半屏", symbolName: "rectangle.lefthalf.inset.filled"),
-        WindowLayoutAction(command: .rightHalf, title: "右半屏", symbolName: "rectangle.righthalf.inset.filled"),
-        WindowLayoutAction(command: .topHalf, title: "上半屏", symbolName: "rectangle.tophalf.inset.filled"),
-        WindowLayoutAction(command: .bottomHalf, title: "下半屏", symbolName: "rectangle.bottomhalf.inset.filled"),
-        WindowLayoutAction(command: .topLeftQuarter, title: "左上", symbolName: "rectangle.topthird.inset.filled"),
-        WindowLayoutAction(command: .topRightQuarter, title: "右上", symbolName: "rectangle.topthird.inset.filled"),
-        WindowLayoutAction(command: .bottomLeftQuarter, title: "左下", symbolName: "rectangle.bottomthird.inset.filled"),
-        WindowLayoutAction(command: .bottomRightQuarter, title: "右下", symbolName: "rectangle.bottomthird.inset.filled"),
-        WindowLayoutAction(command: .maximize, title: "最大化", symbolName: "rectangle.inset.filled"),
-        WindowLayoutAction(command: .center, title: "居中", symbolName: "rectangle.center.inset.filled"),
-        WindowLayoutAction(command: .previousDisplay, title: "上一显示器", symbolName: "arrow.left.to.line"),
-        WindowLayoutAction(command: .nextDisplay, title: "下一显示器", symbolName: "arrow.right.to.line")
-    ]
+    /// 根据目标屏幕可用高度计算首次显示高度。
+    static func panelHeight(forVisibleScreenHeight height: CGFloat) -> CGFloat {
+        min(preferredHeight, max(minimumHeight, height - screenVerticalMargin))
+    }
 }
 
 /// Action Panel 给用户展示的类型化反馈。
@@ -78,13 +67,13 @@ enum ActionPanelFeedback: Equatable {
 struct ActionPanelView: View {
     let window: WindowModel
     let layoutService: any WindowLayoutServicing
+    let hotKeyConfig: WindowLayoutHotKeyConfig
+    let panelHeight: CGFloat
     let onActivate: () -> Void
     let onDismiss: () -> Void
 
     @State private var selectedIndex = 0
     @State private var feedback: ActionPanelFeedback = .idle
-
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
 
     var body: some View {
         ZStack {
@@ -94,17 +83,20 @@ struct ActionPanelView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 header
 
-                LazyVGrid(columns: columns, spacing: 10) {
-                    ForEach(Array(WindowLayoutAction.all.enumerated()), id: \.element.id) { index, action in
-                        actionButton(action, index: index)
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(Array(WindowLayoutActionCatalog.actions.enumerated()), id: \.element.id) { index, action in
+                            actionRow(action, index: index)
+                        }
                     }
                 }
+                .layoutPriority(1)
 
                 feedbackView
-                    .frame(minHeight: 24)
+                    .frame(height: 24, alignment: .leading)
 
                 HStack {
-                    Text("Tab/方向键选择  •  Enter 执行  •  Esc 关闭")
+                    Text("Tab/↑↓ 选择  •  Enter/空格执行  •  Esc 关闭")
                         .font(.system(size: 11))
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                     Spacer()
@@ -114,11 +106,13 @@ struct ActionPanelView: View {
             }
             .padding(DesignTokens.Panel.padding)
         }
-        .frame(width: 640, height: 430)
+        .frame(width: ActionPanelLayoutMetrics.width, height: panelHeight)
         .background(ActionPanelKeyEventHandler(
             onNext: { moveSelection(by: 1) },
             onPrevious: { moveSelection(by: -1) },
             onConfirm: executeSelected,
+            onCommand: execute,
+            hotKeyConfig: hotKeyConfig,
             onDismiss: onDismiss
         ))
         .accessibilityElement(children: .contain)
@@ -146,19 +140,25 @@ struct ActionPanelView: View {
         }
     }
 
-    private func actionButton(_ action: WindowLayoutAction, index: Int) -> some View {
+    private func actionRow(_ action: WindowLayoutActionDescriptor, index: Int) -> some View {
         Button {
             selectedIndex = index
             execute(action.command)
         } label: {
-            VStack(spacing: 7) {
+            HStack(spacing: 10) {
                 Image(systemName: action.symbolName)
-                    .font(.system(size: 22))
+                    .font(.system(size: 16))
+                    .frame(width: 22)
                 Text(action.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
+                Spacer()
+                Text(hotKeyConfig.chord(for: action.id)?.displayText ?? "未设置")
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
             }
-            .frame(maxWidth: .infinity, minHeight: 68)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 40)
             .background(
                 RoundedRectangle(cornerRadius: 9)
                     .fill(index == selectedIndex
@@ -182,6 +182,7 @@ struct ActionPanelView: View {
                 Image(systemName: feedback.symbolName)
                 Text(message)
                     .font(.system(size: 12))
+                    .lineLimit(1)
             }
             .foregroundStyle(feedback.color)
             .accessibilityElement(children: .combine)
@@ -192,14 +193,14 @@ struct ActionPanelView: View {
     }
 
     private func moveSelection(by offset: Int) {
-        let count = WindowLayoutAction.all.count
+        let count = WindowLayoutActionCatalog.actions.count
         guard count > 0 else { return }
         selectedIndex = (selectedIndex + offset + count) % count
     }
 
     private func executeSelected() {
-        guard WindowLayoutAction.all.indices.contains(selectedIndex) else { return }
-        execute(WindowLayoutAction.all[selectedIndex].command)
+        guard WindowLayoutActionCatalog.actions.indices.contains(selectedIndex) else { return }
+        execute(WindowLayoutActionCatalog.actions[selectedIndex].command)
     }
 
     private func execute(_ command: WindowLayoutCommand) {
@@ -230,6 +231,8 @@ private struct ActionPanelKeyEventHandler: NSViewRepresentable {
     let onNext: () -> Void
     let onPrevious: () -> Void
     let onConfirm: () -> Void
+    let onCommand: (WindowLayoutCommand) -> Void
+    let hotKeyConfig: WindowLayoutHotKeyConfig
     let onDismiss: () -> Void
 
     func makeNSView(context: Context) -> ActionPanelKeyCatchView {
@@ -246,6 +249,8 @@ private struct ActionPanelKeyEventHandler: NSViewRepresentable {
         view.onNext = onNext
         view.onPrevious = onPrevious
         view.onConfirm = onConfirm
+        view.onCommand = onCommand
+        view.hotKeyConfig = hotKeyConfig
         view.onDismiss = onDismiss
     }
 }
@@ -254,6 +259,8 @@ private final class ActionPanelKeyCatchView: NSView {
     var onNext: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onConfirm: (() -> Void)?
+    var onCommand: ((WindowLayoutCommand) -> Void)?
+    var hotKeyConfig = WindowLayoutHotKeyConfig()
     var onDismiss: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
@@ -267,19 +274,29 @@ private final class ActionPanelKeyCatchView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if let action = WindowLayoutActionCatalog.actions.first(where: {
+            hotKeyConfig.chord(for: $0.id)?.matches(event) == true
+        }) {
+            onCommand?(action.command)
+            return
+        }
         if event.keyCode == 53 {
             onDismiss?()
             return
         }
-        if event.specialKey == .tab || event.specialKey == .rightArrow || event.specialKey == .downArrow {
+        if event.specialKey == .tab || event.specialKey == .downArrow {
             event.modifierFlags.contains(.shift) ? onPrevious?() : onNext?()
             return
         }
-        if event.specialKey == .leftArrow || event.specialKey == .upArrow {
+        if event.specialKey == .upArrow {
             onPrevious?()
             return
         }
         if let key = event.specialKey, [.carriageReturn, .enter, .newline].contains(key) {
+            onConfirm?()
+            return
+        }
+        if event.keyCode == 49 {
             onConfirm?()
             return
         }
