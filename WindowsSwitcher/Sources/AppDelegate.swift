@@ -178,6 +178,64 @@ private final class WindowLayoutStatusMenuItemView: NSView {
     }
 }
 
+/// 状态栏窗口布局子菜单的目标窗口标题行。
+///
+/// 固定宽度避免超长窗口标题撑大整个子菜单；完整标题通过悬停提示保留。
+private final class WindowLayoutStatusMenuTargetView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "")
+
+    init(title: String) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 12)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.toolTip = title
+        addSubview(titleLabel)
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(title)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 310, height: 28)
+    }
+
+    override func layout() {
+        super.layout()
+        titleLabel.frame = NSRect(x: 12, y: 5, width: bounds.width - 24, height: 18)
+    }
+}
+
+/// 独立窗口布局面板。
+///
+/// 非激活面板默认不一定能成为键盘窗口，显式允许成为 key window 后，ESC 才能沿
+/// responder chain 触发 `cancelOperation`。
+private final class WindowLayoutActionPanel: NSPanel {
+    var onEscape: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func cancelOperation(_ sender: Any?) {
+        onEscape?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
@@ -199,6 +257,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var layoutHotKeysSuspended = false
     private var layoutFallbackLocalMonitor: Any?
     private var layoutFallbackGlobalMonitor: Any?
+    private var actionPanelLocalEscapeMonitor: Any?
+    private var actionPanelGlobalEscapeMonitor: Any?
     private var lastLayoutShortcutSignature: (keyCode: UInt32, modifiers: UInt32, time: Date)?
     private var frozenStatusMenuWindow: WindowModel?
     private var lastLayoutTarget: WindowModel?
@@ -1670,6 +1730,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let targetTitle = target.map { "目标：\($0.appName) — \($0.windowTitle.isEmpty ? "未命名窗口" : $0.windowTitle)" } ?? "没有可用的目标窗口"
         let targetItem = NSMenuItem(title: targetTitle, action: nil, keyEquivalent: "")
         targetItem.isEnabled = false
+        targetItem.view = WindowLayoutStatusMenuTargetView(title: targetTitle)
         menu.addItem(targetItem)
         menu.addItem(.separator())
 
@@ -2318,13 +2379,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             }
         )
 
-        let panel = NSPanel(
+        let panel = WindowLayoutActionPanel(
             contentRect: NSRect(origin: .zero, size: panelSize),
             styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = false
         panel.isMovable = true
         panel.isMovableByWindowBackground = false
         panel.level = .popUpMenu
@@ -2342,8 +2404,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         panel.setContentSize(panelSize)
         hostingView.layoutSubtreeIfNeeded()
         panel.center()
-        panel.makeKeyAndOrderFront(nil)
         actionPanelWindow = panel
+        panel.onEscape = { [weak self, weak panel] in
+            guard let self, self.actionPanelWindow === panel else { return }
+            self.hideActionPanel()
+        }
+        panel.makeKeyAndOrderFront(nil)
+
+        actionPanelLocalEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
+            guard event.keyCode == 53,
+                  let self,
+                  self.actionPanelWindow === panel else { return event }
+            self.hideActionPanel()
+            return nil
+        }
+        actionPanelGlobalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
+            guard event.keyCode == 53 else { return }
+            DispatchQueue.main.async {
+                guard let self, self.actionPanelWindow === panel else { return }
+                self.hideActionPanel()
+            }
+        }
 
         Logger.panelState(
             "布局面板显示",
@@ -2353,7 +2434,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     @MainActor
     private func hideActionPanel() {
+        if let monitor = actionPanelLocalEscapeMonitor {
+            NSEvent.removeMonitor(monitor)
+            actionPanelLocalEscapeMonitor = nil
+        }
+        if let monitor = actionPanelGlobalEscapeMonitor {
+            NSEvent.removeMonitor(monitor)
+            actionPanelGlobalEscapeMonitor = nil
+        }
         guard let panel = actionPanelWindow else { return }
+        (panel as? WindowLayoutActionPanel)?.onEscape = nil
         panel.orderOut(nil)
         actionPanelWindow = nil
         setWindowLayoutHotKeysSuspended(false)
