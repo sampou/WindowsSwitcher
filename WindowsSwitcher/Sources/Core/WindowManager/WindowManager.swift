@@ -11,6 +11,16 @@ enum WindowEvent {
     case windowStateChanged(WindowModel)
 }
 
+/// 窗口聚焦操作的执行线程策略。
+///
+/// 对本进程窗口执行 AX Raise 时，辅助功能调用会回到 AppKit 的 `NSWindow`，必须在主线程执行；
+/// 外部进程窗口仍放在后台队列，避免辅助功能 API 阻塞切换器界面。
+struct WindowFocusExecutionPolicy {
+    static func requiresMainThread(targetPID: pid_t, currentPID: pid_t) -> Bool {
+        targetPID == currentPID
+    }
+}
+
 /// 系统窗口快照的创建/销毁差分。
 ///
 /// 创建事件保持当前快照顺序，销毁事件按窗口 ID 排序，确保生产行为与测试结果稳定。
@@ -458,21 +468,37 @@ class WindowManager: WindowManagerProtocol {
         let isFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
 
         if isFrontmost {
-            // 同一应用内切换窗口：在后台线程聚焦目标窗口，避免 AX API 阻塞主线程
-            Logger.operation("应用内切换", detail: "\(window.appName) - \(window.windowTitle)", result: "后台聚焦")
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.focusWindowQuick(window)
-            }
+            // 同一应用内切换窗口：按目标进程选择安全的聚焦线程
+            Logger.operation("应用内切换", detail: "\(window.appName) - \(window.windowTitle)", result: "调度聚焦")
+            scheduleQuickFocus(window, delay: 0)
         } else {
             // 不同应用间切换：先激活应用，再聚焦目标窗口
             Logger.operation("跨应用切换", detail: "激活 \(window.appName) - \(window.windowTitle)", result: "激活应用")
             let _ = app.activate(options: [.activateIgnoringOtherApps])
-            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.focusWindowQuick(window)
-            }
+            scheduleQuickFocus(window, delay: 0.05)
         }
 
         Logger.operation("窗口激活完成", detail: "\(window.appName) - \(window.windowTitle)")
+    }
+
+    /// 根据目标窗口所属进程调度 AX 聚焦操作。
+    private func scheduleQuickFocus(_ window: WindowModel, delay: TimeInterval) {
+        let work: @Sendable () -> Void = { [weak self] in
+            _ = self?.focusWindowQuick(window)
+        }
+        let deadline = DispatchTime.now() + delay
+        let requiresMainThread = WindowFocusExecutionPolicy.requiresMainThread(
+            targetPID: window.ownerPID,
+            currentPID: ProcessInfo.processInfo.processIdentifier
+        )
+
+        if requiresMainThread {
+            Logger.operation("窗口聚焦调度", detail: "\(window.appName) - \(window.windowTitle)", result: "主线程")
+            DispatchQueue.main.asyncAfter(deadline: deadline, execute: work)
+        } else {
+            Logger.operation("窗口聚焦调度", detail: "\(window.appName) - \(window.windowTitle)", result: "后台线程")
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline, execute: work)
+        }
     }
 
     /// 快速聚焦窗口（提升窗口层级并设置焦点）

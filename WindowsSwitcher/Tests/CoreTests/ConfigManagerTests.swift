@@ -1,5 +1,7 @@
 import XCTest
 import Combine
+import AppKit
+import Carbon
 @testable import WindowsSwitcher
 
 // MARK: - T-039 ConfigManager 完整测试
@@ -129,6 +131,23 @@ final class ConfigManagerTests: XCTestCase {
 // MARK: - ConfigModel 子结构体默认值测试
 
 final class ConfigModelSubstructTests: XCTestCase {
+
+    func testLayoutChordConvertsToNativeMenuShortcut() {
+        let chord = KeyChord(
+            keyCode: UInt32(kVK_LeftArrow),
+            modifiers: UInt32(controlKey | optionKey | cmdKey)
+        )
+
+        XCTAssertEqual(chord.menuKeyEquivalent, UnicodeScalar(NSLeftArrowFunctionKey).map(String.init))
+        XCTAssertEqual(chord.menuModifierMask, [.control, .option, .command])
+    }
+
+    func testUnknownKeyCodeOmitsNativeMenuShortcut() {
+        let chord = KeyChord(keyCode: UInt32.max, modifiers: UInt32(controlKey))
+
+        XCTAssertNil(chord.menuKeyEquivalent)
+        XCTAssertEqual(chord.menuModifierMask, [.control])
+    }
 
     func testHotKeyConfigDefaults() {
         let hk = HotKeyConfig()

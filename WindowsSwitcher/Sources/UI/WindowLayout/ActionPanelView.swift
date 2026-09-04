@@ -69,7 +69,6 @@ struct ActionPanelView: View {
     let layoutService: any WindowLayoutServicing
     let hotKeyConfig: WindowLayoutHotKeyConfig
     let panelHeight: CGFloat
-    let onActivate: () -> Void
     let onDismiss: () -> Void
 
     @State private var selectedIndex = 0
@@ -77,16 +76,25 @@ struct ActionPanelView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
+            DesignTokens.Colors.background
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
+
+            RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius)
+                .stroke(DesignTokens.Colors.separator.opacity(0.65), lineWidth: 1)
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 header
+                    .overlay(ActionPanelDragHandle())
+                    .help("拖动以移动窗口布局面板")
 
                 ScrollView {
-                    LazyVStack(spacing: 4) {
+                    LazyVStack(spacing: 0) {
                         ForEach(Array(WindowLayoutActionCatalog.actions.enumerated()), id: \.element.id) { index, action in
                             actionRow(action, index: index)
+
+                            if index < WindowLayoutActionCatalog.actions.count - 1 {
+                                Divider()
+                            }
                         }
                     }
                 }
@@ -100,7 +108,6 @@ struct ActionPanelView: View {
                         .font(.system(size: 11))
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                     Spacer()
-                    Button("激活窗口", action: onActivate)
                     Button("关闭", action: onDismiss)
                 }
             }
@@ -152,23 +159,25 @@ struct ActionPanelView: View {
                 Text(action.title)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
-                Spacer()
-                Text(hotKeyConfig.chord(for: action.id)?.displayText ?? "未设置")
-                    .font(.system(size: 12, design: .rounded))
-                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                Spacer(minLength: DesignTokens.Spacing.lg)
+                WindowLayoutShortcutBadge(chord: hotKeyConfig.chord(for: action.id))
             }
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 40)
             .background(
-                RoundedRectangle(cornerRadius: 9)
+                RoundedRectangle(cornerRadius: 7)
                     .fill(index == selectedIndex
-                        ? DesignTokens.Colors.accent.opacity(0.22)
-                        : DesignTokens.Colors.secondaryBackground)
+                        ? DesignTokens.Colors.accent.opacity(0.11)
+                        : .clear)
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(index == selectedIndex ? DesignTokens.Colors.accent : .clear, lineWidth: 1.5)
-            )
+            .overlay(alignment: .leading) {
+                if index == selectedIndex {
+                    Capsule()
+                        .fill(DesignTokens.Colors.accent)
+                        .frame(width: 3, height: 24)
+                        .padding(.leading, 3)
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
@@ -205,6 +214,52 @@ struct ActionPanelView: View {
 
     private func execute(_ command: WindowLayoutCommand) {
         feedback = ActionPanelFeedback(result: layoutService.execute(command, for: window))
+    }
+}
+
+/// 窗口布局快捷键的统一展示组件。
+///
+/// 布局面板与设置页共同使用该组件，方向键统一显示为 `← → ↑ ↓`，并保持相同的
+/// 字体、字重、尺寸和右侧列宽。
+struct WindowLayoutShortcutBadge: View {
+    private let text: String
+
+    init(chord: KeyChord?) {
+        text = chord?.displayText ?? "未设置"
+    }
+
+    init(keyCode: UInt32, modifiers: UInt32) {
+        text = HotKeyFormatter.format(keyCode: keyCode, modifiers: modifiers)
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+            .lineLimit(1)
+            .frame(width: 88, height: 22, alignment: .center)
+            .background(DesignTokens.Colors.secondaryBackground.opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .accessibilityLabel("快捷键 \(text)")
+    }
+}
+
+/// 将标题区域的鼠标拖动交给宿主 `NSPanel`，避免列表滚动和按钮点击触发窗口移动。
+private struct ActionPanelDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> ActionPanelDragHandleView {
+        ActionPanelDragHandleView()
+    }
+
+    func updateNSView(_ nsView: ActionPanelDragHandleView, context: Context) {}
+}
+
+private final class ActionPanelDragHandleView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
     }
 }
 

@@ -4,6 +4,16 @@ import XCTest
 // MARK: - T-019 窗口管理器单元测试
 final class WindowManagerTests: XCTestCase {
 
+    // MARK: - 窗口聚焦线程策略测试
+
+    func testOwnProcessWindowRequiresMainThreadFocus() {
+        XCTAssertTrue(WindowFocusExecutionPolicy.requiresMainThread(targetPID: 1234, currentPID: 1234))
+    }
+
+    func testExternalProcessWindowKeepsBackgroundFocus() {
+        XCTAssertFalse(WindowFocusExecutionPolicy.requiresMainThread(targetPID: 1234, currentPID: 5678))
+    }
+
     // MARK: - FilterEngine 测试（可在无权限环境运行）
 
     func testFilterBySearchText() {

@@ -45,6 +45,132 @@ private final class WindowLayoutMenuActionContext: NSObject {
     }
 }
 
+/// 状态栏窗口布局菜单的自定义行。
+///
+/// AppKit 原生快捷键列无法复用 SwiftUI 中的快捷键徽标样式，因此这里使用与
+/// `WindowLayoutShortcutBadge` 相同的字体、尺寸、圆角和颜色，同时仍由对应的
+/// `NSMenuItem` 保存 `keyEquivalent`，不影响菜单键盘响应。
+private final class WindowLayoutStatusMenuItemView: NSView {
+    private weak var menuItem: NSMenuItem?
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
+    private var pointerInside = false
+    private var pointerTrackingArea: NSTrackingArea?
+
+    init(menuItem: NSMenuItem, title: String, symbolName: String, chord: KeyChord?) {
+        self.menuItem = menuItem
+        super.init(frame: NSRect(x: 0, y: 0, width: 310, height: 32))
+
+        wantsLayer = true
+
+        iconView.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: title
+        )?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+        iconView.imageScaling = .scaleProportionallyDown
+
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        shortcutLabel.stringValue = chord?.displayText ?? "未设置"
+        shortcutLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        shortcutLabel.alignment = .center
+        shortcutLabel.lineBreakMode = .byClipping
+        shortcutLabel.wantsLayer = true
+        shortcutLabel.layer?.cornerRadius = 5
+
+        addSubview(iconView)
+        addSubview(titleLabel)
+        addSubview(shortcutLabel)
+        updateColors()
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.menuItem)
+        setAccessibilityLabel(title)
+        setAccessibilityHelp("快捷键 \(shortcutLabel.stringValue)")
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 310, height: 32)
+    }
+
+    override func layout() {
+        super.layout()
+        iconView.frame = NSRect(x: 12, y: 7, width: 22, height: 18)
+        shortcutLabel.frame = NSRect(x: bounds.width - 100, y: 5, width: 88, height: 22)
+        titleLabel.frame = NSRect(
+            x: 44,
+            y: 7,
+            width: max(0, shortcutLabel.frame.minX - 54),
+            height: 18
+        )
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        pointerTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        pointerInside = true
+        updateColors()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        pointerInside = false
+        updateColors()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)),
+              let menuItem,
+              menuItem.isEnabled,
+              let action = menuItem.action else { return }
+        menuItem.menu?.cancelTracking()
+        NSApp.sendAction(action, to: menuItem.target, from: menuItem)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        let isEnabled = menuItem?.isEnabled ?? false
+        let isHighlighted = pointerInside && isEnabled
+        layer?.backgroundColor = isHighlighted
+            ? NSColor.selectedContentBackgroundColor.cgColor
+            : NSColor.clear.cgColor
+        titleLabel.textColor = isHighlighted
+            ? .selectedMenuItemTextColor
+            : (isEnabled ? .labelColor : .disabledControlTextColor)
+        iconView.contentTintColor = isHighlighted
+            ? .selectedMenuItemTextColor
+            : (isEnabled ? .controlAccentColor : .disabledControlTextColor)
+        shortcutLabel.textColor = isHighlighted
+            ? .selectedMenuItemTextColor
+            : (isEnabled ? .secondaryLabelColor : .disabledControlTextColor)
+        shortcutLabel.layer?.backgroundColor = isHighlighted
+            ? NSColor.white.withAlphaComponent(0.18).cgColor
+            : NSColor.controlBackgroundColor.withAlphaComponent(0.72).cgColor
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
@@ -1502,9 +1628,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 keyCode: configManager.config.hotKeys.switchKeyCode,
                 modifiers: configManager.config.hotKeys.switchModifiers
             )
-            let showItem = NSMenuItem(title: "显示切换器\t\(switchChord.displayText)", action: #selector(showSwitcherFromMenu), keyEquivalent: "")
+            let showItem = NSMenuItem(
+                title: "显示切换器",
+                action: #selector(showSwitcherFromMenu),
+                keyEquivalent: switchChord.menuKeyEquivalent ?? ""
+            )
             showItem.target = self
+            showItem.keyEquivalentModifierMask = switchChord.menuModifierMask
+            showItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "显示切换器")
             let layoutItem = NSMenuItem(title: "窗口布局", action: nil, keyEquivalent: "")
+            layoutItem.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: "窗口布局")
             layoutItem.submenu = makeWindowLayoutMenu(target: frozenStatusMenuWindow)
             let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ",")
             settingsItem.target = self
@@ -1536,26 +1669,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let config = configManager.config.hotKeys.windowLayout
         for (index, action) in WindowLayoutActionCatalog.actions.enumerated() {
             if index == 4 || index == 8 || index == 10 { menu.addItem(.separator()) }
-            let shortcut = config.chord(for: action.id)?.displayText ?? "未设置"
+            let chord = config.chord(for: action.id)
             let item = NSMenuItem(
-                title: "\(action.title)\t\(shortcut)",
+                title: action.title,
                 action: #selector(performLayoutActionFromMenu(_:)),
-                keyEquivalent: ""
+                keyEquivalent: chord?.menuKeyEquivalent ?? ""
             )
             item.target = self
+            item.keyEquivalentModifierMask = chord?.menuModifierMask ?? []
             if let target {
                 item.representedObject = WindowLayoutMenuActionContext(actionID: action.id, target: target)
             }
             item.isEnabled = target != nil
             item.image = NSImage(systemSymbolName: action.symbolName, accessibilityDescription: action.title)
+            item.view = WindowLayoutStatusMenuItemView(
+                menuItem: item,
+                title: action.title,
+                symbolName: action.symbolName,
+                chord: chord
+            )
             menu.addItem(item)
         }
 
         menu.addItem(.separator())
-        let openShortcut = config.openPanel?.displayText ?? "未设置"
-        let openItem = NSMenuItem(title: "打开布局面板\t\(openShortcut)", action: #selector(openLayoutPanelFromMenu(_:)), keyEquivalent: "")
+        let openItem = NSMenuItem(
+            title: "打开布局面板",
+            action: #selector(openLayoutPanelFromMenu(_:)),
+            keyEquivalent: config.openPanel?.menuKeyEquivalent ?? ""
+        )
         openItem.target = self
+        openItem.keyEquivalentModifierMask = config.openPanel?.menuModifierMask ?? []
         openItem.isEnabled = target != nil
+        openItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "打开布局面板")
+        openItem.view = WindowLayoutStatusMenuItemView(
+            menuItem: openItem,
+            title: "打开布局面板",
+            symbolName: "rectangle.on.rectangle",
+            chord: config.openPanel
+        )
         if let target {
             openItem.representedObject = WindowLayoutMenuActionContext(actionID: nil, target: target)
         }
@@ -2155,10 +2306,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             layoutService: windowLayoutService,
             hotKeyConfig: configManager.config.hotKeys.windowLayout,
             panelHeight: panelHeight,
-            onActivate: { [weak self] in
-                self?.windowManager.activateWindow(window)
-                self?.hideActionPanel()
-            },
             onDismiss: { [weak self] in
                 self?.hideActionPanel()
             }
@@ -2166,17 +2313,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: panelSize),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView, .titled],
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.isFloatingPanel = true
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
         panel.level = .popUpMenu
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
+        // 布局面板使用实体自适应背景，浅色模式为白色、深色模式为系统深色背景。
+        panel.backgroundColor = .windowBackgroundColor
+        panel.isOpaque = true
         panel.hasShadow = true
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         let hostingView = NSHostingView(rootView: view)

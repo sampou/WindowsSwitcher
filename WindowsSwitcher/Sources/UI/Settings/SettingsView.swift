@@ -678,26 +678,33 @@ struct HotKeySettingsView: View {
                     isOn: $config.config.hotKeys.windowLayout.isEnabled
                 )
 
-                LayoutHotKeyEditor(
-                    title: "打开布局面板",
-                    chord: Binding(
-                        get: { config.config.hotKeys.windowLayout.openPanel },
-                        set: { config.config.hotKeys.windowLayout.openPanel = $0 }
-                    ),
-                    defaultChord: WindowLayoutHotKeyDefaults.openPanel
-                )
-
-                ForEach(WindowLayoutActionCatalog.actions) { action in
+                VStack(spacing: 0) {
                     LayoutHotKeyEditor(
-                        title: action.title,
+                        title: "打开布局面板",
+                        symbolName: "rectangle.on.rectangle",
                         chord: Binding(
-                            get: { config.config.hotKeys.windowLayout.chord(for: action.id) },
-                            set: { config.config.hotKeys.windowLayout.setChord($0, for: action.id) }
+                            get: { config.config.hotKeys.windowLayout.openPanel },
+                            set: { config.config.hotKeys.windowLayout.openPanel = $0 }
                         ),
-                        defaultChord: WindowLayoutHotKeyDefaults.commands[action.id.rawValue]
-                            ?? KeyChord(keyCode: 0, modifiers: WindowLayoutHotKeyDefaults.controlOption)
+                        defaultChord: WindowLayoutHotKeyDefaults.openPanel
                     )
+
+                    ForEach(WindowLayoutActionCatalog.actions) { action in
+                        Divider()
+
+                        LayoutHotKeyEditor(
+                            title: action.title,
+                            symbolName: action.symbolName,
+                            chord: Binding(
+                                get: { config.config.hotKeys.windowLayout.chord(for: action.id) },
+                                set: { config.config.hotKeys.windowLayout.setChord($0, for: action.id) }
+                            ),
+                            defaultChord: WindowLayoutHotKeyDefaults.commands[action.id.rawValue]
+                                ?? KeyChord(keyCode: 0, modifiers: WindowLayoutHotKeyDefaults.controlOption)
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 if let message = layoutConflictMessage {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
@@ -841,42 +848,57 @@ struct HotKeySettingsView: View {
 /// 设置页中的单个窗口布局快捷键编辑器。
 private struct LayoutHotKeyEditor: View {
     let title: String
+    let symbolName: String
     @Binding var chord: KeyChord?
     let defaultChord: KeyChord
 
     var body: some View {
         DisclosureGroup {
-            if chord != nil {
-                HotKeyRecorder(
-                    keyCode: Binding(
-                        get: { chord?.keyCode ?? defaultChord.keyCode },
-                        set: { chord = KeyChord(keyCode: $0, modifiers: chord?.modifiers ?? defaultChord.modifiers) }
-                    ),
-                    modifiers: Binding(
-                        get: { chord?.modifiers ?? defaultChord.modifiers },
-                        set: { chord = KeyChord(keyCode: chord?.keyCode ?? defaultChord.keyCode, modifiers: $0) }
-                    ),
-                    placeholder: defaultChord.displayText,
-                    onReset: { chord = defaultChord }
-                )
-                HStack {
-                    Spacer()
-                    Button("清除快捷键", role: .destructive) { chord = nil }
-                        .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                if chord != nil {
+                    HotKeyRecorder(
+                        keyCode: Binding(
+                            get: { chord?.keyCode ?? defaultChord.keyCode },
+                            set: { chord = KeyChord(keyCode: $0, modifiers: chord?.modifiers ?? defaultChord.modifiers) }
+                        ),
+                        modifiers: Binding(
+                            get: { chord?.modifiers ?? defaultChord.modifiers },
+                            set: { chord = KeyChord(keyCode: chord?.keyCode ?? defaultChord.keyCode, modifiers: $0) }
+                        ),
+                        placeholder: defaultChord.displayText,
+                        onReset: { chord = defaultChord }
+                    )
+                    HStack {
+                        Spacer()
+                        Button("清除快捷键", role: .destructive) { chord = nil }
+                            .buttonStyle(.plain)
+                    }
+                } else {
+                    Button("设置为默认快捷键 \(defaultChord.displayText)") { chord = defaultChord }
                 }
-            } else {
-                Button("设置为默认快捷键 \(defaultChord.displayText)") { chord = defaultChord }
             }
+            .padding(.leading, 30)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
         } label: {
-            HStack {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Image(systemName: symbolName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DesignTokens.Colors.accent)
+                    .frame(width: 20, alignment: .center)
+
                 Text(title)
                     .font(FontSystem.bodyMedium)
-                Spacer()
-                Text(chord?.displayText ?? "未设置")
-                    .font(.system(size: 12, design: .rounded))
-                    .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                    .lineLimit(1)
+
+                Spacer(minLength: DesignTokens.Spacing.lg)
+
+                WindowLayoutShortcutBadge(chord: chord)
             }
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1211,12 +1233,7 @@ struct HotKeyRecorder: View {
                 .help("恢复默认")
 
                 // 显示当前快捷键
-                Text(HotKeyFormatter.format(keyCode: keyCode, modifiers: modifiers))
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                WindowLayoutShortcutBadge(keyCode: keyCode, modifiers: modifiers)
             }
         }
         .padding(8)
