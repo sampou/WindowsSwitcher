@@ -136,6 +136,13 @@ private final class WindowLayoutStatusMenuItemView: NSView {
         updateColors()
     }
 
+    /// 自定义菜单行的所有可见区域都由行本身接收鼠标事件。
+    ///
+    /// 否则文字、图标和快捷键标签可能成为命中视图，导致只有部分区域能执行菜单动作。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
     override func mouseUp(with event: NSEvent) {
         guard bounds.contains(convert(event.locationInWindow, from: nil)),
               let menuItem,

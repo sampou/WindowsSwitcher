@@ -178,6 +178,7 @@ struct ActionPanelView: View {
                         .padding(.leading, 3)
                 }
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
