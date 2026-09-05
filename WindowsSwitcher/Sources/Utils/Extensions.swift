@@ -149,15 +149,15 @@ class PermissionManager: ObservableObject {
     // MARK: - 获取权限说明
     func getAccessibilityPermissionDescription() -> (title: String, description: String) {
         return (
-            title: "辅助功能权限",
-            description: "WindowsSwitcher 需要辅助功能权限来捕获窗口信息和管理窗口，实现窗口切换功能。"
+            title: L10n.text("辅助功能权限"),
+            description: L10n.text("WindowsSwitcher 需要辅助功能权限来捕获窗口信息和管理窗口，实现窗口切换功能。")
         )
     }
 
     func getScreenRecordingPermissionDescription() -> (title: String, description: String) {
         return (
-            title: "屏幕录制权限",
-            description: "WindowsSwitcher 需要屏幕录制权限来生成窗口预览缩略图，显示实时窗口内容。此权限不会录制或保存任何内容。"
+            title: L10n.text("屏幕录制权限"),
+            description: L10n.text("WindowsSwitcher 需要屏幕录制权限来生成窗口预览缩略图，显示实时窗口内容。此权限不会录制或保存任何内容。")
         )
     }
 
@@ -169,10 +169,10 @@ class PermissionManager: ObservableObject {
     var missingPermissions: [String] {
         var missing: [String] = []
         if !accessibilityStatus.isAuthorized {
-            missing.append("辅助功能")
+            missing.append(L10n.text("辅助功能"))
         }
         if !screenRecordingStatus.isAuthorized {
-            missing.append("屏幕录制")
+            missing.append(L10n.text("屏幕录制"))
         }
         return missing
     }

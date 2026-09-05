@@ -33,7 +33,7 @@ struct PreviewView: View {
         VStack(spacing: DesignTokens.Spacing.sm) {
             ProgressView()
                 .scaleEffect(1.2)
-            Text("加载预览...")
+            Text(L10n.text("加载预览..."))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
         }

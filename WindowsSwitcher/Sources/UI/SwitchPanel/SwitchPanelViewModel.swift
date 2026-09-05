@@ -89,7 +89,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 尝试保持之前选中的窗口
         if let previousID = previousSelectedID,
            let newIndex = filteredWindows.firstIndex(where: { $0.id == previousID }) {
-            selectedIndex = newIndex
+            selectWindow(at: newIndex)
         }
     }
 
@@ -123,10 +123,26 @@ class SwitchPanelViewModel: ObservableObject {
         defaultSelectSecond: Bool
     ) -> Int {
         guard windowCount > 1 else { return 0 }
-        if reversed { return 1 }
+        if reversed { return windowCount - 1 }
         if appSwitchMode { return 1 }
         if defaultSelectSecond { return 1 }
         return 0
+    }
+
+    /// 按当前过滤列表的索引设置唯一选中窗口，并同步稳定窗口 ID。
+    ///
+    /// 所有界面入口都通过该方法更新选择，避免列表刷新后高亮索引与最终激活 ID 分离。
+    @discardableResult
+    func selectWindow(at index: Int) -> WindowModel? {
+        guard filteredWindows.indices.contains(index) else {
+            selectedIndex = 0
+            selectedWindowID = nil
+            return nil
+        }
+        let window = filteredWindows[index]
+        selectedIndex = index
+        selectedWindowID = window.id
+        return window
     }
 
     func beginSameAppSwitchSession(bundleIdentifier: String, initialIndex: Int) {
@@ -228,14 +244,9 @@ class SwitchPanelViewModel: ObservableObject {
         // 恢复选中状态：优先使用之前的窗口 ID
         if let prevID = previousSelectedID,
            let newIndex = filteredWindows.firstIndex(where: { $0.id == prevID }) {
-            selectedIndex = newIndex
-            selectedWindowID = prevID
+            selectWindow(at: newIndex)
         } else {
-            selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
-            // 更新 selectedWindowID
-            if filteredWindows.indices.contains(selectedIndex) {
-                selectedWindowID = filteredWindows[selectedIndex].id
-            }
+            selectWindow(at: min(selectedIndex, max(0, filteredWindows.count - 1)))
         }
 
         loadVisiblePreviews()
@@ -254,8 +265,7 @@ class SwitchPanelViewModel: ObservableObject {
               session.windowIDs.indices.contains(session.selectedIndex) else { return }
         let windowID = session.windowIDs[session.selectedIndex]
         if let index = filteredWindows.firstIndex(where: { $0.id == windowID }) {
-            selectedIndex = index
-            selectedWindowID = windowID
+            selectWindow(at: index)
         }
     }
 
@@ -277,7 +287,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 操作日志：窗口选择
         Logger.windowSelect("Tab", windowInfo: "\(nextWindow.appName) - \(nextWindow.windowTitle)")
 
-        selectedIndex = nextIndex
+        selectWindow(at: nextIndex)
 
         // 刷新选中窗口的预览（实时获取最新内容）
         refreshSelectedWindowPreview()
@@ -292,7 +302,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 操作日志：窗口选择
         Logger.windowSelect("Shift+Tab", windowInfo: "\(prevWindow.appName) - \(prevWindow.windowTitle)")
 
-        selectedIndex = prevIndex
+        selectWindow(at: prevIndex)
 
         // 刷新选中窗口的预览（实时获取最新内容）
         refreshSelectedWindowPreview()
@@ -319,7 +329,7 @@ class SwitchPanelViewModel: ObservableObject {
 
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
-            selectedIndex = targetIndex
+            selectWindow(at: targetIndex)
             // 刷新选中窗口的预览（实时获取最新内容）
             refreshSelectedWindowPreview()
         }
@@ -347,7 +357,7 @@ class SwitchPanelViewModel: ObservableObject {
 
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
-            selectedIndex = targetIndex
+            selectWindow(at: targetIndex)
             // 刷新选中窗口的预览（实时获取最新内容）
             refreshSelectedWindowPreview()
         }

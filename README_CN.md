@@ -52,6 +52,7 @@ Windows Switcher 是一款原生 macOS 窗口切换增强工具，提供接近 W
 ### 原生 macOS 体验
 
 - 支持浅色、深色和跟随系统三种外观模式。
+- 支持简体中文与英文，覆盖状态栏菜单、窗口布局、设置页和权限说明；可在设置页跟随系统或手动选择应用语言。
 - 使用 SwiftUI 与 AppKit 构建界面，通过 Carbon 注册全局快捷键，通过辅助功能 API 管理窗口，通过 ScreenCaptureKit 生成预览。
 - 支持配置持久化、窗口活动顺序持久化、登录时启动和版本更新检查。
 
@@ -133,19 +134,42 @@ swift build --package-path WindowsSwitcher
 涉及 macOS 权限的验收应使用项目发布脚本生成已签名应用和 DMG，不建议直接运行 SwiftPM 裸可执行文件：
 
 ```bash
-WINDOWSSWITCHER_DMG_BACKEND=xorriso bash scripts/build-release.sh 0
+bash scripts/build-release.sh 0
 ```
 
 该脚本会：
 
 - 自动增加 `CFBundleVersion`；传入的数字同时表示补丁版本递增量；
-- 默认使用 `WindowsSwitcher Local Signing` 本地身份签名 Release 应用；
-- 在 `release/` 生成并校验 ZIP 与 DMG；
+- 默认构建 `arm64 + x86_64` 通用 Release 应用，并使用 `WindowsSwitcher Local Signing` 本地身份签名；
+- 先在 `build/` 生成 ZIP 与 DMG 候选产物，两者验证通过后才发布到 `release/`；
+- 生成发布清单、SHA-256 校验文件，并将每次运行日志保存到 `.release-logs/`；
+- 打包失败时恢复版本元数据，并以事务方式恢复同版本的上一组有效发布文件；
 - 将校验通过的应用安装到 `/Applications/WindowsSwitcher.app` 并启动。
 
-如需使用其他本地签名身份，可设置 `WINDOWSSWITCHER_SIGN_IDENTITY`。DMG 后端支持 `auto`、`create-dmg`、`hdiutil` 和 `xorriso`；使用 xorriso 前可执行 `brew install xorriso`。
+如需使用其他本地签名身份，可设置 `WINDOWSSWITCHER_SIGN_IDENTITY`。脚本默认直接使用 `hdiutil`，`auto` 仅作为指向同一后端的兼容别名；只有显式设置 `WINDOWSSWITCHER_DMG_BACKEND=create-dmg` 时才启用 Finder 样式自动化。编译前脚本会先进行小型 DMG 创建预检，DiskImages 异常时最多 20 秒就停止。脚本会拒绝并发打包，并且只有在检查 UDIF 签名、校验映像、真实挂载、检查应用内容和验证应用签名后才发布 DMG，绝不会把 ISO 映像改名为 DMG。
 
-> 发布脚本会修改构建号，并替换“应用程序”目录内已经安装的版本。
+制作对外分发版本时，先把 App Store Connect 公证凭据保存到钥匙串，并使用 Developer ID Application 证书。不得把密码、Issuer ID 或私钥路径写入脚本或仓库：
+
+```bash
+xcrun notarytool store-credentials "WindowsSwitcher-notary" \
+  --apple-id "YOUR_APPLE_ID" \
+  --team-id "YOUR_TEAM_ID"
+
+WINDOWSSWITCHER_RELEASE_MODE=distribution \
+WINDOWSSWITCHER_SIGN_IDENTITY="Developer ID Application: YOUR NAME (TEAM_ID)" \
+WINDOWSSWITCHER_NOTARY_PROFILE="WindowsSwitcher-notary" \
+WINDOWSSWITCHER_VERSION="0.0.187" \
+WINDOWSSWITCHER_BUILD_NUMBER="201" \
+bash scripts/build-release.sh 0
+```
+
+正式分发模式默认要求工作树干净、构建号单调递增，并依次完成 Hardened Runtime 与安全时间戳签名、应用和 DMG 的 Apple 公证、票据装订及 Gatekeeper 评估。只有经过审查并明确接受风险时，才使用 `WINDOWSSWITCHER_ALLOW_DIRTY=1` 放行脏工作树。下载产物后可在 `release/` 中执行 `shasum -a 256 -c WindowsSwitcher-<version>.sha256` 校验。
+
+如果脚本提示存在 WindowsSwitcher 遗留的磁盘映像会话，请先在 Finder 侧边栏弹出所有 `Windows Switcher` 卷后重试。如 DiskImages 仍保留已卸载会话，请先重启 macOS；脚本会在修改版本号和构建号之前检测该状态。
+
+如果上一个终端被强制结束并遗留 `.build-release.lock`，请先确认没有 `build-release.sh` 进程正在运行，再使用 `WINDOWSSWITCHER_FORCE_UNLOCK=1` 重试一次。其他发布仍在运行时不得强制解锁。
+
+> 只有发布成功才会保留新构建号并替换“应用程序”中的旧版本；发布失败会恢复原版本元数据。
 
 ## 项目结构
 
@@ -155,7 +179,7 @@ WindowsSwitcher/
 │   ├── Sources/                 # 应用源码
 │   ├── Resources/               # 资源目录
 │   └── Tests/                   # SwiftPM 测试
-├── scripts/build-release.sh     # 签名、ZIP/DMG 打包与安装
+├── scripts/build-release.sh     # 签名、公证、ZIP/DMG 打包与安装
 ├── tools/user-e2e/              # 用户级冒烟测试
 └── docs/CHANGELOG.md            # 版本更新记录
 ```

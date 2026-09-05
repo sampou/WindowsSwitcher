@@ -26,7 +26,7 @@ struct UpdateNotificationView: View {
                         .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
 
                     // 标题
-                    Text("发现新版本")
+                    Text(L10n.text("发现新版本"))
                         .font(.system(size: 26, weight: .bold))
 
                     // 版本号
@@ -36,7 +36,7 @@ struct UpdateNotificationView: View {
                                 .font(.system(size: 18, weight: .medium))
                                 .foregroundStyle(.blue)
 
-                            Text("现已发布")
+                            Text(L10n.text("现已发布"))
                                 .font(.system(size: 15))
                                 .foregroundStyle(.secondary)
                         }
@@ -54,7 +54,7 @@ struct UpdateNotificationView: View {
                         HStack {
                             Image(systemName: "info.circle.fill")
                                 .foregroundStyle(.blue)
-                            Text("当前版本 v\(updateService.currentVersion)")
+                            Text(L10n.format("当前版本 v%@", updateService.currentVersion))
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -63,16 +63,16 @@ struct UpdateNotificationView: View {
                         Divider()
 
                         // 更新说明
-                        Text("更新内容")
+                        Text(L10n.text("更新内容"))
                             .font(.system(size: 15, weight: .semibold))
 
-                        Text(latest.releaseNotes ?? "建议更新以获得最新功能。")
+                        Text(latest.releaseNotes ?? L10n.text("建议更新以获得最新功能。"))
                             .font(.system(size: 14))
                             .foregroundStyle(.primary)
                             .lineSpacing(6)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Text("建议更新以获得最新功能。")
+                        Text(L10n.text("建议更新以获得最新功能。"))
                             .font(.system(size: 14))
                             .foregroundStyle(.secondary)
                     }
@@ -89,7 +89,7 @@ struct UpdateNotificationView: View {
                 if !config.config.update.autoCheckEnabled {
                     HStack {
                         Toggle(isOn: $config.config.update.autoCheckEnabled) {
-                            Text("自动检查更新")
+                            Text(L10n.text("自动检查更新"))
                                 .font(.system(size: 13))
                         }
                         .toggleStyle(.checkbox)
@@ -105,7 +105,7 @@ struct UpdateNotificationView: View {
                 // 按钮
                 HStack(spacing: 16) {
                     Button(action: { onDismiss() }) {
-                        Text("稍后提醒")
+                        Text(L10n.text("稍后提醒"))
                             .font(.system(size: 14, weight: .medium))
                             .frame(maxWidth: .infinity)
                             .frame(height: 40)
@@ -118,7 +118,7 @@ struct UpdateNotificationView: View {
                     }) {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.down.circle.fill")
-                            Text("立即下载")
+                            Text(L10n.text("立即下载"))
                         }
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -130,6 +130,7 @@ struct UpdateNotificationView: View {
             .padding(24)
         }
         .frame(width: 500)
+        .environment(\.locale, L10n.locale)
         .background(Color(NSColor.windowBackgroundColor))
     }
 }
@@ -148,7 +149,7 @@ class UpdateNotificationWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
 
-        window.title = "软件更新"
+        window.title = L10n.text("软件更新")
         window.center()
         window.isReleasedWhenClosed = false
 

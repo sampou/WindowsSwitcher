@@ -4,6 +4,7 @@ import Combine
 // MARK: - 通知名称扩展
 extension Notification.Name {
     static let hotKeysDidChange = Notification.Name("hotKeysDidChange")
+    static let appLanguageDidChange = Notification.Name("appLanguageDidChange")
 }
 
 class ConfigManager: ObservableObject {
@@ -16,6 +17,9 @@ class ConfigManager: ObservableObject {
             // 检查快捷键是否变化
             if oldValue.hotKeys != config.hotKeys {
                 NotificationCenter.default.post(name: .hotKeysDidChange, object: nil)
+            }
+            if oldValue.appearance.language != config.appearance.language {
+                NotificationCenter.default.post(name: .appLanguageDidChange, object: nil)
             }
         }
     }
@@ -39,7 +43,7 @@ class ConfigManager: ObservableObject {
             UserDefaults.standard.synchronize()
             if saveError != nil { saveError = nil }
         } catch {
-            saveError = "设置保存失败：\(error.localizedDescription)"
+            saveError = L10n.format("设置保存失败：%@", error.localizedDescription)
         }
     }
 

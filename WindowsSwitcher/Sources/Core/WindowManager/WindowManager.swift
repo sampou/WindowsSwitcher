@@ -21,6 +21,20 @@ struct WindowFocusExecutionPolicy {
     }
 }
 
+/// 精确窗口聚焦后的确认与退避重试策略。
+///
+/// `NSRunningApplication.activate` 和目标应用自身的窗口恢复可能异步改写焦点，因此不能把
+/// `kAXRaiseAction` 返回成功等同于最终焦点正确。短暂确认后按退避间隔重试，可覆盖该竞争窗口。
+struct WindowFocusRetryPolicy {
+    static let verificationDelay: TimeInterval = 0.04
+    private static let retryDelays: [TimeInterval] = [0.04, 0.08, 0.16]
+
+    static func retryDelay(afterAttempt attempt: Int) -> TimeInterval? {
+        guard retryDelays.indices.contains(attempt) else { return nil }
+        return retryDelays[attempt]
+    }
+}
+
 /// 系统窗口快照的创建/销毁差分。
 ///
 /// 创建事件保持当前快照顺序，销毁事件按窗口 ID 排序，确保生产行为与测试结果稳定。
@@ -482,9 +496,9 @@ class WindowManager: WindowManagerProtocol {
     }
 
     /// 根据目标窗口所属进程调度 AX 聚焦操作。
-    private func scheduleQuickFocus(_ window: WindowModel, delay: TimeInterval) {
+    private func scheduleQuickFocus(_ window: WindowModel, delay: TimeInterval, attempt: Int = 0) {
         let work: @Sendable () -> Void = { [weak self] in
-            _ = self?.focusWindowQuick(window)
+            self?.focusWindowAndConfirm(window, attempt: attempt)
         }
         let deadline = DispatchTime.now() + delay
         let requiresMainThread = WindowFocusExecutionPolicy.requiresMainThread(
@@ -501,14 +515,93 @@ class WindowManager: WindowManagerProtocol {
         }
     }
 
-    /// 快速聚焦窗口（提升窗口层级并设置焦点）
-    @discardableResult
-    private func focusWindowQuick(_ window: WindowModel) -> Bool {
-        guard let win = axWindow(for: window) else { return false }
-        let result = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
-        AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-        Logger.operation("AX Raise", detail: "\(window.appName) - \(window.windowTitle)", result: result == .success ? "成功" : "失败(\(result.rawValue))")
-        return result == .success
+    /// 聚焦目标窗口，并读取应用当前焦点窗口 ID 做结果确认。
+    ///
+    /// 设置应用的 focusedWindow 与窗口的 main/focused 属性后再执行 Raise，兼容 Chrome 等
+    /// 多窗口应用。确认失败只会重试当前最新的激活请求，避免旧任务覆盖用户后续选择。
+    private func focusWindowAndConfirm(_ window: WindowModel, attempt: Int) {
+        guard isCurrentActivation(window.id) else {
+            Logger.operation("窗口聚焦取消", detail: "\(window.appName) - \(window.windowTitle)", result: "已有更新的激活请求")
+            return
+        }
+        guard let win = axWindow(for: window) else {
+            retryWindowFocusIfNeeded(window, attempt: attempt, actualWindowID: nil)
+            return
+        }
+
+        let axApp = AXUIElementCreateApplication(window.ownerPID)
+        _ = AXUIElementSetAttributeValue(win, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        let appFocusResult = AXUIElementSetAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, win)
+        let mainResult = AXUIElementSetAttributeValue(win, kAXMainAttribute as CFString, kCFBooleanTrue)
+        let focusResult = AXUIElementSetAttributeValue(win, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        let raiseResult = AXUIElementPerformAction(win, kAXRaiseAction as CFString)
+        Logger.operation(
+            "AX 精确聚焦",
+            detail: "\(window.appName) - \(window.windowTitle), attempt=\(attempt + 1), appFocus=\(appFocusResult.rawValue), main=\(mainResult.rawValue), focus=\(focusResult.rawValue), raise=\(raiseResult.rawValue)",
+            result: raiseResult == .success ? "已提交" : "部分失败"
+        )
+
+        let verify: @Sendable () -> Void = { [weak self] in
+            guard let self, self.isCurrentActivation(window.id) else { return }
+            let actualWindowID = self.getFocusedWindowID(pid: window.ownerPID)
+            if actualWindowID == window.id {
+                Logger.operation("窗口聚焦确认", detail: "\(window.appName) - \(window.windowTitle) (ID: \(window.id))", result: "成功")
+            } else {
+                self.retryWindowFocusIfNeeded(window, attempt: attempt, actualWindowID: actualWindowID)
+            }
+        }
+        dispatchFocusWork(
+            for: window,
+            delay: WindowFocusRetryPolicy.verificationDelay,
+            work: verify
+        )
+    }
+
+    /// 当前请求仍是最新激活目标时，按退避策略重新聚焦。
+    private func retryWindowFocusIfNeeded(
+        _ window: WindowModel,
+        attempt: Int,
+        actualWindowID: CGWindowID?
+    ) {
+        guard isCurrentActivation(window.id) else { return }
+        guard let delay = WindowFocusRetryPolicy.retryDelay(afterAttempt: attempt) else {
+            Logger.operation(
+                "窗口聚焦确认",
+                detail: "目标 ID: \(window.id), 实际 ID: \(actualWindowID.map(String.init) ?? "未知")",
+                result: "失败 - 已耗尽重试"
+            )
+            return
+        }
+        Logger.operation(
+            "窗口聚焦重试",
+            detail: "目标 ID: \(window.id), 实际 ID: \(actualWindowID.map(String.init) ?? "未知"), nextAttempt=\(attempt + 2)",
+            result: "等待 \(Int(delay * 1000))ms"
+        )
+        scheduleQuickFocus(window, delay: delay, attempt: attempt + 1)
+    }
+
+    /// 根据目标进程选择正确线程执行 AX 操作。
+    private func dispatchFocusWork(
+        for window: WindowModel,
+        delay: TimeInterval,
+        work: @escaping @Sendable () -> Void
+    ) {
+        let deadline = DispatchTime.now() + delay
+        if WindowFocusExecutionPolicy.requiresMainThread(
+            targetPID: window.ownerPID,
+            currentPID: ProcessInfo.processInfo.processIdentifier
+        ) {
+            DispatchQueue.main.asyncAfter(deadline: deadline, execute: work)
+        } else {
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: deadline, execute: work)
+        }
+    }
+
+    /// 判断异步聚焦任务是否仍对应最新一次窗口激活请求。
+    private func isCurrentActivation(_ windowID: CGWindowID) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return lastActivatedWindowID == windowID
     }
 
     /// 聚焦指定窗口

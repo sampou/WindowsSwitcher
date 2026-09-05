@@ -14,6 +14,13 @@ final class WindowManagerTests: XCTestCase {
         XCTAssertFalse(WindowFocusExecutionPolicy.requiresMainThread(targetPID: 1234, currentPID: 5678))
     }
 
+    func testWindowFocusRetryPolicyUsesBoundedBackoff() {
+        XCTAssertEqual(WindowFocusRetryPolicy.retryDelay(afterAttempt: 0), 0.04)
+        XCTAssertEqual(WindowFocusRetryPolicy.retryDelay(afterAttempt: 1), 0.08)
+        XCTAssertEqual(WindowFocusRetryPolicy.retryDelay(afterAttempt: 2), 0.16)
+        XCTAssertNil(WindowFocusRetryPolicy.retryDelay(afterAttempt: 3))
+    }
+
     // MARK: - FilterEngine 测试（可在无权限环境运行）
 
     func testFilterBySearchText() {

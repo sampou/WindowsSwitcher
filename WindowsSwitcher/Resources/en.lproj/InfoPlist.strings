@@ -1,0 +1,2 @@
+"NSAccessibilityUsageDescription" = "Accessibility permission is required to switch and manage windows.";
+"NSScreenCaptureUsageDescription" = "Screen Recording permission is required to generate window previews.";

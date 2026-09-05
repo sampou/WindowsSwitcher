@@ -18,23 +18,23 @@ enum InstallState: Equatable {
     var message: String {
         switch self {
         case .idle:
-            return "准备安装"
+            return L10n.text("准备安装")
         case .preparing:
-            return "准备中..."
+            return L10n.text("准备中...")
         case .backingUp:
-            return "备份当前版本..."
+            return L10n.text("备份当前版本...")
         case .mounting:
-            return "挂载安装包..."
+            return L10n.text("挂载安装包...")
         case .verifying:
-            return "验证应用签名..."
+            return L10n.text("验证应用签名...")
         case .installing(let progress):
-            return "正在安装... \(Int(progress * 100))%"
+            return L10n.format("正在安装... %@%%", String(Int(progress * 100)))
         case .completed:
-            return "安装完成"
+            return L10n.text("安装完成")
         case .failed(let error):
-            return "安装失败: \(error)"
+            return L10n.format("安装失败: %@", error)
         case .rollback:
-            return "正在回滚..."
+            return L10n.text("正在回滚...")
         }
     }
 }
@@ -54,19 +54,19 @@ enum InstallError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .dmgNotFound:
-            return "安装包不存在"
+            return L10n.text("安装包不存在")
         case .mountFailed(let message):
-            return "挂载失败: \(message)"
+            return L10n.format("挂载失败: %@", message)
         case .signatureInvalid(let message):
-            return "签名验证失败: \(message)"
+            return L10n.format("签名验证失败: %@", message)
         case .permissionDenied:
-            return "权限被拒绝"
+            return L10n.text("权限被拒绝")
         case .installFailed(let message):
-            return "安装失败: \(message)"
+            return L10n.format("安装失败: %@", message)
         case .backupFailed(let message):
-            return "备份失败: \(message)"
+            return L10n.format("备份失败: %@", message)
         case .rollbackFailed(let message):
-            return "回滚失败: \(message)"
+            return L10n.format("回滚失败: %@", message)
         }
     }
 }
@@ -157,7 +157,7 @@ class SilentInstaller: ObservableObject {
            let freeSize = attributes[.systemFreeSize] as? Int64 {
             let requiredSpace: Int64 = 500 * 1024 * 1024 // 500MB
             if freeSize < requiredSpace {
-                throw InstallError.installFailed("磁盘空间不足，至少需要 500MB")
+                throw InstallError.installFailed(L10n.text("磁盘空间不足，至少需要 500MB"))
             }
         }
     }
@@ -248,7 +248,7 @@ class SilentInstaller: ObservableObject {
             process.waitUntilExit()
         } catch {
             Logger.operation("静默安装", detail: "osascript 执行失败: \(error.localizedDescription)", result: "失败")
-            throw InstallError.installFailed("执行安装脚本失败: \(error.localizedDescription)")
+            throw InstallError.installFailed(L10n.format("执行安装脚本失败: %@", error.localizedDescription))
         }
 
         if process.terminationStatus != 0 {
@@ -272,7 +272,7 @@ class SilentInstaller: ObservableObject {
 
         // 验证安装是否成功
         if !FileManager.default.fileExists(atPath: targetPath) {
-            throw InstallError.installFailed("应用未成功复制到 Applications 目录")
+            throw InstallError.installFailed(L10n.text("应用未成功复制到 Applications 目录"))
         }
 
         Logger.operation("静默安装", detail: "应用复制完成")
@@ -337,7 +337,7 @@ class SilentInstaller: ObservableObject {
         Logger.operation("应用备份", detail: "开始备份: \(currentAppPath)")
 
         guard FileManager.default.fileExists(atPath: currentAppPath) else {
-            throw InstallError.backupFailed("应用程序不存在")
+            throw InstallError.backupFailed(L10n.text("应用程序不存在"))
         }
 
         // 创建备份目录
@@ -382,7 +382,7 @@ class SilentInstaller: ObservableObject {
             try process.run()
             process.waitUntilExit()
         } catch {
-            throw InstallError.mountFailed("执行 hdiutil 失败: \(error.localizedDescription)")
+            throw InstallError.mountFailed(L10n.format("执行 hdiutil 失败: %@", error.localizedDescription))
         }
 
         guard process.terminationStatus == 0 else {
@@ -395,7 +395,7 @@ class SilentInstaller: ObservableObject {
         // 解析输出获取挂载点
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: outputData, encoding: .utf8) else {
-            throw InstallError.mountFailed("无法解析挂载输出")
+            throw InstallError.mountFailed(L10n.text("无法解析挂载输出"))
         }
 
         Logger.operation("DMG挂载", detail: "hdiutil 输出: \(output)")
@@ -420,7 +420,7 @@ class SilentInstaller: ObservableObject {
 
         guard let mountPoint = mountPoint else {
             Logger.operation("DMG挂载", detail: "无法解析挂载点", result: "失败")
-            throw InstallError.mountFailed("无法解析挂载点")
+            throw InstallError.mountFailed(L10n.text("无法解析挂载点"))
         }
 
         Logger.operation("DMG挂载", detail: "解析到挂载点: \(mountPoint)")
@@ -429,13 +429,13 @@ class SilentInstaller: ObservableObject {
         let fileManager = FileManager.default
         guard let contents = try? fileManager.contentsOfDirectory(atPath: mountPoint) else {
             Logger.operation("DMG挂载", detail: "无法读取挂载点内容: \(mountPoint)", result: "失败")
-            throw InstallError.mountFailed("无法读取挂载点内容")
+            throw InstallError.mountFailed(L10n.text("无法读取挂载点内容"))
         }
 
         Logger.operation("DMG挂载", detail: "挂载点内容: \(contents)")
 
         guard let appName = contents.first(where: { $0.hasSuffix(".app") }) else {
-            throw InstallError.mountFailed("DMG 中未找到应用程序")
+            throw InstallError.mountFailed(L10n.text("DMG 中未找到应用程序"))
         }
 
         let appPath = (mountPoint as NSString).appendingPathComponent(appName)
@@ -478,7 +478,7 @@ class SilentInstaller: ObservableObject {
 
         // 检查应用是否存在
         guard FileManager.default.fileExists(atPath: appPath.path) else {
-            throw InstallError.signatureInvalid("应用程序不存在")
+            throw InstallError.signatureInvalid(L10n.text("应用程序不存在"))
         }
 
         // 使用 codesign 验证签名
@@ -514,12 +514,12 @@ class SilentInstaller: ObservableObject {
               let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any],
               let bundleIdentifier = plist["CFBundleIdentifier"] as? String else {
             Logger.operation("签名验证", detail: "无法读取 Bundle Identifier", result: "失败")
-            throw InstallError.signatureInvalid("无法读取 Bundle Identifier")
+            throw InstallError.signatureInvalid(L10n.text("无法读取 Bundle Identifier"))
         }
 
         guard bundleIdentifier == expectedBundleIdentifier else {
             Logger.operation("签名验证", detail: "Bundle Identifier 不匹配: \(bundleIdentifier)", result: "失败")
-            throw InstallError.signatureInvalid("应用标识不匹配")
+            throw InstallError.signatureInvalid(L10n.text("应用标识不匹配"))
         }
 
         Logger.operation("签名验证", detail: "验证通过", result: "成功")
@@ -544,7 +544,7 @@ struct UpdateDownloadView: View {
                     .frame(width: 56, height: 56)
                     .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
 
-                Text("正在下载更新")
+                Text(L10n.text("正在下载更新"))
                     .font(.system(size: 18, weight: .semibold))
 
                 if let version = updateService.latestVersion?.version {
@@ -614,58 +614,58 @@ struct UpdateDownloadView: View {
             // 底部按钮
             HStack(spacing: 16) {
                 if downloadManager.isDownloading {
-                    Button("取消下载") {
+                    Button(L10n.text("取消下载")) {
                         downloadManager.cancelDownload()
                         onDismiss()
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
                 } else if downloadManager.isPaused {
-                    Button("继续下载") {
+                    Button(L10n.text("继续下载")) {
                         downloadManager.resumeDownload()
                     }
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
 
-                    Button("取消") {
+                    Button(L10n.text("取消")) {
                         downloadManager.cancelDownload()
                         onDismiss()
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
                 } else if downloadManager.isCompleted {
-                    Button("安装更新") {
+                    Button(L10n.text("安装更新")) {
                         downloadManager.installUpdate()
                         onDismiss()
                     }
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
 
-                    Button("稍后安装") {
+                    Button(L10n.text("稍后安装")) {
                         onDismiss()
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
                 } else if downloadManager.hasError {
-                    Button("重试") {
+                    Button(L10n.text("重试")) {
                         downloadManager.startDownload()
                     }
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
 
-                    Button("取消") {
+                    Button(L10n.text("取消")) {
                         onDismiss()
                     }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: .infinity)
                 } else {
-                    Button("开始下载") {
+                    Button(L10n.text("开始下载")) {
                         downloadManager.startDownload()
                     }
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
 
-                    Button("稍后提醒") {
+                    Button(L10n.text("稍后提醒")) {
                         onDismiss()
                     }
                     .buttonStyle(.bordered)
@@ -675,6 +675,7 @@ struct UpdateDownloadView: View {
             .padding(24)
         }
         .frame(width: 400)
+        .environment(\.locale, L10n.locale)
         .background(Color(NSColor.windowBackgroundColor))
         .onAppear {
             if !downloadManager.isDownloading && !downloadManager.isCompleted {
@@ -724,7 +725,7 @@ class UpdateDownloadWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
 
-        window.title = "下载更新"
+        window.title = L10n.text("下载更新")
         window.center()
         window.isReleasedWhenClosed = false
 
@@ -767,7 +768,7 @@ class UpdateDownloadManager: NSObject, ObservableObject {
     static let shared = UpdateDownloadManager()
 
     @Published var progress: Double = 0
-    @Published var statusMessage: String = "准备下载..."
+    @Published var statusMessage: String = L10n.text("准备下载...")
     @Published var downloadSpeed: Int64 = 0
     @Published var downloadedBytes: Int64 = 0
     @Published var totalBytes: Int64 = 0
@@ -815,14 +816,14 @@ class UpdateDownloadManager: NSObject, ObservableObject {
     func startDownload() {
         guard let versionInfo = UpdateService.shared.latestVersion else {
             Logger.operation("下载更新", detail: "没有版本信息", result: "失败")
-            errorMessage = "没有可用的更新"
+            errorMessage = L10n.text("没有可用的更新")
             hasError = true
             return
         }
 
         guard let url = URL(string: versionInfo.downloadURL) else {
             Logger.operation("下载更新", detail: "下载地址无效", result: "失败")
-            errorMessage = "下载地址无效"
+            errorMessage = L10n.text("下载地址无效")
             hasError = true
             return
         }
@@ -830,7 +831,7 @@ class UpdateDownloadManager: NSObject, ObservableObject {
         Logger.operation("下载更新", detail: "开始下载: \(url.absoluteString)")
         resetState()
         isDownloading = true
-        statusMessage = "正在连接服务器..."
+        statusMessage = L10n.text("正在连接服务器...")
 
         if let resumeData = resumeData {
             downloadTask = session.downloadTask(withResumeData: resumeData)
@@ -850,7 +851,7 @@ class UpdateDownloadManager: NSObject, ObservableObject {
                 self?.resumeData = data
                 self?.isPaused = true
                 self?.isDownloading = false
-                self?.statusMessage = "下载已暂停"
+                self?.statusMessage = L10n.text("下载已暂停")
                 self?.stopSpeedCalculator()
                 Logger.operation("下载更新", detail: "暂停下载，已保存断点")
             }
@@ -867,7 +868,7 @@ class UpdateDownloadManager: NSObject, ObservableObject {
         Logger.operation("下载更新", detail: "继续下载")
         resetState()
         isDownloading = true
-        statusMessage = "继续下载..."
+        statusMessage = L10n.text("继续下载...")
 
         downloadTask = session.downloadTask(withResumeData: resumeData!)
         downloadTask?.resume()
@@ -893,10 +894,10 @@ class UpdateDownloadManager: NSObject, ObservableObject {
 
         // 弹出确认对话框：安装需要关闭当前应用
         let alert = NSAlert()
-        alert.messageText = "安装更新"
-        alert.informativeText = "安装需要关闭当前应用，安装完成后将自动重启。是否继续？"
-        alert.addButton(withTitle: "确定")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = L10n.text("安装更新")
+        alert.informativeText = L10n.text("安装需要关闭当前应用，安装完成后将自动重启。是否继续？")
+        alert.addButton(withTitle: L10n.text("确定"))
+        alert.addButton(withTitle: L10n.text("取消"))
         alert.alertStyle = .informational
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -983,14 +984,14 @@ extension UpdateDownloadManager: URLSessionDownloadDelegate {
                 self.isDownloading = false
                 self.isCompleted = true
                 self.progress = 1.0
-                self.statusMessage = "下载完成"
+                self.statusMessage = L10n.text("下载完成")
                 Logger.operation("下载更新", detail: "下载完成: \(destinationURL.path)", result: "成功")
             }
         } catch {
             DispatchQueue.main.async {
                 self.isDownloading = false
                 self.hasError = true
-                self.errorMessage = "保存文件失败: \(error.localizedDescription)"
+                self.errorMessage = L10n.format("保存文件失败: %@", error.localizedDescription)
                 Logger.operation("下载更新", detail: "保存失败: \(error.localizedDescription)", result: "失败")
             }
         }
@@ -1006,7 +1007,7 @@ extension UpdateDownloadManager: URLSessionDownloadDelegate {
             }
 
             let downloaded = ByteCountFormatter.string(fromByteCount: totalBytesWritten, countStyle: .file)
-            self.statusMessage = "已下载 \(downloaded)"
+            self.statusMessage = L10n.format("已下载 %@", downloaded)
         }
     }
 
@@ -1033,14 +1034,14 @@ extension UpdateDownloadManager: URLSessionTaskDelegate {
             DispatchQueue.main.async {
                 self.isDownloading = false
                 self.isPaused = true
-                self.statusMessage = "下载中断，可继续"
+                self.statusMessage = L10n.text("下载中断，可继续")
                 Logger.operation("下载更新", detail: "下载中断，已保存断点")
             }
         } else {
             DispatchQueue.main.async {
                 self.isDownloading = false
                 self.hasError = true
-                self.errorMessage = "下载失败: \(error.localizedDescription)"
+                self.errorMessage = L10n.format("下载失败: %@", error.localizedDescription)
                 Logger.operation("下载更新", detail: "下载失败: \(error.localizedDescription)", result: "失败")
             }
         }
@@ -1065,7 +1066,7 @@ struct InstallProgressView: View {
                     .frame(width: 56, height: 56)
                     .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
 
-                Text("正在安装更新")
+                Text(L10n.text("正在安装更新"))
                     .font(.system(size: 18, weight: .semibold))
 
                 if let version = updateService.latestVersion?.version {
@@ -1137,13 +1138,13 @@ struct InstallProgressView: View {
             HStack(spacing: 16) {
                 switch installer.state {
                 case .completed:
-                    Button("重启应用") {
+                    Button(L10n.text("重启应用")) {
                         restartApp()
                     }
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
 
-                    Button("稍后重启") {
+                    Button(L10n.text("稍后重启")) {
                         installer.cleanup()
                         onDismiss()
                     }
@@ -1151,7 +1152,7 @@ struct InstallProgressView: View {
                     .frame(maxWidth: .infinity)
 
                 case .failed:
-                    Button("手动安装") {
+                    Button(L10n.text("手动安装")) {
                         if let fileURL = UpdateDownloadManager.shared.localFileURL {
                             NSWorkspace.shared.open(fileURL)
                         }
@@ -1160,7 +1161,7 @@ struct InstallProgressView: View {
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
 
-                    Button("关闭") {
+                    Button(L10n.text("关闭")) {
                         installer.cleanup()
                         onDismiss()
                     }
@@ -1168,13 +1169,13 @@ struct InstallProgressView: View {
                     .frame(maxWidth: .infinity)
 
                 case .rollback:
-                    Button("正在回滚...") {}
+                    Button(L10n.text("正在回滚...")) {}
                         .buttonStyle(.bordered)
                         .frame(maxWidth: .infinity)
                         .disabled(true)
 
                 default:
-                    Button("取消") {
+                    Button(L10n.text("取消")) {
                         installer.cleanup()
                         onDismiss()
                     }
@@ -1186,6 +1187,7 @@ struct InstallProgressView: View {
             .padding(24)
         }
         .frame(width: 400)
+        .environment(\.locale, L10n.locale)
         .background(Color(NSColor.windowBackgroundColor))
     }
 
@@ -1234,7 +1236,7 @@ class InstallProgressWindowController: NSWindowController, NSWindowDelegate {
             defer: false
         )
 
-        window.title = "安装更新"
+        window.title = L10n.text("安装更新")
         window.center()
         window.isReleasedWhenClosed = false
 

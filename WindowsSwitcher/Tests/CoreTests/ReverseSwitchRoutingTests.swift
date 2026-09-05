@@ -28,6 +28,16 @@ final class ReverseSwitchRoutingTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedWindowID, 3)
     }
 
+    func testExplicitSelectionKeepsIndexAndWindowIDInSync() {
+        let viewModel = makeViewModel()
+
+        let selected = viewModel.selectWindow(at: 2)
+
+        XCTAssertEqual(selected?.id, 3)
+        XCTAssertEqual(viewModel.selectedIndex, 2)
+        XCTAssertEqual(viewModel.selectedWindowID, 3)
+    }
+
     func testSameAppReverseWrapsFromFirstIndexToLast() {
         let viewModel = makeViewModel()
         viewModel.beginSameAppSwitchSession(

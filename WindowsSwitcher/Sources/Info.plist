@@ -4,44 +4,42 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Windows Switcher</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.moeasy.windowsswitcher</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<key>CFBundleName</key>
-	<string>WindowsSwitcher</string>
-	<key>CFBundleDisplayName</key>
-	<string>Windows Switcher</string>
-	<key>CFBundlePackageType</key>
-	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>0.0.185</string>
-	<key>CFBundleVersion</key>
-	<string>195</string>
-	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
-	<key>LSUIElement</key>
-	<true/>
-	<key>NSHumanReadableCopyright</key>
-	<string>Copyright © 2026 WindowsSwitcher. All rights reserved.</string>
-	<!-- T-067: 权限描述 -->
-	<key>NSAccessibilityUsageDescription</key>
-	<string>需要辅助功能权限以切换和管理窗口</string>
-	<key>NSScreenCaptureUsageDescription</key>
-	<string>需要屏幕录制权限以生成窗口预览图</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<key>NSSupportsAutomaticGraphicsSwitching</key>
-	<true/>
-	<!-- 支持语言 -->
 	<key>CFBundleLocalizations</key>
 	<array>
 		<string>zh-Hans</string>
 		<string>en</string>
 	</array>
+	<key>CFBundleName</key>
+	<string>WindowsSwitcher</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.186</string>
+	<key>CFBundleVersion</key>
+	<string>205</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>需要辅助功能权限以切换和管理窗口</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 WindowsSwitcher. All rights reserved.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>需要屏幕录制权限以生成窗口预览图</string>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
 </dict>
 </plist>

@@ -74,7 +74,7 @@ private final class WindowLayoutStatusMenuItemView: NSView {
         titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
         titleLabel.lineBreakMode = .byTruncatingTail
 
-        shortcutLabel.stringValue = chord?.displayText ?? "未设置"
+        shortcutLabel.stringValue = chord?.displayText ?? L10n.text("未设置")
         shortcutLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         shortcutLabel.alignment = .center
         shortcutLabel.lineBreakMode = .byClipping
@@ -89,7 +89,7 @@ private final class WindowLayoutStatusMenuItemView: NSView {
         setAccessibilityElement(true)
         setAccessibilityRole(.menuItem)
         setAccessibilityLabel(title)
-        setAccessibilityHelp("快捷键 \(shortcutLabel.stringValue)")
+        setAccessibilityHelp(L10n.format("快捷键 %@", shortcutLabel.stringValue))
     }
 
     @available(*, unavailable)
@@ -530,10 +530,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     /// 显示 DMG 更新提示
     private func showDMGUpdateAlert(dmgAppPath: String, version: String) {
         let alert = NSAlert()
-        alert.messageText = "检测到新版本 v\(version)"
-        alert.informativeText = "已检测到 WindowsSwitcher 安装包，需要关闭当前应用才能完成安装。关闭后将自动完成安装并重启。"
-        alert.addButton(withTitle: "关闭并安装")
-        alert.addButton(withTitle: "稍后")
+        alert.messageText = L10n.format("检测到新版本 v%@", version)
+        alert.informativeText = L10n.text("已检测到 WindowsSwitcher 安装包，需要关闭当前应用才能完成安装。关闭后将自动完成安装并重启。")
+        alert.addButton(withTitle: L10n.text("关闭并安装"))
+        alert.addButton(withTitle: L10n.text("稍后"))
         alert.alertStyle = .informational
 
         if alert.runModal() == .alertFirstButtonReturn {
@@ -1696,19 +1696,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 modifiers: configManager.config.hotKeys.switchModifiers
             )
             let showItem = NSMenuItem(
-                title: "显示切换器",
+                title: L10n.text("显示切换器"),
                 action: #selector(showSwitcherFromMenu),
                 keyEquivalent: switchChord.menuKeyEquivalent ?? ""
             )
             showItem.target = self
             showItem.keyEquivalentModifierMask = switchChord.menuModifierMask
-            showItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "显示切换器")
-            let layoutItem = NSMenuItem(title: "窗口布局", action: nil, keyEquivalent: "")
-            layoutItem.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: "窗口布局")
+            showItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: L10n.text("显示切换器"))
+            let layoutItem = NSMenuItem(title: L10n.text("窗口布局"), action: nil, keyEquivalent: "")
+            layoutItem.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: L10n.text("窗口布局"))
             layoutItem.submenu = makeWindowLayoutMenu(target: frozenStatusMenuWindow)
-            let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ",")
+            let settingsItem = NSMenuItem(title: L10n.text("设置"), action: #selector(openSettings), keyEquivalent: ",")
             settingsItem.target = self
-            let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            let quitItem = NSMenuItem(title: L10n.text("退出"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             menu.addItem(showItem)
             menu.addItem(layoutItem)
             menu.addItem(NSMenuItem.separator())
@@ -1727,7 +1727,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     @MainActor
     private func makeWindowLayoutMenu(target: WindowModel?) -> NSMenu {
         let menu = NSMenu()
-        let targetTitle = target.map { "目标：\($0.appName) — \($0.windowTitle.isEmpty ? "未命名窗口" : $0.windowTitle)" } ?? "没有可用的目标窗口"
+        let targetTitle = target.map {
+            L10n.format(
+                "目标：%@ — %@",
+                $0.appName,
+                $0.windowTitle.isEmpty ? L10n.text("未命名窗口") : $0.windowTitle
+            )
+        } ?? L10n.text("没有可用的目标窗口")
         let targetItem = NSMenuItem(title: targetTitle, action: nil, keyEquivalent: "")
         targetItem.isEnabled = false
         targetItem.view = WindowLayoutStatusMenuTargetView(title: targetTitle)
@@ -1761,17 +1767,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         menu.addItem(.separator())
         let openItem = NSMenuItem(
-            title: "打开布局面板",
+            title: L10n.text("打开布局面板"),
             action: #selector(openLayoutPanelFromMenu(_:)),
             keyEquivalent: config.openPanel?.menuKeyEquivalent ?? ""
         )
         openItem.target = self
         openItem.keyEquivalentModifierMask = config.openPanel?.menuModifierMask ?? []
         openItem.isEnabled = target != nil
-        openItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "打开布局面板")
+        openItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: L10n.text("打开布局面板"))
         openItem.view = WindowLayoutStatusMenuItemView(
             menuItem: openItem,
-            title: "打开布局面板",
+            title: L10n.text("打开布局面板"),
             symbolName: "rectangle.on.rectangle",
             chord: config.openPanel
         )
@@ -1779,7 +1785,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             openItem.representedObject = WindowLayoutMenuActionContext(actionID: nil, target: target)
         }
         menu.addItem(openItem)
-        let settingsItem = NSMenuItem(title: "快捷键设置…", action: #selector(openSettings), keyEquivalent: "")
+        let settingsItem = NSMenuItem(title: L10n.text("快捷键设置…"), action: #selector(openSettings), keyEquivalent: "")
         settingsItem.target = self
         menu.addItem(settingsItem)
         return menu
@@ -1902,25 +1908,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         openSettingsAction: @escaping () -> Void
     ) {
         let alert = NSAlert()
-        alert.messageText = "需要\(permission)权限"
+        alert.messageText = L10n.format("需要%@权限", permission)
         alert.informativeText = description.description
         alert.alertStyle = .warning
 
         // 添加详细说明
-        let infoText = """
-        请在系统设置中开启权限，以启用以下功能：
-        • 窗口预览和切换
-        • 快捷键响应
-        • 程序坞预览
-
-        点击"打开系统设置"前往授权，或点击"稍后"稍后再设置。
-        """
+        let infoText = L10n.text("请在系统设置中开启权限，以启用以下功能：\n• 窗口预览和切换\n• 快捷键响应\n• 程序坞预览\n\n点击“打开系统设置”前往授权，或点击“稍后”稍后再设置。")
 
         alert.informativeText = description.description + "\n\n" + infoText
 
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "不再提示")
-        alert.addButton(withTitle: "稍后")
+        alert.addButton(withTitle: L10n.text("打开系统设置"))
+        alert.addButton(withTitle: L10n.text("不再提示"))
+        alert.addButton(withTitle: L10n.text("稍后"))
 
         let response = alert.runModal()
 
@@ -1965,7 +1964,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let hostingController = NSHostingController(rootView: settingsView)
 
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "WindowsSwitcher 设置"
+        window.title = L10n.text("WindowsSwitcher 设置")
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(windowSize)
         window.minSize = minSize
@@ -2205,7 +2204,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             appSwitchMode: appSwitchMode,
             defaultSelectSecond: ConfigManager.shared.config.behavior.defaultSelectSecond
         )
-        vm.selectedIndex = initialIndex
+        let initiallySelectedWindow = vm.selectWindow(at: initialIndex)
 
         if appSwitchMode, let previousBundleID, !previousBundleID.isEmpty {
             vm.beginSameAppSwitchSession(
@@ -2213,7 +2212,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 initialIndex: initialIndex
             )
         }
-        Logger.info("==> initial selection index: \(initialIndex)")
+        Logger.info(
+            "==> initial selection index: \(initialIndex), id: \(initiallySelectedWindow?.id ?? 0), " +
+            "window: \(initiallySelectedWindow?.windowTitle ?? "none")"
+        )
 
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口
         self.switchPanelViewModel = vm

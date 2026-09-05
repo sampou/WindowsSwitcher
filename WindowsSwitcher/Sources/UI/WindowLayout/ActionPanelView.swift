@@ -24,9 +24,9 @@ enum ActionPanelFeedback: Equatable {
     init(result: WindowLayoutResult) {
         switch result {
         case .applied:
-            self = .success("窗口布局已应用")
+            self = .success(L10n.text("窗口布局已应用"))
         case .constrained:
-            self = .constrained("应用已调整目标尺寸，请检查实际结果")
+            self = .constrained(L10n.text("应用已调整目标尺寸，请检查实际结果"))
         case .skipped(let failure):
             self = .failure(Self.message(for: failure))
         }
@@ -42,23 +42,23 @@ enum ActionPanelFeedback: Equatable {
     private static func message(for failure: WindowLayoutFailure) -> String {
         switch failure {
         case .accessibilityPermissionMissing:
-            return "需要辅助功能权限才能调整窗口"
+            return L10n.text("需要辅助功能权限才能调整窗口")
         case .windowNotFound:
-            return "窗口已关闭或不再可用"
+            return L10n.text("窗口已关闭或不再可用")
         case .nonStandardWindow:
-            return "该窗口不是可调整的标准窗口"
+            return L10n.text("该窗口不是可调整的标准窗口")
         case .fullScreenWindow:
-            return "全屏窗口不会被自动退出全屏"
+            return L10n.text("全屏窗口不会被自动退出全屏")
         case .positionNotWritable:
-            return "该窗口不允许修改位置"
+            return L10n.text("该窗口不允许修改位置")
         case .sizeNotWritable:
-            return "该窗口不允许修改尺寸"
+            return L10n.text("该窗口不允许修改尺寸")
         case .targetDisplayUnavailable:
-            return "没有可用的目标显示器"
+            return L10n.text("没有可用的目标显示器")
         case .writeFailed(let code):
-            return "窗口调整失败（错误 \(code)）"
+            return L10n.format("窗口调整失败（错误 %@）", String(code))
         case .verificationFailed:
-            return "无法验证窗口调整结果"
+            return L10n.text("无法验证窗口调整结果")
         }
     }
 }
@@ -85,7 +85,7 @@ struct ActionPanelView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 header
                     .overlay(ActionPanelDragHandle())
-                    .help("拖动以移动窗口布局面板")
+                    .help(L10n.text("拖动以移动窗口布局面板"))
 
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -104,16 +104,17 @@ struct ActionPanelView: View {
                     .frame(height: 24, alignment: .leading)
 
                 HStack {
-                    Text("Tab/↑↓ 选择  •  Enter/空格执行  •  Esc 关闭")
+                    Text(L10n.text("Tab/↑↓ 选择  •  Enter/空格执行  •  Esc 关闭"))
                         .font(.system(size: 11))
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                     Spacer()
-                    Button("关闭", action: onDismiss)
+                    Button(L10n.text("关闭"), action: onDismiss)
                 }
             }
             .padding(DesignTokens.Panel.padding)
         }
         .frame(width: ActionPanelLayoutMetrics.width, height: panelHeight)
+        .environment(\.locale, L10n.locale)
         .background(ActionPanelKeyEventHandler(
             onNext: { moveSelection(by: 1) },
             onPrevious: { moveSelection(by: -1) },
@@ -123,8 +124,8 @@ struct ActionPanelView: View {
             onDismiss: onDismiss
         ))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("窗口布局面板")
-        .accessibilityHint("使用 Tab 或方向键选择布局，按 Enter 执行，按 Escape 关闭")
+        .accessibilityLabel(L10n.text("窗口布局面板"))
+        .accessibilityHint(L10n.text("使用 Tab 或方向键选择布局，按 Enter 执行，按 Escape 关闭"))
     }
 
     private var header: some View {
@@ -135,13 +136,13 @@ struct ActionPanelView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(window.appName)
                     .font(.system(size: 15, weight: .semibold))
-                Text(window.windowTitle.isEmpty ? "未命名窗口" : window.windowTitle)
+                Text(window.windowTitle.isEmpty ? L10n.text("未命名窗口") : window.windowTitle)
                     .font(.system(size: 12))
                     .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                     .lineLimit(1)
             }
             Spacer()
-            Text("窗口布局")
+            Text(L10n.text("窗口布局"))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
         }
@@ -182,7 +183,7 @@ struct ActionPanelView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
-        .accessibilityHint(index == selectedIndex ? "当前选中，按 Enter 执行" : "调整当前窗口")
+        .accessibilityHint(L10n.text(index == selectedIndex ? "当前选中，按 Enter 执行" : "调整当前窗口"))
     }
 
     @ViewBuilder
@@ -226,7 +227,7 @@ struct WindowLayoutShortcutBadge: View {
     private let text: String
 
     init(chord: KeyChord?) {
-        text = chord?.displayText ?? "未设置"
+        text = chord?.displayText ?? L10n.text("未设置")
     }
 
     init(keyCode: UInt32, modifiers: UInt32) {
@@ -241,7 +242,7 @@ struct WindowLayoutShortcutBadge: View {
             .frame(width: 88, height: 22, alignment: .center)
             .background(DesignTokens.Colors.secondaryBackground.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 5))
-            .accessibilityLabel("快捷键 \(text)")
+            .accessibilityLabel(L10n.format("快捷键 %@", text))
     }
 }
 

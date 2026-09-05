@@ -7,6 +7,7 @@ final class SameAppSwitchSessionTests: XCTestCase {
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 0, reversed: true, appSwitchMode: true, defaultSelectSecond: true), 0)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 1, reversed: true, appSwitchMode: true, defaultSelectSecond: true), 0)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: true, appSwitchMode: false, defaultSelectSecond: false), 1)
+        XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 5, reversed: true, appSwitchMode: false, defaultSelectSecond: false), 4)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: false, appSwitchMode: true, defaultSelectSecond: false), 1)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: false, appSwitchMode: false, defaultSelectSecond: true), 1)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: false, appSwitchMode: false, defaultSelectSecond: false), 0)

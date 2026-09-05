@@ -21,7 +21,7 @@ struct WindowsSwitcherApp: App {
         .commands {
             // 替换默认的设置菜单项，使用 AppDelegate.openSettings
             CommandGroup(replacing: .appSettings) {
-                Button("设置...") {
+                Button(L10n.text("设置...")) {
                     NSApp.sendAction(#selector(AppDelegate.openSettings), to: nil, from: nil)
                 }
                 .keyboardShortcut(",", modifiers: .command)

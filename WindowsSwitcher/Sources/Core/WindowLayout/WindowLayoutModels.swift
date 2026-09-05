@@ -47,20 +47,22 @@ struct WindowLayoutActionDescriptor: Identifiable, Equatable {
 
 /// 窗口布局动作的唯一目录。
 enum WindowLayoutActionCatalog {
-    static let actions: [WindowLayoutActionDescriptor] = [
-        .init(id: .leftHalf, command: .leftHalf, title: "左半屏", symbolName: "rectangle.lefthalf.inset.filled"),
-        .init(id: .rightHalf, command: .rightHalf, title: "右半屏", symbolName: "rectangle.righthalf.inset.filled"),
-        .init(id: .topHalf, command: .topHalf, title: "上半屏", symbolName: "rectangle.tophalf.inset.filled"),
-        .init(id: .bottomHalf, command: .bottomHalf, title: "下半屏", symbolName: "rectangle.bottomhalf.inset.filled"),
-        .init(id: .topLeftQuarter, command: .topLeftQuarter, title: "左上角", symbolName: "arrow.up.left.square.fill"),
-        .init(id: .topRightQuarter, command: .topRightQuarter, title: "右上角", symbolName: "arrow.up.right.square.fill"),
-        .init(id: .bottomLeftQuarter, command: .bottomLeftQuarter, title: "左下角", symbolName: "arrow.down.left.square.fill"),
-        .init(id: .bottomRightQuarter, command: .bottomRightQuarter, title: "右下角", symbolName: "arrow.down.right.square.fill"),
-        .init(id: .maximize, command: .maximize, title: "最大化", symbolName: "rectangle.inset.filled"),
-        .init(id: .center, command: .center, title: "居中", symbolName: "rectangle.center.inset.filled"),
-        .init(id: .previousDisplay, command: .previousDisplay, title: "上一显示器", symbolName: "arrow.left.to.line"),
-        .init(id: .nextDisplay, command: .nextDisplay, title: "下一显示器", symbolName: "arrow.right.to.line")
-    ]
+    static var actions: [WindowLayoutActionDescriptor] {
+        [
+        .init(id: .leftHalf, command: .leftHalf, title: L10n.text("左半屏"), symbolName: "rectangle.lefthalf.inset.filled"),
+        .init(id: .rightHalf, command: .rightHalf, title: L10n.text("右半屏"), symbolName: "rectangle.righthalf.inset.filled"),
+        .init(id: .topHalf, command: .topHalf, title: L10n.text("上半屏"), symbolName: "rectangle.tophalf.inset.filled"),
+        .init(id: .bottomHalf, command: .bottomHalf, title: L10n.text("下半屏"), symbolName: "rectangle.bottomhalf.inset.filled"),
+        .init(id: .topLeftQuarter, command: .topLeftQuarter, title: L10n.text("左上角"), symbolName: "arrow.up.left.square.fill"),
+        .init(id: .topRightQuarter, command: .topRightQuarter, title: L10n.text("右上角"), symbolName: "arrow.up.right.square.fill"),
+        .init(id: .bottomLeftQuarter, command: .bottomLeftQuarter, title: L10n.text("左下角"), symbolName: "arrow.down.left.square.fill"),
+        .init(id: .bottomRightQuarter, command: .bottomRightQuarter, title: L10n.text("右下角"), symbolName: "arrow.down.right.square.fill"),
+        .init(id: .maximize, command: .maximize, title: L10n.text("最大化"), symbolName: "rectangle.inset.filled"),
+        .init(id: .center, command: .center, title: L10n.text("居中"), symbolName: "rectangle.center.inset.filled"),
+        .init(id: .previousDisplay, command: .previousDisplay, title: L10n.text("上一显示器"), symbolName: "arrow.left.to.line"),
+        .init(id: .nextDisplay, command: .nextDisplay, title: L10n.text("下一显示器"), symbolName: "arrow.right.to.line")
+        ]
+    }
 
     /// 根据稳定标识符查找动作。
     static func action(for id: WindowLayoutActionID) -> WindowLayoutActionDescriptor? {

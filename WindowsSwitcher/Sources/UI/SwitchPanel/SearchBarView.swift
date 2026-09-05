@@ -2,9 +2,9 @@ import SwiftUI
 
 /// T-044 搜索栏组件：实时过滤
 struct SearchBarView: View {
-    static let defaultPlaceholder = "搜索应用、窗口或 Bundle ID..."
-    static let searchAccessibilityLabel = "搜索窗口"
-    static let searchAccessibilityHint = "输入应用名称、窗口标题或 Bundle Identifier 搜索"
+    static var defaultPlaceholder: String { L10n.text("搜索应用、窗口或 Bundle ID...") }
+    static var searchAccessibilityLabel: String { L10n.text("搜索窗口") }
+    static var searchAccessibilityHint: String { L10n.text("输入应用名称、窗口标题或 Bundle Identifier 搜索") }
 
     @Binding var text: String
     var placeholder: String = SearchBarView.defaultPlaceholder
@@ -34,7 +34,7 @@ struct SearchBarView: View {
                         .font(.system(size: 14))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("清除搜索内容")
+                .accessibilityLabel(L10n.text("清除搜索内容"))
                 .transition(.opacity.animation(DesignTokens.Animation.itemHover))
             }
         }

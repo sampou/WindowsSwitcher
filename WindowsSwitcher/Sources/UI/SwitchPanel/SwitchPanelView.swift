@@ -218,8 +218,8 @@ struct SwitchPanelView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(viewModel.selectedWindow == nil)
-                    .accessibilityLabel("打开窗口布局面板")
-                    .accessibilityHint("也可按 L 键打开")
+                    .accessibilityLabel(L10n.text("打开窗口布局面板"))
+                    .accessibilityHint(L10n.text("也可按 L 键打开"))
                 }
                     .padding(.horizontal, DesignTokens.Panel.padding)
                     .padding(.top, DesignTokens.Panel.padding)
@@ -233,6 +233,7 @@ struct SwitchPanelView: View {
         }
         // 增大面板尺寸以显示更多窗口
         .frame(width: panelWidth, height: panelHeight)
+        .environment(\.locale, L10n.locale)
         .shadow(color: .black.opacity(0.25), radius: DesignTokens.Panel.shadowRadius,
                 x: 0, y: DesignTokens.Panel.shadowY)
         .background(KeyEventHandler(
@@ -254,18 +255,14 @@ struct SwitchPanelView: View {
             onDismiss: onDismiss,
             onOpenActions: openLayoutPanel,
             onSelectIndex: { idx in
-                if viewModel.filteredWindows.indices.contains(idx) {
-                    // 同时设置窗口 ID 和索引，确保同步
-                    viewModel.selectedWindowID = viewModel.filteredWindows[idx].id
-                    viewModel.selectedIndex = idx
-                }
+                viewModel.selectWindow(at: idx)
             },
             onMoveUp: { viewModel.selectUp() },
             onMoveDown: { viewModel.selectDown() }
         ))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("窗口切换面板")
-        .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 L 打开布局面板，按 Escape 退出")
+        .accessibilityLabel(L10n.text("窗口切换面板"))
+        .accessibilityHint(L10n.text("使用 Tab 键导航，按 Enter 切换窗口，按 L 打开布局面板，按 Escape 退出"))
     }
 
     private func openLayoutPanel() {
@@ -288,9 +285,7 @@ struct SwitchPanelView: View {
                                     isSelected: window.id == viewModel.selectedWindowID,
                                     previewImage: viewModel.previewImages[window.id],
                                     onSelect: {
-                                        // 同时设置索引和窗口 ID，确保同步
-                                        viewModel.selectedWindowID = window.id
-                                        viewModel.selectedIndex = index
+                                        viewModel.selectWindow(at: index)
                                     },
                                     onActivate: {
                                         // 直接通过窗口 ID 激活，确保准确性
@@ -324,7 +319,7 @@ struct SwitchPanelView: View {
             Image(systemName: "rectangle.on.rectangle.slash")
                 .font(.system(size: 36))
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
-            Text("没有找到窗口")
+            Text(L10n.text("没有找到窗口"))
                 .font(.system(size: 14))
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
         }

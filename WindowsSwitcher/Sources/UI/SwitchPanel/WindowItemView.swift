@@ -3,9 +3,9 @@ import AppKit
 
 /// T-042 窗口项组件 - 新设计：预览图 + 应用图标 + 标题，网格布局
 struct WindowItemView: View {
-    static let activationAccessibilityHint = "按下 Return 键切换到该窗口"
-    static let minimizeAccessibilityAction = "最小化窗口"
-    static let closeAccessibilityAction = "关闭窗口"
+    static var activationAccessibilityHint: String { L10n.text("按下 Return 键切换到该窗口") }
+    static var minimizeAccessibilityAction: String { L10n.text("最小化窗口") }
+    static var closeAccessibilityAction: String { L10n.text("关闭窗口") }
 
     let window: WindowModel
     let isSelected: Bool
@@ -64,7 +64,7 @@ struct WindowItemView: View {
             performPrimaryAction()
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(window.appName)，\(window.windowTitle)\(isSelected ? "，已选中" : "")")
+        .accessibilityLabel("\(window.appName)，\(window.windowTitle)\(isSelected ? L10n.text("，已选中") : "")")
         .accessibilityHint(Self.activationAccessibilityHint)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
@@ -111,7 +111,7 @@ struct WindowItemView: View {
                     Spacer()
                     HStack {
                         Label(
-                            window.isMinimized ? "已最小化" : "已隐藏",
+                            window.isMinimized ? L10n.text("已最小化") : L10n.text("已隐藏"),
                             systemImage: window.isMinimized ? "minus.circle.fill" : "eye.slash.fill"
                         )
                         .font(.system(size: 9, weight: .medium))
@@ -186,8 +186,8 @@ struct WindowItemView: View {
                     .font(.system(size: 14))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("最小化窗口")
-            .accessibilityHint("将窗口最小化到程序坞")
+            .accessibilityLabel(L10n.text("最小化窗口"))
+            .accessibilityHint(L10n.text("将窗口最小化到程序坞"))
 
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
@@ -195,8 +195,8 @@ struct WindowItemView: View {
                     .font(.system(size: 14))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("关闭窗口")
-            .accessibilityHint("关闭当前窗口")
+            .accessibilityLabel(L10n.text("关闭窗口"))
+            .accessibilityHint(L10n.text("关闭当前窗口"))
         }
         .padding(4)
         .background(.black.opacity(0.4))

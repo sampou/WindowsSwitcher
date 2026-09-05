@@ -476,7 +476,7 @@ struct DockPreviewPanelView: View {
             Image(systemName: "chevron.up")
                 .font(.system(size: 10))
                 .opacity(0.5)
-            Text("滚动查看更多")
+            Text(L10n.text("滚动查看更多"))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             Image(systemName: "chevron.down")
