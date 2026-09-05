@@ -46,7 +46,7 @@
 "切换后立即应用；已经打开的独立面板请关闭后重新打开。" = "Changes apply immediately. Close and reopen any standalone panel that is already open.";
 "启动" = "Launch";
 "开机自动启动" = "Launch at Login";
-"软件更新" = "Software Updates";
+"软件更新" = "Software Update";
 "自动检查更新" = "Automatically Check for Updates";
 "自动下载安装" = "Automatically Download and Install";
 "静默安装" = "Install Silently";
@@ -109,7 +109,6 @@
 "鼠标悬停在 Dock 图标上时显示窗口预览" = "Show window previews when hovering over a Dock icon";
 "预览窗口显示/隐藏时的渐变动画" = "Fade animation when previews appear or disappear";
 "在预览窗口中显示对应的软件图标" = "Show the app icon in each preview";
-"显示背景预览" = "Show Background Preview";
 "反向切换：按住 Shift 即可反向切换，无需单独设置" = "Reverse switching: hold Shift; no separate shortcut is needed";
 "关闭后保留所有组合键设置，但不再全局注册" = "Keep shortcut settings but stop global registration when disabled";
 "所有设置将恢复为出厂默认值，此操作不可撤销。" = "All settings will be restored to factory defaults. This cannot be undone.";
@@ -202,7 +201,6 @@
 "权限被拒绝" = "Permission denied";
 "备份失败: %@" = "Backup failed: %@";
 "回滚失败: %@" = "Rollback failed: %@";
-"软件更新" = "Software Update";
 "打开窗口布局面板" = "Open Window Layout Panel";
 "也可按 L 键打开" = "You can also press L";
 "窗口切换面板" = "Window switcher panel";
@@ -224,7 +222,6 @@
 "快捷键冲突" = "Shortcut Conflict";
 "快捷键无法使用" = "Shortcut Unavailable";
 "按下快捷键后，切换面板将只显示当前应用的窗口" = "After using this shortcut, the switcher shows only windows from the current app";
-"预览窗口显示/隐藏时的渐变动画" = "Fade animation when preview windows appear or hide";
 "用于 Dock 位于左侧或右侧时的间距" = "Spacing used when the Dock is on the left or right";
 "设置为 0 时自动根据屏幕分辨率计算最佳间距" = "Set to 0 to calculate optimal spacing from screen resolution";
 "点击修饰键按钮选择需要的修饰键（可多选）" = "Click modifier buttons to choose one or more modifiers";
@@ -279,9 +276,9 @@
 "下载地址无效" = "Invalid download URL";
 "保存文件失败: %@" = "Failed to save file: %@";
 "设置..." = "Settings...";
-"加载预览..." = "Loading preview...";
 "版本 %@" = "Version %@";
 "当前版本: v%@ (%@)" = "Current version: v%@ (%@)";
+"当前版本 v%@" = "Current version v%@";
 "• 最新版本: v%@" = "• Latest version: v%@";
 "当前设置的组合键「%@」与系统快捷键冲突：%@\n\n确定要覆盖系统快捷键吗？" = "The shortcut “%@” conflicts with the system shortcut: %@\n\nDo you want to override it?";
 "设置为默认快捷键 %@" = "Set Default Shortcut %@";
