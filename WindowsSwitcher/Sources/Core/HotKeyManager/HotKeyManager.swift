@@ -70,7 +70,9 @@ class HotKeyManager {
         setupEventHandler()
     }
 
-    func register(_ hotKey: HotKey, action: @escaping () -> Void) {
+    /// 注册全局快捷键，并返回 Carbon 是否接受该组合。
+    @discardableResult
+    func register(_ hotKey: HotKey, action: @escaping () -> Void) -> Bool {
         // 若已注册同名快捷键，先注销
         unregister(hotKey.identifier)
 
@@ -86,13 +88,19 @@ class HotKeyManager {
             eventID, GetEventDispatcherTarget(), 0, &ref
         )
         guard status == noErr, let ref else {
-            Logger.error("Failed to register hotkey: \(hotKey.identifier)")
-            return
+            Logger.error("Failed to register hotkey: \(hotKey.identifier), status=\(status)")
+            return false
         }
         registeredHotKeys[currentID] = ref
         actions[currentID] = action
         identifierToID[hotKey.identifier] = currentID
         Logger.info("Registered hotkey: \(hotKey.identifier) id=\(currentID)")
+        return true
+    }
+
+    /// 查询指定标识符当前是否注册成功。
+    func isRegistered(_ identifier: String) -> Bool {
+        identifierToID[identifier] != nil
     }
 
     func unregister(_ identifier: String) {

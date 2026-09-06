@@ -10,9 +10,236 @@ private let carbonShiftKey: UInt32 = 512        // ⇧ Shift (shiftKey = 1 << 9)
 private let carbonOptionKey: UInt32 = 2048      // ⌥ Option (optionKey = 1 << 11)
 private let carbonControlKey: UInt32 = 4096     // ⌃ Control (controlKey = 1 << 12)
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+/// 协调窗口销毁后的界面刷新与预览缓存清理。
+///
+/// 刷新动作在主线程同步发生，缓存清理通过独立任务异步执行，避免阻塞窗口列表更新。
+final class WindowDestroyedEventCoordinator {
+    private let previewCacheInvalidator: any PreviewCacheInvalidating
+
+    init(previewCacheInvalidator: any PreviewCacheInvalidating) {
+        self.previewCacheInvalidator = previewCacheInvalidator
+    }
+
+    /// 处理窗口销毁事件，并返回可供测试或调用方等待的缓存清理任务。
+    @discardableResult
+    @MainActor
+    func handle(windowID: CGWindowID, refreshWindows: () -> Void) -> Task<Void, Never> {
+        refreshWindows()
+        let previewCacheInvalidator = previewCacheInvalidator
+        return Task {
+            await previewCacheInvalidator.invalidateCache(for: windowID)
+        }
+    }
+}
+
+/// 状态栏布局菜单项携带的不可变执行上下文。
+///
+/// 目标窗口直接绑定到菜单项，避免菜单关闭回调先清空共享状态而吞掉动作。
+private final class WindowLayoutMenuActionContext: NSObject {
+    let actionID: WindowLayoutActionID?
+    let target: WindowModel
+
+    init(actionID: WindowLayoutActionID?, target: WindowModel) {
+        self.actionID = actionID
+        self.target = target
+    }
+}
+
+/// 状态栏窗口布局菜单的自定义行。
+///
+/// AppKit 原生快捷键列无法复用 SwiftUI 中的快捷键徽标样式，因此这里使用与
+/// `WindowLayoutShortcutBadge` 相同的字体、尺寸、圆角和颜色，同时仍由对应的
+/// `NSMenuItem` 保存 `keyEquivalent`，不影响菜单键盘响应。
+private final class WindowLayoutStatusMenuItemView: NSView {
+    private weak var menuItem: NSMenuItem?
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
+    private var pointerInside = false
+    private var pointerTrackingArea: NSTrackingArea?
+
+    init(menuItem: NSMenuItem, title: String, symbolName: String, chord: KeyChord?) {
+        self.menuItem = menuItem
+        super.init(frame: NSRect(x: 0, y: 0, width: 310, height: 32))
+
+        wantsLayer = true
+
+        iconView.image = NSImage(
+            systemSymbolName: symbolName,
+            accessibilityDescription: title
+        )?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+        iconView.imageScaling = .scaleProportionallyDown
+
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.lineBreakMode = .byTruncatingTail
+
+        shortcutLabel.stringValue = chord?.displayText ?? L10n.text("未设置")
+        shortcutLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+        shortcutLabel.alignment = .center
+        shortcutLabel.lineBreakMode = .byClipping
+        shortcutLabel.wantsLayer = true
+        shortcutLabel.layer?.cornerRadius = 5
+
+        addSubview(iconView)
+        addSubview(titleLabel)
+        addSubview(shortcutLabel)
+        updateColors()
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.menuItem)
+        setAccessibilityLabel(title)
+        setAccessibilityHelp(L10n.format("快捷键 %@", shortcutLabel.stringValue))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 310, height: 32)
+    }
+
+    override func layout() {
+        super.layout()
+        iconView.frame = NSRect(x: 12, y: 7, width: 22, height: 18)
+        shortcutLabel.frame = NSRect(x: bounds.width - 100, y: 5, width: 88, height: 22)
+        titleLabel.frame = NSRect(
+            x: 44,
+            y: 7,
+            width: max(0, shortcutLabel.frame.minX - 54),
+            height: 18
+        )
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeAlways, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        pointerTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        pointerInside = true
+        updateColors()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        pointerInside = false
+        updateColors()
+    }
+
+    /// 自定义菜单行的所有可见区域都由行本身接收鼠标事件。
+    ///
+    /// 否则文字、图标和快捷键标签可能成为命中视图，导致只有部分区域能执行菜单动作。
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)),
+              let menuItem,
+              menuItem.isEnabled,
+              let action = menuItem.action else { return }
+        menuItem.menu?.cancelTracking()
+        NSApp.sendAction(action, to: menuItem.target, from: menuItem)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        let isEnabled = menuItem?.isEnabled ?? false
+        let isHighlighted = pointerInside && isEnabled
+        layer?.backgroundColor = isHighlighted
+            ? NSColor.selectedContentBackgroundColor.cgColor
+            : NSColor.clear.cgColor
+        titleLabel.textColor = isHighlighted
+            ? .selectedMenuItemTextColor
+            : (isEnabled ? .labelColor : .disabledControlTextColor)
+        iconView.contentTintColor = isHighlighted
+            ? .selectedMenuItemTextColor
+            : (isEnabled ? .controlAccentColor : .disabledControlTextColor)
+        shortcutLabel.textColor = isHighlighted
+            ? .selectedMenuItemTextColor
+            : (isEnabled ? .secondaryLabelColor : .disabledControlTextColor)
+        shortcutLabel.layer?.backgroundColor = isHighlighted
+            ? NSColor.white.withAlphaComponent(0.18).cgColor
+            : NSColor.controlBackgroundColor.withAlphaComponent(0.72).cgColor
+    }
+}
+
+/// 状态栏窗口布局子菜单的目标窗口标题行。
+///
+/// 固定宽度避免超长窗口标题撑大整个子菜单；完整标题通过悬停提示保留。
+private final class WindowLayoutStatusMenuTargetView: NSView {
+    private let titleLabel = NSTextField(labelWithString: "")
+
+    init(title: String) {
+        super.init(frame: NSRect(x: 0, y: 0, width: 310, height: 28))
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: 12)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.toolTip = title
+        addSubview(titleLabel)
+
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(title)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 310, height: 28)
+    }
+
+    override func layout() {
+        super.layout()
+        titleLabel.frame = NSRect(x: 12, y: 5, width: bounds.width - 24, height: 18)
+    }
+}
+
+/// 独立窗口布局面板。
+///
+/// 非激活面板默认不一定能成为键盘窗口，显式允许成为 key window 后，ESC 才能沿
+/// responder chain 触发 `cancelOperation`。
+private final class WindowLayoutActionPanel: NSPanel {
+    var onEscape: (() -> Void)?
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    override func cancelOperation(_ sender: Any?) {
+        onEscape?()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 {
+            onEscape?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var switchPanelWindow: NSWindow?
+    private var actionPanelWindow: NSPanel?
     private var settingsWindow: NSWindow?  // 设置窗口引用
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
@@ -20,9 +247,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var globalEscKeyMonitor: Any?  // ESC 键全局监听器
     private let windowManager = WindowManager.shared
     private let previewGenerator = PreviewGenerator()
+    private lazy var windowDestroyedEventCoordinator = WindowDestroyedEventCoordinator(
+        previewCacheInvalidator: previewGenerator
+    )
     private let filterEngine = FilterEngine()
+    private let windowLayoutService = WindowLayoutService()
     private let configManager = ConfigManager.shared
     private let hotKeyManager = HotKeyManager()
+    private var layoutHotKeysSuspended = false
+    private var layoutFallbackLocalMonitor: Any?
+    private var layoutFallbackGlobalMonitor: Any?
+    private var actionPanelLocalEscapeMonitor: Any?
+    private var actionPanelGlobalEscapeMonitor: Any?
+    private var lastLayoutShortcutSignature: (keyCode: UInt32, modifiers: UInt32, time: Date)?
+    private var frozenStatusMenuWindow: WindowModel?
+    private var lastLayoutTarget: WindowModel?
     private var isPanelVisible = false
     private var lastHotKeyTime: Date = .distantPast
     private var switchPanelViewModel: SwitchPanelViewModel?
@@ -112,6 +351,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupHotKeys()
         Logger.info("5. HotKeys setup complete")
 
+        // Carbon 在部分系统组合键上可能不投递事件，增加 AppKit 监听作为容错通道。
+        setupWindowLayoutHotKeyFallbackMonitors()
+        Logger.info("5.0 Window layout hotkey fallback monitors setup complete")
+
         // 监听快捷键配置变化
         setupHotKeyChangeListener()
         Logger.info("5.1 HotKey change listener setup complete")
@@ -165,15 +408,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 唤起切换器时，同步用缓存的预览图填充 viewModel（命中内存缓存瞬时完成，避免后面窗口空白）
     @MainActor
     private func prefillCachedPreviews(for windows: [WindowModel], viewModel: SwitchPanelViewModel) {
+        let windowsToPrefill = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: windows)
         var filled = 0
-        for window in windows.prefix(20) {
+        for window in windowsToPrefill {
             // 直接查内存缓存，同步填充，面板显示前完成
             if let cached = previewGenerator.getCachedPreviewSync(for: window.id) {
                 viewModel.previewImages[window.id] = cached
                 filled += 1
             }
         }
-        Logger.info("==> Prefilled \(filled)/\(min(windows.count, 20)) cached previews (sync)")
+        Logger.info("==> Prefilled \(filled)/\(windowsToPrefill.count) cached previews (sync)")
     }
 
     /// 设置自动更新检查
@@ -286,10 +530,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 显示 DMG 更新提示
     private func showDMGUpdateAlert(dmgAppPath: String, version: String) {
         let alert = NSAlert()
-        alert.messageText = "检测到新版本 v\(version)"
-        alert.informativeText = "已检测到 WindowsSwitcher 安装包，需要关闭当前应用才能完成安装。关闭后将自动完成安装并重启。"
-        alert.addButton(withTitle: "关闭并安装")
-        alert.addButton(withTitle: "稍后")
+        alert.messageText = L10n.format("检测到新版本 v%@", version)
+        alert.informativeText = L10n.text("已检测到 WindowsSwitcher 安装包，需要关闭当前应用才能完成安装。关闭后将自动完成安装并重启。")
+        alert.addButton(withTitle: L10n.text("关闭并安装"))
+        alert.addButton(withTitle: L10n.text("稍后"))
         alert.alertStyle = .informational
 
         if alert.runModal() == .alertFirstButtonReturn {
@@ -350,7 +594,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .success:
                     Logger.operation("静默安装", detail: "安装成功", result: "成功")
                 case .failure(let error):
-                    Logger.operation("静默安装", detail: "安装失败: \(error.localizedDescription ?? "未知错误")", result: "失败")
+                    Logger.operation("静默安装", detail: "安装失败: \(error.localizedDescription)", result: "失败")
                 }
             }
         }
@@ -377,6 +621,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         Logger.info("=== Application terminating, restoring system hot keys ===")
+        if let monitor = layoutFallbackLocalMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = layoutFallbackGlobalMonitor { NSEvent.removeMonitor(monitor) }
         // 恢复系统快捷键
         restoreAllSystemHotKeys()
     }
@@ -1061,18 +1307,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 立即隐藏切换面板（无动画，用于释放修饰键时）
+    @MainActor
     private func hideSwitchPanelImmediately() {
         Logger.panelState("隐藏", detail: "immediately, wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
+        switchPanelViewModel?.endSameAppSwitchSession()
 
         // 立即标记面板不可见
         isPanelVisible = false
         wasSwitchModifierPressed = false
+        setWindowLayoutHotKeysSuspended(false)
 
         // 恢复焦点轮询
         windowManager.resumeFocusPolling()
-
-        // 停止刷新定时器
-        stopWindowRefreshTimer()
 
         // 移除 ESC 键监听器
         removeEscKeyMonitor()
@@ -1115,6 +1361,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hotKeyManager.unregister("reverseSwitch")
         hotKeyManager.unregister("appSwitch")
         hotKeyManager.unregister("appSwitchReverse")
+        unregisterWindowLayoutHotKeys()
 
         // 切换器快捷键（可自定义）
         let switchKeyCode = hotKeyConfig.switchKeyCode
@@ -1163,7 +1410,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 应用内切换快捷键（可自定义，可禁用）
         let appSwitchKeyCode = hotKeyConfig.appSwitchKeyCode
         let appSwitchModifiers = hotKeyConfig.appSwitchModifiers
-        let appSwitchReverseModifiers = hotKeyConfig.appSwitchReverseModifiers
         let appSwitchEnabled = hotKeyConfig.appSwitchEnabled
 
         if appSwitchEnabled {
@@ -1207,6 +1453,192 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             Logger.info("HotKeys registered: switch=\(HotKeyFormatter.format(keyCode: switchKeyCode, modifiers: switchModifiers)), appSwitch=DISABLED")
         }
+
+        registerWindowLayoutHotKeys(using: hotKeyConfig.windowLayout)
+    }
+
+    /// 注销全部窗口布局全局快捷键。
+    private func unregisterWindowLayoutHotKeys() {
+        hotKeyManager.unregister("layout.openPanel")
+        for action in WindowLayoutActionCatalog.actions {
+            hotKeyManager.unregister("layout.\(action.id.rawValue)")
+        }
+    }
+
+    /// 根据当前配置注册窗口布局全局快捷键。
+    private func registerWindowLayoutHotKeys(using config: WindowLayoutHotKeyConfig) {
+        guard config.isEnabled, !layoutHotKeysSuspended else { return }
+
+        if let chord = config.openPanel {
+            hotKeyManager.register(
+                HotKey(keyCode: chord.keyCode, modifiers: chord.normalizedModifiers, identifier: "layout.openPanel")
+            ) { [weak self] in
+                DispatchQueue.main.async { self?.handleGlobalLayoutPanelShortcut(chord: chord) }
+            }
+        }
+
+        for action in WindowLayoutActionCatalog.actions {
+            guard let chord = config.chord(for: action.id) else { continue }
+            hotKeyManager.register(
+                HotKey(
+                    keyCode: chord.keyCode,
+                    modifiers: chord.normalizedModifiers,
+                    identifier: "layout.\(action.id.rawValue)"
+                )
+            ) { [weak self] in
+                DispatchQueue.main.async { self?.handleGlobalLayoutAction(action.id, chord: chord) }
+            }
+        }
+    }
+
+    /// 安装窗口布局快捷键的 AppKit 容错监听。
+    private func setupWindowLayoutHotKeyFallbackMonitors() {
+        if let monitor = layoutFallbackLocalMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = layoutFallbackGlobalMonitor { NSEvent.removeMonitor(monitor) }
+
+        layoutFallbackLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            let handled = MainActor.assumeIsolated {
+                self.handleWindowLayoutFallbackEvent(event, source: "local")
+            }
+            return handled ? nil : event
+        }
+        layoutFallbackGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            DispatchQueue.main.async {
+                self?.handleWindowLayoutFallbackEvent(event, source: "global")
+            }
+        }
+    }
+
+    /// 通过 AppKit 监听匹配当前布局快捷键配置。
+    @MainActor
+    @discardableResult
+    private func handleWindowLayoutFallbackEvent(_ event: NSEvent, source: String) -> Bool {
+        let config = configManager.config.hotKeys.windowLayout
+        guard config.isEnabled,
+              !layoutHotKeysSuspended,
+              !isPanelVisible,
+              actionPanelWindow == nil,
+              !event.isARepeat else { return false }
+
+        if let chord = config.openPanel, chord.matches(event) {
+            Logger.operation("窗口布局快捷键容错", detail: "来源=\(source), 动作=openPanel")
+            handleGlobalLayoutPanelShortcut(chord: chord)
+            return true
+        }
+        guard let action = WindowLayoutActionCatalog.actions.first(where: {
+            config.chord(for: $0.id)?.matches(event) == true
+        }), let chord = config.chord(for: action.id) else { return false }
+        Logger.operation("窗口布局快捷键容错", detail: "来源=\(source), 动作=\(action.id.rawValue)")
+        handleGlobalLayoutAction(action.id, chord: chord)
+        return true
+    }
+
+    /// 临时暂停或恢复布局快捷键，避免面板和菜单上下文重复执行。
+    private func setWindowLayoutHotKeysSuspended(_ suspended: Bool) {
+        guard layoutHotKeysSuspended != suspended else { return }
+        layoutHotKeysSuspended = suspended
+        unregisterWindowLayoutHotKeys()
+        if !suspended {
+            registerWindowLayoutHotKeys(using: configManager.config.hotKeys.windowLayout)
+        }
+    }
+
+    @MainActor
+    private func handleGlobalLayoutPanelShortcut(chord: KeyChord) {
+        guard shouldDeliverLayoutShortcut(chord) else { return }
+        guard let target = currentLayoutTarget() else {
+            Logger.warning("窗口布局面板：没有可用目标窗口")
+            return
+        }
+        showActionPanel(for: target)
+    }
+
+    @MainActor
+    private func handleGlobalLayoutAction(_ id: WindowLayoutActionID, chord: KeyChord) {
+        guard shouldDeliverLayoutShortcut(chord) else { return }
+        guard let action = WindowLayoutActionCatalog.action(for: id),
+              let target = currentLayoutTarget() else {
+            Logger.warning("窗口布局快捷键：动作或目标窗口不可用")
+            return
+        }
+        let result = windowLayoutService.execute(action.command, for: target)
+        Logger.operation("窗口布局快捷键", detail: "动作=\(id.rawValue), 结果=\(result)")
+        if isPanelVisible {
+            hideSwitchPanelImmediately()
+        }
+    }
+
+    /// 合并 Carbon 与 AppKit 容错通道产生的同一次按键事件。
+    @MainActor
+    private func shouldDeliverLayoutShortcut(_ chord: KeyChord) -> Bool {
+        let now = Date()
+        if let last = lastLayoutShortcutSignature,
+           last.keyCode == chord.keyCode,
+           last.modifiers == chord.normalizedModifiers,
+           now.timeIntervalSince(last.time) < 0.12 {
+            return false
+        }
+        lastLayoutShortcutSignature = (chord.keyCode, chord.normalizedModifiers, now)
+        return true
+    }
+
+    /// 在切换面板上下文中路由布局快捷键，并保证一次按键只执行一个动作。
+    @MainActor
+    private func handleWindowLayoutKeyEventInSwitcher(_ event: NSEvent) -> Bool {
+        guard isPanelVisible,
+              let target = switchPanelViewModel?.selectedWindow else { return false }
+
+        let config = configManager.config.hotKeys.windowLayout
+        let eventModifiers = KeyChord.carbonModifiers(from: event.modifierFlags)
+        let isPlainL = event.keyCode == 37
+            && (eventModifiers == 0 || eventModifiers == configManager.config.hotKeys.switchModifiers)
+        let isConfiguredPanelShortcut = config.isEnabled && config.openPanel?.matches(event) == true
+        if isPlainL || isConfiguredPanelShortcut {
+            showActionPanel(for: target)
+            return true
+        }
+
+        guard config.isEnabled,
+              let action = WindowLayoutActionCatalog.actions.first(where: {
+                  config.chord(for: $0.id)?.matches(event) == true
+              }) else { return false }
+        let result = windowLayoutService.execute(action.command, for: target)
+        Logger.operation("切换器窗口布局", detail: "动作=\(action.id.rawValue), 结果=\(result)")
+        hideSwitchPanelImmediately()
+        return true
+    }
+
+    /// 解析布局操作目标；切换器可见时始终使用当前选中窗口。
+    @MainActor
+    private func currentLayoutTarget() -> WindowModel? {
+        if isPanelVisible, let selected = switchPanelViewModel?.selectedWindow {
+            lastLayoutTarget = selected
+            return selected
+        }
+
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let ownBundleIdentifier = Bundle.main.bundleIdentifier
+        let windows = windowManager.getAllWindows(forceRefresh: true).filter { window in
+            window.isStandardWindow
+                && window.ownerPID != ownPID
+                && window.bundleIdentifier != ownBundleIdentifier
+        }
+        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+           let frontmost = windows.first(where: { $0.ownerPID == pid }) {
+            lastLayoutTarget = frontmost
+            return frontmost
+        }
+        if let lastLayoutTarget,
+           let current = windows.first(where: { $0.id == lastLayoutTarget.id }) {
+            return current
+        }
+        // 设置窗口位于前台时，使用窗口活动排序中的最近外部标准窗口作为最后兜底。
+        if let recentExternalWindow = windows.first {
+            lastLayoutTarget = recentExternalWindow
+            return recentExternalWindow
+        }
+        return nil
     }
 
     // MARK: - 快捷键变化监听
@@ -1255,13 +1687,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @MainActor @objc private func statusBarButtonClicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp {
+            frozenStatusMenuWindow = currentLayoutTarget()
+            setWindowLayoutHotKeysSuspended(true)
             let menu = NSMenu()
-            let showItem = NSMenuItem(title: "显示切换器", action: #selector(showSwitcherFromMenu), keyEquivalent: "")
+            menu.delegate = self
+            let switchChord = KeyChord(
+                keyCode: configManager.config.hotKeys.switchKeyCode,
+                modifiers: configManager.config.hotKeys.switchModifiers
+            )
+            let showItem = NSMenuItem(
+                title: L10n.text("显示切换器"),
+                action: #selector(showSwitcherFromMenu),
+                keyEquivalent: switchChord.menuKeyEquivalent ?? ""
+            )
             showItem.target = self
-            let settingsItem = NSMenuItem(title: "设置", action: #selector(openSettings), keyEquivalent: ",")
+            showItem.keyEquivalentModifierMask = switchChord.menuModifierMask
+            showItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: L10n.text("显示切换器"))
+            let layoutItem = NSMenuItem(title: L10n.text("窗口布局"), action: nil, keyEquivalent: "")
+            layoutItem.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: L10n.text("窗口布局"))
+            layoutItem.submenu = makeWindowLayoutMenu(target: frozenStatusMenuWindow)
+            let settingsItem = NSMenuItem(title: L10n.text("设置"), action: #selector(openSettings), keyEquivalent: ",")
             settingsItem.target = self
-            let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+            let quitItem = NSMenuItem(title: L10n.text("退出"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             menu.addItem(showItem)
+            menu.addItem(layoutItem)
+            menu.addItem(NSMenuItem.separator())
             menu.addItem(settingsItem)
             menu.addItem(NSMenuItem.separator())
             menu.addItem(quitItem)
@@ -1269,7 +1719,101 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             statusItem?.button?.performClick(nil)
             statusItem?.menu = nil
         } else {
-            openSettings()
+            showSwitcherFromMenu()
+        }
+    }
+
+    /// 创建状态栏中的窗口布局子菜单。
+    @MainActor
+    private func makeWindowLayoutMenu(target: WindowModel?) -> NSMenu {
+        let menu = NSMenu()
+        let targetTitle = target.map {
+            L10n.format(
+                "目标：%@ — %@",
+                $0.appName,
+                $0.windowTitle.isEmpty ? L10n.text("未命名窗口") : $0.windowTitle
+            )
+        } ?? L10n.text("没有可用的目标窗口")
+        let targetItem = NSMenuItem(title: targetTitle, action: nil, keyEquivalent: "")
+        targetItem.isEnabled = false
+        targetItem.view = WindowLayoutStatusMenuTargetView(title: targetTitle)
+        menu.addItem(targetItem)
+        menu.addItem(.separator())
+
+        let config = configManager.config.hotKeys.windowLayout
+        for (index, action) in WindowLayoutActionCatalog.actions.enumerated() {
+            if index == 4 || index == 8 || index == 10 { menu.addItem(.separator()) }
+            let chord = config.chord(for: action.id)
+            let item = NSMenuItem(
+                title: action.title,
+                action: #selector(performLayoutActionFromMenu(_:)),
+                keyEquivalent: chord?.menuKeyEquivalent ?? ""
+            )
+            item.target = self
+            item.keyEquivalentModifierMask = chord?.menuModifierMask ?? []
+            if let target {
+                item.representedObject = WindowLayoutMenuActionContext(actionID: action.id, target: target)
+            }
+            item.isEnabled = target != nil
+            item.image = NSImage(systemSymbolName: action.symbolName, accessibilityDescription: action.title)
+            item.view = WindowLayoutStatusMenuItemView(
+                menuItem: item,
+                title: action.title,
+                symbolName: action.symbolName,
+                chord: chord
+            )
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+        let openItem = NSMenuItem(
+            title: L10n.text("打开布局面板"),
+            action: #selector(openLayoutPanelFromMenu(_:)),
+            keyEquivalent: config.openPanel?.menuKeyEquivalent ?? ""
+        )
+        openItem.target = self
+        openItem.keyEquivalentModifierMask = config.openPanel?.menuModifierMask ?? []
+        openItem.isEnabled = target != nil
+        openItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: L10n.text("打开布局面板"))
+        openItem.view = WindowLayoutStatusMenuItemView(
+            menuItem: openItem,
+            title: L10n.text("打开布局面板"),
+            symbolName: "rectangle.on.rectangle",
+            chord: config.openPanel
+        )
+        if let target {
+            openItem.representedObject = WindowLayoutMenuActionContext(actionID: nil, target: target)
+        }
+        menu.addItem(openItem)
+        let settingsItem = NSMenuItem(title: L10n.text("快捷键设置…"), action: #selector(openSettings), keyEquivalent: "")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+        return menu
+    }
+
+    @MainActor @objc private func performLayoutActionFromMenu(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? WindowLayoutMenuActionContext,
+              let id = context.actionID,
+              let action = WindowLayoutActionCatalog.action(for: id) else {
+            Logger.warning("状态栏窗口布局：菜单执行上下文已失效")
+            return
+        }
+        let result = windowLayoutService.execute(action.command, for: context.target)
+        Logger.operation("状态栏窗口布局", detail: "动作=\(id.rawValue), 结果=\(result)")
+    }
+
+    @MainActor @objc private func openLayoutPanelFromMenu(_ sender: NSMenuItem) {
+        guard let context = sender.representedObject as? WindowLayoutMenuActionContext else {
+            Logger.warning("状态栏布局面板：菜单执行上下文已失效")
+            return
+        }
+        showActionPanel(for: context.target)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        frozenStatusMenuWindow = nil
+        if actionPanelWindow == nil {
+            setWindowLayoutHotKeysSuspended(false)
         }
     }
 
@@ -1364,25 +1908,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         openSettingsAction: @escaping () -> Void
     ) {
         let alert = NSAlert()
-        alert.messageText = "需要\(permission)权限"
+        alert.messageText = L10n.format("需要%@权限", permission)
         alert.informativeText = description.description
         alert.alertStyle = .warning
 
         // 添加详细说明
-        let infoText = """
-        请在系统设置中开启权限，以启用以下功能：
-        • 窗口预览和切换
-        • 快捷键响应
-        • 程序坞预览
-
-        点击"打开系统设置"前往授权，或点击"稍后"稍后再设置。
-        """
+        let infoText = L10n.text("请在系统设置中开启权限，以启用以下功能：\n• 窗口预览和切换\n• 快捷键响应\n• 程序坞预览\n\n点击“打开系统设置”前往授权，或点击“稍后”稍后再设置。")
 
         alert.informativeText = description.description + "\n\n" + infoText
 
-        alert.addButton(withTitle: "打开系统设置")
-        alert.addButton(withTitle: "不再提示")
-        alert.addButton(withTitle: "稍后")
+        alert.addButton(withTitle: L10n.text("打开系统设置"))
+        alert.addButton(withTitle: L10n.text("不再提示"))
+        alert.addButton(withTitle: L10n.text("稍后"))
 
         let response = alert.runModal()
 
@@ -1427,7 +1964,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hostingController = NSHostingController(rootView: settingsView)
 
         let window = NSWindow(contentViewController: hostingController)
-        window.title = "WindowsSwitcher 设置"
+        window.title = L10n.text("WindowsSwitcher 设置")
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(windowSize)
         window.minSize = minSize
@@ -1557,7 +2094,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - 切换面板
     @MainActor
-    func showSwitchPanel(reversed: Bool = false, appSwitchMode: Bool = false) {
+    func showSwitchPanel(
+        reversed: Bool = false,
+        appSwitchMode: Bool = false
+    ) {
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
@@ -1573,6 +2113,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         guard !isPanelVisible else { return }
         isPanelVisible = true
+        setWindowLayoutHotKeysSuspended(true)
+
+        // 暂停轮询前同步记录真实焦点窗口，替代面板打开时伪造 lastActiveTime。
+        if let previousPID {
+            windowManager.recordFocusedWindowActivity(pid: previousPID)
+        }
 
         // 暂停焦点轮询，避免窗口列表在切换过程中变化
         windowManager.pauseFocusPolling()
@@ -1592,8 +2138,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     Logger.debug("Window state changed: \(window.appName)")
                     // 窗口状态变化时刷新列表
                     self?.switchPanelViewModel?.refreshWindows()
-                default:
-                    break
+                case .windowCreated(let window):
+                    Logger.debug("Window created: \(window.appName) - \(window.windowTitle)")
+                    Logger.windowCreated(
+                        windowID: window.id,
+                        appName: window.appName,
+                        windowTitle: window.windowTitle,
+                        bundleIdentifier: window.bundleIdentifier
+                    )
+                    self?.switchPanelViewModel?.refreshWindows()
+                case .windowDestroyed(let windowID):
+                    Logger.debug("Window destroyed: \(windowID)")
+                    Logger.windowDestroyed(windowID: windowID)
+                    guard let self else { return }
+                    self.windowDestroyedEventCoordinator.handle(windowID: windowID) { [weak self] in
+                        self?.switchPanelViewModel?.refreshWindows()
+                    }
                 }
             }
         }
@@ -1608,66 +2168,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let chromeWindows = windows.filter { $0.bundleIdentifier.contains("chrome") || $0.appName.contains("Chrome") }
         Logger.info("==> Chrome windows: \(chromeWindows.count), titles: \(chromeWindows.map { $0.windowTitle })")
 
-        // 3. 如果是 appSwitchMode，只保留当前应用的窗口
-        if appSwitchMode, let currentApp = previousFrontmostApp?.localizedName {
-            windows = windows.filter { $0.appName == currentApp }
-            Logger.info("==> AppSwitchMode: filtered to \(windows.count) windows for \(currentApp)")
-        }
-
-        // 3. 在获取窗口后，立即更新当前前台窗口的 lastActiveTime
-        // 因为 previousPID 已经被切换成 WindowsSwitcher 自己了
-        let now = Date()
-        if let frontmostApp = NSWorkspace.shared.frontmostApplication,
-           frontmostApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-            let frontmostPID = frontmostApp.processIdentifier
-            Logger.info("==> Current frontmost app: \(frontmostApp.localizedName ?? "unknown"), PID: \(frontmostPID)")
-
-            // 找到该应用的所有窗口，更新最早活跃的那个（通常是用户正在使用的）
-            var maxTime: Date = .distantPast
-            var maxIndex: Int = -1
-            for (index, window) in windows.enumerated() where window.ownerPID == frontmostPID {
-                if window.lastActiveTime > maxTime {
-                    maxTime = window.lastActiveTime
-                    maxIndex = index
-                }
-            }
-
-            // 更新最前台的窗口
-            if maxIndex >= 0 {
-                let updatedWindow = WindowModel(
-                    id: windows[maxIndex].id,
-                    appName: windows[maxIndex].appName,
-                    bundleIdentifier: windows[maxIndex].bundleIdentifier,
-                    windowTitle: windows[maxIndex].windowTitle,
-                    appIcon: windows[maxIndex].appIcon,
-                    frame: windows[maxIndex].frame,
-                    isMinimized: windows[maxIndex].isMinimized,
-                    isHidden: windows[maxIndex].isHidden,
-                    isOnScreen: windows[maxIndex].isOnScreen,
-                    lastActiveTime: now,  // 更新为当前时间
-                    windowLayer: windows[maxIndex].windowLayer,
-                    ownerPID: windows[maxIndex].ownerPID,
-                    isStandardWindow: windows[maxIndex].isStandardWindow
-                )
-                windows[maxIndex] = updatedWindow
-                Logger.info("==> Updated frontmost window lastActiveTime: \(updatedWindow.windowTitle)")
-            }
+        // 3. 如果是 appSwitchMode，只保留当前 Bundle Identifier 的窗口
+        if appSwitchMode, let previousBundleID, !previousBundleID.isEmpty {
+            windows = windows.filter { $0.bundleIdentifier == previousBundleID }
+            Logger.info("==> AppSwitchMode: filtered to \(windows.count) windows for \(previousBundleID)")
         }
 
         // 4. 按最近活跃时间排序
         let t1 = CFAbsoluteTimeGetCurrent()
 
-        // 排序逻辑：与 WindowManager.getAllWindows() 保持一致
-        // - 按 lastActiveTime 降序（最近活跃的排第一位）
-        // - 时间相同时，按 windowID 降序（新窗口ID大，排在前面）
-        let sortedWindows: [WindowModel]
-        sortedWindows = windows.sorted { w1, w2 in
-            if w1.lastActiveTime != w2.lastActiveTime {
-                return w1.lastActiveTime > w2.lastActiveTime
-            }
-            // 时间相同时，windowID 大的排前面（新窗口）
-            return w1.id > w2.id
-        }
+        let sortedWindows = WindowOrdering().sort(
+            windows,
+            by: .recent,
+            activitySequence: windowManager.activitySequenceSnapshot()
+        )
 
         // 打印排序结果日志
         let first3 = sortedWindows.prefix(3).map { "\($0.appName):\($0.lastActiveTime.timeIntervalSinceNow)s" }
@@ -1683,31 +2197,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         Logger.info("==> SwitchPanelViewModel created: \((CFAbsoluteTimeGetCurrent() - t2)*1000)ms")
 
-        // 选中逻辑
-        if reversed && sortedWindows.count > 1 {
-            // 反向切换：选择第二个窗口（上一个最近使用的窗口）
-            vm.selectedIndex = 1
-            Logger.info("==> reversed mode: selecting index 1 (previous window)")
-        } else if appSwitchMode && sortedWindows.count > 1 {
-            // 同应用切换模式：默认选中第二个窗口（下一个要切换的窗口）
-            vm.selectedIndex = 1
-            Logger.info("==> AppSwitchMode: selecting index 1 (next window)")
-        } else if ConfigManager.shared.config.behavior.defaultSelectSecond && sortedWindows.count > 1 {
-            // 如果启用了"默认选中第二个窗口"选项，且窗口数量大于1
-            vm.selectedIndex = 1
-            Logger.info("==> defaultSelectSecond enabled, selecting index 1")
+        let initialIndex = SwitchPanelViewModel.initialSelectionIndex(
+            windowCount: sortedWindows.count,
+            reversed: reversed,
+            appSwitchMode: appSwitchMode,
+            defaultSelectSecond: ConfigManager.shared.config.behavior.defaultSelectSecond
+        )
+        let initiallySelectedWindow = vm.selectWindow(at: initialIndex)
+
+        if appSwitchMode, let previousBundleID, !previousBundleID.isEmpty {
+            vm.beginSameAppSwitchSession(
+                bundleIdentifier: previousBundleID,
+                initialIndex: initialIndex
+            )
         }
+        Logger.info(
+            "==> initial selection index: \(initialIndex), id: \(initiallySelectedWindow?.id ?? 0), " +
+            "window: \(initiallySelectedWindow?.windowTitle ?? "none")"
+        )
 
         // 保存 viewModel 引用，用于 Option 键释放时激活窗口
         self.switchPanelViewModel = vm
 
-        // 4. 启动定时器定期刷新窗口列表（实时更新）
-        startWindowRefreshTimer(for: vm)
-
         let t3 = CFAbsoluteTimeGetCurrent()
-        let view = SwitchPanelView(viewModel: vm) { [weak self] in
-            self?.hideSwitchPanel()
-        }
+        let view = SwitchPanelView(
+            viewModel: vm,
+            onOpenLayout: { [weak self] window in
+                self?.showActionPanel(for: window)
+            },
+            onDismiss: { [weak self] in
+                self?.hideSwitchPanel()
+            }
+        )
         Logger.info("==> SwitchPanelView created: \((CFAbsoluteTimeGetCurrent() - t3)*1000)ms")
 
         // 创建面板，使用较大尺寸以适应不同预览大小
@@ -1743,7 +2264,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let windowCount = sortedWindows.count
         let desiredSpacing: CGFloat = 16
         let panelPadding: CGFloat = 8  // 减小内边距
-        let bottomBarHeight: CGFloat = 20  // 精简底部栏
 
         // 根据窗口数量动态计算合适的列数
         let columnCount: Int
@@ -1755,42 +2275,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             columnCount = max(1, min(8, min(windowCount, maxPossibleColumns)))
         }
 
-        let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
-
         // 获取屏幕尺寸
         let screenSize = NSScreen.main?.frame.size ?? CGSize(width: 1920, height: 1080)
 
         // 计算内容所需尺寸（无额外空白）
-        let itemSpacing: CGFloat = 4  // 紧凑间距
         let contentWidth = CGFloat(columnCount) * (itemWidth + desiredSpacing) - desiredSpacing + panelPadding * 2
-        let contentHeight = CGFloat(rowCount) * (itemHeight + itemSpacing) + panelPadding * 2 + bottomBarHeight
 
         // 最小面板尺寸
         let minWidth: CGFloat
-        let minHeight: CGFloat
 
         switch windowCount {
         case 1:
             minWidth = itemWidth + panelPadding * 2 + 8
-            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
         case 2:
             minWidth = itemWidth * 2 + desiredSpacing + panelPadding * 2 + 8
-            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
         case 3, 4:
             let cols = min(windowCount, columnCount)
             minWidth = itemWidth * CGFloat(cols) + desiredSpacing * CGFloat(cols - 1) + panelPadding * 2 + 8
-            minHeight = itemHeight + panelPadding * 2 + bottomBarHeight
         default:
             minWidth = 350
-            minHeight = 200
         }
 
         let maxWidth = screenSize.width * 0.9
-        let maxHeight = screenSize.height * 0.8
 
         // 最终面板尺寸 - 完全贴合内容
         let panelWidth = min(max(contentWidth, minWidth), maxWidth)
-        let panelHeight = min(max(contentHeight, minHeight), maxHeight)
+        let panelHeight = SwitchPanelLayout.panelHeight(
+            windowCount: windowCount,
+            columnCount: columnCount,
+            itemHeight: itemHeight,
+            screenHeight: screenSize.height,
+            toolbarAreaHeight: SwitchPanelView.toolbarAreaHeight
+        )
 
         // 设置面板大小
         let newSize = NSSize(width: panelWidth, height: panelHeight)
@@ -1832,6 +2348,106 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // 监听选中窗口变化，更新背景预览
         setupSelectedWindowObserver(for: vm)
+    }
+
+    // MARK: - 窗口布局 Action Panel
+
+    /// 从切换面板进入独立布局面板，不激活原窗口。
+    @MainActor
+    private func showActionPanel(for window: WindowModel) {
+        hideSwitchPanelImmediately()
+        hideActionPanel()
+        setWindowLayoutHotKeysSuspended(true)
+
+        let targetScreen = NSScreen.screens.max { lhs, rhs in
+            let leftIntersection = lhs.frame.intersection(window.frame)
+            let rightIntersection = rhs.frame.intersection(window.frame)
+            let leftArea = leftIntersection.width * leftIntersection.height
+            let rightArea = rightIntersection.width * rightIntersection.height
+            return leftArea < rightArea
+        }
+        let visibleScreenHeight = targetScreen?.visibleFrame.height ?? 720
+        let panelHeight = ActionPanelLayoutMetrics.panelHeight(forVisibleScreenHeight: visibleScreenHeight)
+        let panelSize = NSSize(width: ActionPanelLayoutMetrics.width, height: panelHeight)
+        let view = ActionPanelView(
+            window: window,
+            layoutService: windowLayoutService,
+            hotKeyConfig: configManager.config.hotKeys.windowLayout,
+            panelHeight: panelHeight,
+            onDismiss: { [weak self] in
+                self?.hideActionPanel()
+            }
+        )
+
+        let panel = WindowLayoutActionPanel(
+            contentRect: NSRect(origin: .zero, size: panelSize),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
+        panel.level = .popUpMenu
+        // 布局面板使用实体自适应背景，浅色模式为白色、深色模式为系统深色背景。
+        panel.backgroundColor = .windowBackgroundColor
+        panel.isOpaque = true
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = NSRect(origin: .zero, size: panelSize)
+        panel.contentView = hostingView
+        panel.contentMinSize = panelSize
+        panel.contentMaxSize = panelSize
+        panel.setContentSize(panelSize)
+        hostingView.layoutSubtreeIfNeeded()
+        panel.center()
+        actionPanelWindow = panel
+        panel.onEscape = { [weak self, weak panel] in
+            guard let self, self.actionPanelWindow === panel else { return }
+            self.hideActionPanel()
+        }
+        panel.makeKeyAndOrderFront(nil)
+
+        actionPanelLocalEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
+            guard event.keyCode == 53,
+                  let self,
+                  self.actionPanelWindow === panel else { return event }
+            self.hideActionPanel()
+            return nil
+        }
+        actionPanelGlobalEscapeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self, weak panel] event in
+            guard event.keyCode == 53 else { return }
+            DispatchQueue.main.async {
+                guard let self, self.actionPanelWindow === panel else { return }
+                self.hideActionPanel()
+            }
+        }
+
+        Logger.panelState(
+            "布局面板显示",
+            detail: "窗口ID=\(window.id), 应用=\(window.appName)"
+        )
+    }
+
+    @MainActor
+    private func hideActionPanel() {
+        if let monitor = actionPanelLocalEscapeMonitor {
+            NSEvent.removeMonitor(monitor)
+            actionPanelLocalEscapeMonitor = nil
+        }
+        if let monitor = actionPanelGlobalEscapeMonitor {
+            NSEvent.removeMonitor(monitor)
+            actionPanelGlobalEscapeMonitor = nil
+        }
+        guard let panel = actionPanelWindow else { return }
+        (panel as? WindowLayoutActionPanel)?.onEscape = nil
+        panel.orderOut(nil)
+        actionPanelWindow = nil
+        setWindowLayoutHotKeysSuspended(false)
+        Logger.panelState("布局面板隐藏")
     }
 
     // MARK: - 背景预览窗口
@@ -1979,6 +2595,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
 
+            if MainActor.assumeIsolated({ self.handleWindowLayoutKeyEventInSwitcher(event) }) {
+                return
+            }
+
             // 处理方向键
             guard let vm = self.switchPanelViewModel else { return }
             switch event.specialKey {
@@ -2105,6 +2725,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return nil // 阻止事件继续传递
             }
 
+            if MainActor.assumeIsolated({ self.handleWindowLayoutKeyEventInSwitcher(event) }) {
+                return nil
+            }
+
             // 处理方向键
             guard let vm = self.switchPanelViewModel else { return event }
             switch event.specialKey {
@@ -2157,35 +2781,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // 定时刷新窗口列表 - 已禁用，避免快速切换时产生卡顿
-    private var windowRefreshTimer: Timer?
-
-    private func startWindowRefreshTimer(for vm: SwitchPanelViewModel) {
-        // 已禁用：不再定期刷新窗口列表，避免影响切换流畅度
-        // 窗口列表会在下次显示面板时自动刷新
-    }
-
-    private func stopWindowRefreshTimer() {
-        windowRefreshTimer?.invalidate()
-        windowRefreshTimer = nil
-    }
-
-
+    @MainActor
     func hideSwitchPanel() {
         // 操作日志：面板隐藏
         Logger.panelState("隐藏", detail: "wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
+        switchPanelViewModel?.endSameAppSwitchSession()
 
         // 立即标记面板不可见，避免状态不一致
         isPanelVisible = false
+        setWindowLayoutHotKeysSuspended(false)
 
         // 重置修饰键状态，避免重复触发
         wasSwitchModifierPressed = false
 
         // 恢复焦点轮询
         windowManager.resumeFocusPolling()
-
-        // 停止刷新定时器
-        stopWindowRefreshTimer()
 
         // 移除 ESC 键监听器
         removeEscKeyMonitor()

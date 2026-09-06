@@ -243,14 +243,18 @@ enum SettingsGroup: String, CaseIterable {
         }
     }
 
+    var displayName: String {
+        L10n.text(rawValue)
+    }
+
     var description: String {
         switch self {
-        case .general: return "启动、主题等基础设置"
-        case .switcher: return "窗口切换器行为配置"
-        case .preview: return "预览窗口显示设置"
-        case .dock: return "程序坞悬停预览设置"
-        case .hotkey: return "快捷键自定义配置"
-        case .about: return "版本信息与帮助"
+        case .general: return L10n.text("启动、主题等基础设置")
+        case .switcher: return L10n.text("窗口切换器行为配置")
+        case .preview: return L10n.text("预览窗口显示设置")
+        case .dock: return L10n.text("程序坞悬停预览设置")
+        case .hotkey: return L10n.text("快捷键自定义配置")
+        case .about: return L10n.text("版本信息与帮助")
         }
     }
 }

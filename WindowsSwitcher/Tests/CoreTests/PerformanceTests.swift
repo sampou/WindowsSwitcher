@@ -39,7 +39,7 @@ final class PerformanceTests: XCTestCase {
 
     // PreviewCache 并发写入性能
     func testPreviewCacheConcurrentWrite() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let image = NSImage(size: NSSize(width: 100, height: 100))
 
         await withTaskGroup(of: Void.self) { group in

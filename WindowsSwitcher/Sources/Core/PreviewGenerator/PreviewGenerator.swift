@@ -1,6 +1,13 @@
 import AppKit
 import CoreGraphics
 
+/// 窗口生命周期事件所需的预览缓存失效能力。
+///
+/// 将销毁事件协调逻辑与具体截图实现解耦，便于通过确定性测试验证缓存清理调用。
+protocol PreviewCacheInvalidating: Sendable {
+    func invalidateCache(for windowID: CGWindowID) async
+}
+
 // MARK: - 预览缓存配置
 struct PreviewCacheConfig {
     /// 内存缓存最大数量
@@ -20,6 +27,7 @@ struct PreviewCacheConfig {
 actor PreviewCache {
     private var memoryCache: [String: CachedEntry] = [:]
     private let cacheDirectory: URL
+    private let persistsToDisk: Bool
 
     struct CachedEntry {
         let image: NSImage
@@ -27,10 +35,15 @@ actor PreviewCache {
         let windowID: CGWindowID
     }
 
-    init() {
+    /// 创建预览缓存。生产环境默认启用磁盘缓存；只验证内存语义的测试可显式关闭，
+    /// 避免合成 NSImage 触发 AppKit 编码并污染同一测试进程。
+    init(persistsToDisk: Bool = true) {
+        self.persistsToDisk = persistsToDisk
         let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         cacheDirectory = cachesDirectory.appendingPathComponent("WindowsSwitcher/Previews", isDirectory: true)
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        if persistsToDisk {
+            try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        }
     }
 
     /// 获取缓存的预览图（长期保留，不因 TTL 丢弃，用于即时显示）
@@ -43,7 +56,7 @@ actor PreviewCache {
         }
 
         // 尝试从磁盘加载（永久保留，仅磁盘过期才清理）
-        if let image = loadFromDisk(key: key) {
+        if persistsToDisk, let image = loadFromDisk(key: key) {
             let entry = CachedEntry(image: image, timestamp: Date(), windowID: windowID)
             memoryCache[key] = entry
             return image
@@ -69,9 +82,11 @@ actor PreviewCache {
         memoryCache[key] = entry
         limitMemoryCacheSize()
 
-        // 异步存入磁盘（低优先级，避免影响切换流畅度）
-        Task(priority: .background) {
-            await self.saveToDisk(image: image, key: key)
+        // 调用方已通过 actor 的异步边界进入此处，直接完成磁盘持久化，避免为每次写入
+        // 再创建无法等待的后台任务。预览生成路径会在返回图片后另起任务调用 set，
+        // 因此这里不会延迟首屏展示，同时可防止测试或高频刷新后遗留大量编码任务。
+        if persistsToDisk {
+            saveToDisk(image: image, key: key)
         }
     }
 
@@ -80,19 +95,23 @@ actor PreviewCache {
         let key = "\(windowID)"
         memoryCache.removeValue(forKey: key)
         // 同步清理磁盘缓存文件
-        let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
-        try? FileManager.default.removeItem(at: fileURL)
+        if persistsToDisk {
+            let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
+            try? FileManager.default.removeItem(at: fileURL)
+        }
     }
 
     /// 清空所有缓存
     func clear() {
         memoryCache.removeAll()
+        guard persistsToDisk else { return }
         try? FileManager.default.removeItem(at: cacheDirectory)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
 
     /// 清理磁盘缓存中过期或超额的文件（控制磁盘占用）
     func cleanupDiskCacheIfNeeded() {
+        guard persistsToDisk else { return }
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: cacheDirectory,
                                                        includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
@@ -136,7 +155,7 @@ actor PreviewCache {
         }
     }
 
-    private func saveToDisk(image: NSImage, key: String) async {
+    private func saveToDisk(image: NSImage, key: String) {
         let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
 
         guard let tiffData = image.tiffRepresentation,
@@ -166,14 +185,18 @@ actor PreviewCache {
 }
 
 // MARK: - 预览生成器
-final class PreviewGenerator: @unchecked Sendable {
+final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
     private let cache = PreviewCache()
-    private let queue = DispatchQueue(
-        label: "com.windowsswitcher.preview",
-        qos: .userInitiated,
-        attributes: .concurrent
-    )
-    private let semaphore = DispatchSemaphore(value: PreviewCacheConfig.maxConcurrentGeneration)
+    /// 所有生成器共享同一限并发队列，避免多个面板各自创建并发配额。
+    /// OperationQueue 只调度可执行任务，不会像“并发队列 + semaphore.wait()”那样
+    /// 用等待中的截图任务耗尽 Dispatch 工作线程。
+    private static let generationQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.windowsswitcher.preview"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = PreviewCacheConfig.maxConcurrentGeneration
+        return queue
+    }()
     private var diskCleanupTimer: DispatchSourceTimer?
 
     init() {
@@ -209,10 +232,7 @@ final class PreviewGenerator: @unchecked Sendable {
         let cacheRef = self.cache
 
         return await withCheckedContinuation { continuation in
-            queue.async {
-                self.semaphore.wait()
-                defer { self.semaphore.signal() }
-
+            Self.generationQueue.addOperation {
                 let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
 
@@ -233,10 +253,7 @@ final class PreviewGenerator: @unchecked Sendable {
         let cacheRef = self.cache
 
         return await withCheckedContinuation { continuation in
-            queue.async {
-                self.semaphore.wait()
-                defer { self.semaphore.signal() }
-
+            Self.generationQueue.addOperation {
                 let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
 
@@ -332,7 +349,7 @@ final class PreviewGenerator: @unchecked Sendable {
         let windowFrame = window.frame
 
         return await withCheckedContinuation { continuation in
-            queue.async {
+            Self.generationQueue.addOperation {
                 let image = Self.captureWindowFullResolution(windowID, windowFrame: windowFrame)
                 continuation.resume(returning: image)
             }
@@ -353,6 +370,7 @@ final class PreviewGenerator: @unchecked Sendable {
     // MARK: - 私有方法
 
     private static func captureWindowSync(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
+        guard windowExists(windowID) else { return nil }
         guard CGPreflightScreenCaptureAccess() else { return nil }
 
         guard let cgImage = CGWindowListCreateImage(
@@ -367,6 +385,7 @@ final class PreviewGenerator: @unchecked Sendable {
     }
 
     private static func captureWindowFullResolution(_ windowID: CGWindowID, windowFrame: CGRect) -> NSImage? {
+        guard windowExists(windowID) else { return nil }
         guard CGPreflightScreenCaptureAccess() else { return nil }
 
         guard let cgImage = CGWindowListCreateImage(
@@ -378,6 +397,23 @@ final class PreviewGenerator: @unchecked Sendable {
 
         let logicalSize = NSSize(width: windowFrame.width, height: windowFrame.height)
         return NSImage(cgImage: cgImage, size: logicalSize)
+    }
+
+    /// 在调用系统截图 API 前确认窗口仍存在，避免已关闭窗口或测试伪 ID
+    /// 进入 ScreenCaptureKit 的同步等待路径。
+    private static func windowExists(_ windowID: CGWindowID) -> Bool {
+        guard windowID != 0,
+              let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID)
+                as? [[String: Any]] else {
+            return false
+        }
+
+        return windows.contains { info in
+            guard let number = info[kCGWindowNumber as String] as? NSNumber else {
+                return false
+            }
+            return number.uint32Value == windowID
+        }
     }
 
     /// 使用 CGContext 高性能缩放 CGImage，保持源图宽高比（aspect fit），比 lockFocus + draw 快得多

@@ -11,13 +11,7 @@ struct BackgroundPreviewContainer: View {
     var body: some View {
         ZStack {
             if let image = previewImage {
-                // 获取屏幕和窗口信息
-                let screenFrame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
                 let windowFrame = selectedWindow.frame
-
-                // 计算窗口在屏幕上的相对位置和大小
-                let viewWidth = screenFrame.width
-                let viewHeight = screenFrame.height
 
                 // 窗口的相对尺寸
                 let imgWidth = windowFrame.width
@@ -60,10 +54,58 @@ struct BackgroundPreviewContainer: View {
     }
 }
 
+/// 切换面板高度的纯计算器，供 SwiftUI 根视图和宿主 NSPanel 共用。
+enum SwitchPanelLayout {
+    static let itemVerticalSpacing: CGFloat = 8
+    static let bottomBarHeight: CGFloat = 20
+    static let panelPadding: CGFloat = 8
+    static let defaultMinimumHeight: CGFloat = 180
+
+    static func panelHeight(
+        windowCount: Int,
+        columnCount: Int,
+        itemHeight: CGFloat,
+        screenHeight: CGFloat,
+        toolbarAreaHeight: CGFloat
+    ) -> CGFloat {
+        let safeColumnCount = max(1, columnCount)
+        let rowCount = max(1, (windowCount + safeColumnCount - 1) / safeColumnCount)
+        let singleRowHeight = itemHeight
+            + itemVerticalSpacing
+            + panelPadding * 2
+            + bottomBarHeight
+            + toolbarAreaHeight
+        let contentHeight = CGFloat(rowCount) * (itemHeight + itemVerticalSpacing)
+            + panelPadding * 2
+            + bottomBarHeight
+            + toolbarAreaHeight
+        let baseMinimumHeight = max(
+            defaultMinimumHeight,
+            panelPadding * 2 + bottomBarHeight + toolbarAreaHeight
+        )
+        let minimumHeight = (1...4).contains(windowCount) ? singleRowHeight : baseMinimumHeight
+        let maximumHeight = screenHeight * 0.8
+        return min(max(contentHeight, minimumHeight), maximumHeight)
+    }
+}
+
 struct SwitchPanelView: View {
+    /// 顶部操作区仅保留窗口布局入口；窗口搜索已暂时下线。
+    static let toolbarAreaHeight: CGFloat = 48
+
     @ObservedObject var viewModel: SwitchPanelViewModel
     @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
+    let onOpenLayout: (WindowModel) -> Void
+    init(
+        viewModel: SwitchPanelViewModel,
+        onOpenLayout: @escaping (WindowModel) -> Void = { _ in },
+        onDismiss: @escaping () -> Void
+    ) {
+        self.viewModel = viewModel
+        self.onOpenLayout = onOpenLayout
+        self.onDismiss = onDismiss
+    }
 
     // 动态获取预览尺寸
     private var previewSize: PreviewSize {
@@ -137,28 +179,13 @@ struct SwitchPanelView: View {
 
     // 面板自适应高度 - 完全贴合内容
     private var panelHeight: CGFloat {
-        let itemHeight = previewSize.itemDimensions.height
-        let actualItemHeight = itemHeight + 8  // 紧凑间距
-        let windowCount = viewModel.filteredWindows.count
-        let rowCount = max(1, (windowCount + columnCount - 1) / columnCount)
-
-        let bottomBarHeight: CGFloat = 20  // 精简底部栏
-        let panelPadding: CGFloat = 8
-
-        // 内容所需高度
-        let contentHeight = CGFloat(rowCount) * actualItemHeight + panelPadding * 2 + bottomBarHeight
-
-        // 最小高度
-        let minHeight: CGFloat
-        switch windowCount {
-        case 1, 2, 3, 4:
-            minHeight = actualItemHeight + panelPadding * 2 + bottomBarHeight
-        default:
-            minHeight = 180
-        }
-
-        let maxHeight = screenSize.height * 0.8
-        return min(max(contentHeight, minHeight), maxHeight)
+        SwitchPanelLayout.panelHeight(
+            windowCount: viewModel.filteredWindows.count,
+            columnCount: columnCount,
+            itemHeight: previewSize.itemDimensions.height,
+            screenHeight: screenSize.height,
+            toolbarAreaHeight: Self.toolbarAreaHeight
+        )
     }
 
     var body: some View {
@@ -167,12 +194,35 @@ struct SwitchPanelView: View {
             VisualEffectView(material: .hudWindow, blendingMode: .behindWindow)
                 .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Panel.cornerRadius))
 
-            // 窗口网格 - 平铺显示，与屏幕边框保持距离
-            windowGrid
-                .padding(DesignTokens.Panel.padding)
+            VStack(spacing: 0) {
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Spacer(minLength: 0)
+
+                    Button(action: openLayoutPanel) {
+                        Image(systemName: "rectangle.3.group")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 30, height: 28)
+                            .background(DesignTokens.Colors.secondaryBackground)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.selectedWindow == nil)
+                    .accessibilityLabel(L10n.text("打开窗口布局面板"))
+                    .accessibilityHint(L10n.text("也可按 L 键打开"))
+                }
+                    .padding(.horizontal, DesignTokens.Panel.padding)
+                    .padding(.top, DesignTokens.Panel.padding)
+                    .padding(.bottom, DesignTokens.Spacing.sm)
+
+                // 窗口网格 - 平铺显示，与屏幕边框保持距离
+                windowGrid
+                    .padding(.horizontal, DesignTokens.Panel.padding)
+                    .padding(.bottom, DesignTokens.Panel.padding)
+            }
         }
         // 增大面板尺寸以显示更多窗口
         .frame(width: panelWidth, height: panelHeight)
+        .environment(\.locale, L10n.locale)
         .shadow(color: .black.opacity(0.25), radius: DesignTokens.Panel.shadowRadius,
                 x: 0, y: DesignTokens.Panel.shadowY)
         .background(KeyEventHandler(
@@ -192,19 +242,21 @@ struct SwitchPanelView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
             },
             onDismiss: onDismiss,
+            onOpenActions: openLayoutPanel,
             onSelectIndex: { idx in
-                if viewModel.filteredWindows.indices.contains(idx) {
-                    // 同时设置窗口 ID 和索引，确保同步
-                    viewModel.selectedWindowID = viewModel.filteredWindows[idx].id
-                    viewModel.selectedIndex = idx
-                }
+                viewModel.selectWindow(at: idx)
             },
             onMoveUp: { viewModel.selectUp() },
             onMoveDown: { viewModel.selectDown() }
         ))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("窗口切换面板")
-        .accessibilityHint("使用 Tab 键导航，按 Enter 切换窗口，按 Escape 退出")
+        .accessibilityLabel(L10n.text("窗口切换面板"))
+        .accessibilityHint(L10n.text("使用 Tab 键导航，按 Enter 切换窗口，按 L 打开布局面板，按 Escape 退出"))
+    }
+
+    private func openLayoutPanel() {
+        guard let selectedWindow = viewModel.selectedWindow else { return }
+        onOpenLayout(selectedWindow)
     }
 
     // MARK: - 窗口网格
@@ -222,9 +274,7 @@ struct SwitchPanelView: View {
                                     isSelected: window.id == viewModel.selectedWindowID,
                                     previewImage: viewModel.previewImages[window.id],
                                     onSelect: {
-                                        // 同时设置索引和窗口 ID，确保同步
-                                        viewModel.selectedWindowID = window.id
-                                        viewModel.selectedIndex = index
+                                        viewModel.selectWindow(at: index)
                                     },
                                     onActivate: {
                                         // 直接通过窗口 ID 激活，确保准确性
@@ -258,7 +308,7 @@ struct SwitchPanelView: View {
             Image(systemName: "rectangle.on.rectangle.slash")
                 .font(.system(size: 36))
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
-            Text("没有找到窗口")
+            Text(L10n.text("没有找到窗口"))
                 .font(.system(size: 14))
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
         }
@@ -300,6 +350,7 @@ struct KeyEventHandler: NSViewRepresentable {
     let onPrev: () -> Void
     let onConfirm: () -> Void
     let onDismiss: () -> Void
+    var onOpenActions: (() -> Void)? = nil
     var onSelectIndex: ((Int) -> Void)? = nil
     var onMoveUp: (() -> Void)? = nil    // 上方向键
     var onMoveDown: (() -> Void)? = nil  // 下方向键
@@ -310,6 +361,7 @@ struct KeyEventHandler: NSViewRepresentable {
         view.onPrev = onPrev
         view.onConfirm = onConfirm
         view.onDismiss = onDismiss
+        view.onOpenActions = onOpenActions
         view.onSelectIndex = onSelectIndex
         view.onMoveUp = onMoveUp
         view.onMoveDown = onMoveDown
@@ -321,6 +373,7 @@ struct KeyEventHandler: NSViewRepresentable {
         nsView.onPrev = onPrev
         nsView.onConfirm = onConfirm
         nsView.onDismiss = onDismiss
+        nsView.onOpenActions = onOpenActions
         nsView.onSelectIndex = onSelectIndex
         nsView.onMoveUp = onMoveUp
         nsView.onMoveDown = onMoveDown
@@ -332,6 +385,7 @@ class KeyCatchView: NSView {
     var onPrev: (() -> Void)?
     var onConfirm: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onOpenActions: (() -> Void)?
     var onSelectIndex: ((Int) -> Void)?
     var onMoveUp: (() -> Void)?
     var onMoveDown: (() -> Void)?
@@ -347,6 +401,15 @@ class KeyCatchView: NSView {
             Logger.keyEvent("ESC", action: "按下")
             Logger.info("==> ESC pressed, hiding panel")
             onDismiss?()
+            return
+        }
+
+        // L - 打开当前选中窗口的布局面板
+        let modifiers = KeyChord.carbonModifiers(from: event.modifierFlags)
+        let switchModifiers = ConfigManager.shared.config.hotKeys.switchModifiers
+        if event.keyCode == 37 && (modifiers == 0 || modifiers == switchModifiers) {
+            Logger.keyEvent("L", action: "打开窗口布局面板")
+            onOpenActions?()
             return
         }
 

@@ -7,7 +7,7 @@ final class PreviewGeneratorTests: XCTestCase {
     // MARK: - PreviewCache Actor 测试
 
     func testCacheStoreAndRetrieve() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let image = NSImage(size: NSSize(width: 100, height: 100))
         let windowID: CGWindowID = 42
         await cache.set(image, for: windowID)
@@ -17,13 +17,13 @@ final class PreviewGeneratorTests: XCTestCase {
     }
 
     func testCacheMissReturnsNil() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let result = await cache.get(for: 9999)
         XCTAssertNil(result, "未存储的 windowID 应返回 nil")
     }
 
     func testCacheClear() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let image = NSImage(size: NSSize(width: 100, height: 100))
         await cache.set(image, for: 1)
         await cache.set(image, for: 2)
@@ -37,7 +37,7 @@ final class PreviewGeneratorTests: XCTestCase {
     }
 
     func testCacheEvictsWhenFull() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let image = NSImage(size: NSSize(width: 10, height: 10))
 
         // 写入超过 maxSize(80) 个条目
@@ -66,6 +66,46 @@ final class PreviewGeneratorTests: XCTestCase {
         )
         // 无效窗口 ID 应返回 nil，不崩溃
         XCTAssertNil(result, "无效窗口应返回 nil 预览")
+    }
+
+    func testConcurrentInvalidRealtimePreviewsDoNotExhaustWorkerThreads() async {
+        let generators = (0..<20).map { _ in PreviewGenerator() }
+        let requestCount = 100
+        let windows = (0..<requestCount).map {
+            makeInvalidWindow(id: CGWindowID(900_000 + $0))
+        }
+
+        let nilResultCount = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
+            for index in 0..<requestCount {
+                group.addTask {
+                    let generator = generators[index % generators.count]
+                    let image = await generator.generateRealtimePreview(
+                        for: windows[index],
+                        size: CGSize(width: 320, height: 240)
+                    )
+                    return image == nil
+                }
+            }
+
+            var count = 0
+            for await isNil in group where isNil {
+                count += 1
+            }
+            return count
+        }
+
+        XCTAssertEqual(nilResultCount, requestCount, "无效窗口并发预览应全部快速返回 nil")
+    }
+
+    func testSwitchPanelPreviewPolicyLoadsEveryWindowWithoutTruncation() {
+        let windows = (0..<37).map {
+            makeInvalidWindow(id: CGWindowID(900_000 + $0))
+        }
+
+        let windowsToLoad = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: windows)
+
+        XCTAssertEqual(windowsToLoad.map(\.id), windows.map(\.id))
+        XCTAssertEqual(windowsToLoad.count, 37, "切换面板必须为全部窗口加载缩略图")
     }
 
     func testGeneratePreviewSize() async {
@@ -124,9 +164,9 @@ final class PreviewGeneratorTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeInvalidWindow() -> WindowModel {
+    private func makeInvalidWindow(id: CGWindowID = 999_999) -> WindowModel {
         WindowModel(
-            id: 999999,
+            id: id,
             appName: "InvalidApp",
             bundleIdentifier: "com.invalid.app",
             windowTitle: "Invalid Window",

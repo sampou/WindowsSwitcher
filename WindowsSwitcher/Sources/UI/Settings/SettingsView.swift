@@ -35,6 +35,7 @@ struct SettingsView: View {
             minHeight: ResponsiveSize.minWindowSize.height
         )
         .preferredColorScheme(themeManager.effectiveColorScheme)
+        .environment(\.locale, L10n.locale)
         // 保存失败横幅
         .overlay(alignment: .top) {
             if let error = config.saveError {
@@ -47,10 +48,10 @@ struct SettingsView: View {
             isPresented: $showResetConfirm,
             titleVisibility: .visible
         ) {
-            Button("恢复默认", role: .destructive) { config.reset() }
-            Button("取消", role: .cancel) {}
+            Button(L10n.text("恢复默认"), role: .destructive) { config.reset() }
+            Button(L10n.text("取消"), role: .cancel) {}
         } message: {
-            Text("所有设置将恢复为出厂默认值，此操作不可撤销。")
+            Text(L10n.text("所有设置将恢复为出厂默认值，此操作不可撤销。"))
         }
     }
 
@@ -88,7 +89,7 @@ struct SettingsView: View {
 
             // 版本信息
             VStack(alignment: .leading, spacing: 2) {
-                Text("版本 \(appVersion)")
+                Text(L10n.format("版本 %@", appVersion))
                     .font(FontSystem.captionSmall)
                     .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
                 Text("Build \(buildNumber)")
@@ -112,7 +113,7 @@ struct SettingsView: View {
                     .font(.system(size: 14))
                     .frame(width: 20)
 
-                Text(group.rawValue)
+                Text(group.displayName)
                     .font(FontSystem.bodyMedium)
                     .lineLimit(1)
 
@@ -141,7 +142,7 @@ struct SettingsView: View {
             // 页面标题
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedGroup.rawValue)
+                    Text(selectedGroup.displayName)
                         .font(FontSystem.titleLarge)
                     Text(selectedGroup.description)
                         .font(FontSystem.captionMedium)
@@ -153,7 +154,7 @@ struct SettingsView: View {
                 Button {
                     showResetConfirm = true
                 } label: {
-                    Label("恢复默认", systemImage: "arrow.counterclockwise")
+                    Label(L10n.text("恢复默认"), systemImage: "arrow.counterclockwise")
                         .font(FontSystem.buttonSmall)
                 }
                 .buttonStyle(.plain)
@@ -281,7 +282,7 @@ struct GeneralSettingsView: View {
                             }
                             .buttonStyle(.plain)
                             .focusable(false)
-                            .help("检查更新")
+                            .help(L10n.text("检查更新"))
                         }
                     }
 
@@ -314,12 +315,12 @@ struct GeneralSettingsView: View {
 
                     // 当前版本信息
                     HStack {
-                        Text("当前版本: v\(updateService.currentVersion) (\(updateService.currentBuildNumber))")
+                        Text(L10n.format("当前版本: v%@ (%@)", updateService.currentVersion, String(updateService.currentBuildNumber)))
                             .font(FontSystem.captionMedium)
                             .foregroundStyle(DesignTokens.Colors.secondaryLabel)
 
                         if let latest = updateService.latestVersion, updateService.updateAvailable {
-                            Text("• 最新版本: v\(latest.version)")
+                            Text(L10n.format("• 最新版本: v%@", latest.version))
                                 .font(FontSystem.captionMedium)
                                 .foregroundStyle(.green)
                         }
@@ -330,13 +331,13 @@ struct GeneralSettingsView: View {
             // 主题设置
             SettingsSection(title: "主题", icon: "paintbrush") {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Text("外观模式")
+                    Text(L10n.text("外观模式"))
                         .font(FontSystem.bodyMedium)
 
                     Picker("", selection: $config.config.appearance.theme) {
-                        Text("浅色").tag(AppTheme.light)
-                        Text("深色").tag(AppTheme.dark)
-                        Text("跟随系统").tag(AppTheme.auto)
+                        Text(L10n.text("浅色")).tag(AppTheme.light)
+                        Text(L10n.text("深色")).tag(AppTheme.dark)
+                        Text(L10n.text("跟随系统")).tag(AppTheme.auto)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -407,13 +408,13 @@ struct PreviewSettingsView: View {
             // 预览大小
             SettingsSection(title: "预览大小", icon: "rectangle.expand.vertical") {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Text("预览窗口大小")
+                    Text(L10n.text("预览窗口大小"))
                         .font(FontSystem.bodyMedium)
 
                     Picker("", selection: $config.config.appearance.previewSize) {
-                        Text("小").tag(PreviewSize.small)
-                        Text("中").tag(PreviewSize.medium)
-                        Text("大").tag(PreviewSize.large)
+                        Text(L10n.text("小")).tag(PreviewSize.small)
+                        Text(L10n.text("中")).tag(PreviewSize.medium)
+                        Text(L10n.text("大")).tag(PreviewSize.large)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -421,16 +422,16 @@ struct PreviewSettingsView: View {
 
                 // 每行列数
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Text("每行列数")
+                    Text(L10n.text("每行列数"))
                         .font(FontSystem.bodyMedium)
 
                     Picker("", selection: $config.config.appearance.switcherColumns) {
-                        Text("自动").tag(0)
-                        Text("3列").tag(3)
-                        Text("4列").tag(4)
-                        Text("5列").tag(5)
-                        Text("6列").tag(6)
-                        Text("8列").tag(8)
+                        Text(L10n.text("自动")).tag(0)
+                        Text(L10n.text("3列")).tag(3)
+                        Text(L10n.text("4列")).tag(4)
+                        Text(L10n.text("5列")).tag(5)
+                        Text(L10n.text("6列")).tag(6)
+                        Text(L10n.text("8列")).tag(8)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -518,7 +519,7 @@ struct DockSettingsView: View {
                 SettingsSection(title: "间距设置", icon: "arrow.up.and.down") {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                         HStack {
-                            Text("垂直间距")
+                            Text(L10n.text("垂直间距"))
                                 .font(FontSystem.bodyMedium)
                             Spacer()
                             if config.config.dockPreview.verticalSpacing > 0 {
@@ -526,7 +527,7 @@ struct DockSettingsView: View {
                                     .font(FontSystem.bodySmall)
                                     .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                             } else {
-                                Text("自动")
+                                Text(L10n.text("自动"))
                                     .font(FontSystem.bodySmall)
                                     .foregroundStyle(DesignTokens.Colors.accent)
                             }
@@ -542,14 +543,14 @@ struct DockSettingsView: View {
                         )
                         .tint(DesignTokens.Colors.accent)
 
-                        Text("设置为 0 时自动根据屏幕分辨率计算最佳间距")
+                        Text(L10n.text("设置为 0 时自动根据屏幕分辨率计算最佳间距"))
                             .font(FontSystem.captionSmall)
                             .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
                     }
 
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                         HStack {
-                            Text("水平间距")
+                            Text(L10n.text("水平间距"))
                                 .font(FontSystem.bodyMedium)
                             Spacer()
                             if config.config.dockPreview.horizontalSpacing > 0 {
@@ -557,7 +558,7 @@ struct DockSettingsView: View {
                                     .font(FontSystem.bodySmall)
                                     .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                             } else {
-                                Text("自动")
+                                Text(L10n.text("自动"))
                                     .font(FontSystem.bodySmall)
                                     .foregroundStyle(DesignTokens.Colors.accent)
                             }
@@ -573,7 +574,7 @@ struct DockSettingsView: View {
                         )
                         .tint(DesignTokens.Colors.accent)
 
-                        Text("用于 Dock 位于左侧或右侧时的间距")
+                        Text(L10n.text("用于 Dock 位于左侧或右侧时的间距"))
                             .font(FontSystem.captionSmall)
                             .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
                     }
@@ -604,7 +605,7 @@ struct HotKeySettingsView: View {
             // 窗口切换快捷键
             SettingsSection(title: "窗口切换", icon: "rectangle.on.rectangle") {
                 VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                    Text("显示切换器")
+                    Text(L10n.text("显示切换器"))
                         .font(FontSystem.bodyMedium)
 
                     HotKeyRecorder(
@@ -627,7 +628,7 @@ struct HotKeySettingsView: View {
                     )
                 }
 
-                Text("反向切换：按住 Shift 即可反向切换，无需单独设置")
+                Text(L10n.text("反向切换：按住 Shift 即可反向切换，无需单独设置"))
                     .font(FontSystem.captionMedium)
                     .foregroundStyle(DesignTokens.Colors.secondaryLabel)
             }
@@ -642,7 +643,7 @@ struct HotKeySettingsView: View {
 
                 if config.config.hotKeys.appSwitchEnabled {
                     VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                        Text("同应用窗口切换快捷键")
+                        Text(L10n.text("同应用窗口切换快捷键"))
                             .font(FontSystem.bodyMedium)
 
                         HotKeyRecorder(
@@ -665,9 +666,77 @@ struct HotKeySettingsView: View {
                         )
                     }
 
-                    Text("按下快捷键后，切换面板将只显示当前应用的窗口")
+                    Text(L10n.text("按下快捷键后，切换面板将只显示当前应用的窗口"))
                         .font(FontSystem.captionMedium)
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                }
+            }
+
+            SettingsSection(title: "语言", icon: "globe") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                    Text(L10n.text("应用语言"))
+                        .font(FontSystem.bodyMedium)
+
+                    Picker("", selection: $config.config.appearance.language) {
+                        Text(L10n.text("跟随系统")).tag(AppLanguage.system)
+                        Text(L10n.text("简体中文")).tag(AppLanguage.zhHans)
+                        Text(L10n.text("English")).tag(AppLanguage.en)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    Text(L10n.text("切换后立即应用；已经打开的独立面板请关闭后重新打开。"))
+                        .font(FontSystem.captionMedium)
+                        .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                }
+            }
+
+            SettingsSection(title: "窗口布局", icon: "rectangle.split.1x2") {
+                SettingsToggle(
+                    title: "启用窗口布局全局快捷键",
+                    description: "关闭后保留所有组合键设置，但不再全局注册",
+                    isOn: $config.config.hotKeys.windowLayout.isEnabled
+                )
+
+                VStack(spacing: 0) {
+                    LayoutHotKeyEditor(
+                        title: "打开布局面板",
+                        symbolName: "rectangle.on.rectangle",
+                        chord: Binding(
+                            get: { config.config.hotKeys.windowLayout.openPanel },
+                            set: { config.config.hotKeys.windowLayout.openPanel = $0 }
+                        ),
+                        defaultChord: WindowLayoutHotKeyDefaults.openPanel
+                    )
+
+                    ForEach(WindowLayoutActionCatalog.actions) { action in
+                        Divider()
+
+                        LayoutHotKeyEditor(
+                            title: action.title,
+                            symbolName: action.symbolName,
+                            chord: Binding(
+                                get: { config.config.hotKeys.windowLayout.chord(for: action.id) },
+                                set: { config.config.hotKeys.windowLayout.setChord($0, for: action.id) }
+                            ),
+                            defaultChord: WindowLayoutHotKeyDefaults.commands[action.id.rawValue]
+                                ?? KeyChord(keyCode: 0, modifiers: WindowLayoutHotKeyDefaults.controlOption)
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let message = layoutConflictMessage {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(FontSystem.captionMedium)
+                        .foregroundStyle(.red)
+                }
+
+                HStack {
+                    Spacer()
+                    Button(L10n.text("全部恢复默认")) {
+                        config.config.hotKeys.windowLayout.resetToDefaults()
+                    }
                 }
             }
 
@@ -687,19 +756,19 @@ struct HotKeySettingsView: View {
             currentConflict?.isUnoverridable == true ? "快捷键无法使用" : "快捷键冲突",
             isPresented: $showConflictAlert
         ) {
-            Button("打开系统设置") {
+            Button(L10n.text("打开系统设置")) {
                 openSystemKeyboardSettings()
                 cancelPendingHotKey()
             }
             if currentConflict?.isUnoverridable != true {
-                Button("确定", role: .destructive) {
+                Button(L10n.text("确定"), role: .destructive) {
                     currentConflict = nil
                     pendingHotKeyType = nil
                     previousKeyCode = nil
                     previousModifiers = nil
                 }
             }
-            Button("取消", role: .cancel) {
+            Button(L10n.text("取消"), role: .cancel) {
                 cancelPendingHotKey()
             }
         } message: {
@@ -707,10 +776,10 @@ struct HotKeySettingsView: View {
                 if conflict.isUnoverridable {
                     Text("「\(conflict.hotKeyDisplay)」是 macOS 系统级快捷键，应用程序无法覆盖。\n\n请选择其他快捷键组合。")
                 } else {
-                    Text("当前设置的组合键「\(conflict.hotKeyDisplay)」与系统快捷键冲突：\(conflict.description)\n\n确定要覆盖系统快捷键吗？")
+                    Text(L10n.format("当前设置的组合键「%@」与系统快捷键冲突：%@\n\n确定要覆盖系统快捷键吗？", conflict.hotKeyDisplay, conflict.description))
                 }
             } else {
-                Text("当前设置的组合键与系统快捷键冲突")
+                Text(L10n.text("当前设置的组合键与系统快捷键冲突"))
             }
         }
         .onChange(of: config.config.hotKeys.switchKeyCode) { _ in checkConflicts() }
@@ -749,6 +818,30 @@ struct HotKeySettingsView: View {
         conflictWarning = nil
     }
 
+    private var layoutConflictMessage: String? {
+        var owners: [KeyChord: String] = [:]
+        let existing: [(String, KeyChord)] = [
+            ("显示切换器", .init(keyCode: config.config.hotKeys.switchKeyCode, modifiers: config.config.hotKeys.switchModifiers)),
+            ("同应用窗口切换", .init(keyCode: config.config.hotKeys.appSwitchKeyCode, modifiers: config.config.hotKeys.appSwitchModifiers))
+        ]
+        for (name, chord) in existing { owners[chord] = name }
+
+        var entries: [(String, KeyChord)] = []
+        if let chord = config.config.hotKeys.windowLayout.openPanel {
+            entries.append(("打开布局面板", chord))
+        }
+        entries += WindowLayoutActionCatalog.actions.compactMap { action in
+            config.config.hotKeys.windowLayout.chord(for: action.id).map { (action.title, $0) }
+        }
+        for (name, chord) in entries {
+            if let owner = owners[chord] {
+                return "“\(name)”与“\(owner)”使用了同一快捷键 \(chord.displayText)"
+            }
+            owners[chord] = name
+        }
+        return nil
+    }
+
     private func openSystemKeyboardSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts") {
             NSWorkspace.shared.open(url)
@@ -772,6 +865,63 @@ struct HotKeySettingsView: View {
     }
 }
 
+/// 设置页中的单个窗口布局快捷键编辑器。
+private struct LayoutHotKeyEditor: View {
+    let title: String
+    let symbolName: String
+    @Binding var chord: KeyChord?
+    let defaultChord: KeyChord
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                if chord != nil {
+                    HotKeyRecorder(
+                        keyCode: Binding(
+                            get: { chord?.keyCode ?? defaultChord.keyCode },
+                            set: { chord = KeyChord(keyCode: $0, modifiers: chord?.modifiers ?? defaultChord.modifiers) }
+                        ),
+                        modifiers: Binding(
+                            get: { chord?.modifiers ?? defaultChord.modifiers },
+                            set: { chord = KeyChord(keyCode: chord?.keyCode ?? defaultChord.keyCode, modifiers: $0) }
+                        ),
+                        placeholder: defaultChord.displayText,
+                        onReset: { chord = defaultChord }
+                    )
+                    HStack {
+                        Spacer()
+                        Button(L10n.text("清除快捷键"), role: .destructive) { chord = nil }
+                            .buttonStyle(.plain)
+                    }
+                } else {
+                    Button(L10n.format("设置为默认快捷键 %@", defaultChord.displayText)) { chord = defaultChord }
+                }
+            }
+            .padding(.leading, 30)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+        } label: {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                Image(systemName: symbolName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(DesignTokens.Colors.accent)
+                    .frame(width: 20, alignment: .center)
+
+                Text(L10n.text(title))
+                    .font(FontSystem.bodyMedium)
+                    .lineLimit(1)
+
+                Spacer(minLength: DesignTokens.Spacing.lg)
+
+                WindowLayoutShortcutBadge(chord: chord)
+            }
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // ============================================
 // 关于页面
 // ============================================
@@ -789,10 +939,10 @@ struct AboutSettingsView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Windows Switcher")
                             .font(FontSystem.titleMedium)
-                        Text("版本 \(appVersion) (\(buildNumber))")
+                        Text(L10n.format("版本 %@ (%@)", appVersion, buildNumber))
                             .font(FontSystem.bodyMedium)
                             .foregroundStyle(DesignTokens.Colors.secondaryLabel)
-                        Text("仿 Windows Alt+Tab 窗口切换器")
+                        Text(L10n.text("仿 Windows Alt+Tab 窗口切换器"))
                             .font(FontSystem.captionMedium)
                             .foregroundStyle(DesignTokens.Colors.tertiaryLabel)
                     }
@@ -851,7 +1001,7 @@ struct SettingsSection<Content: View>: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-                Text(title)
+                Text(L10n.text(title))
                     .font(FontSystem.titleSmall)
             }
 
@@ -879,7 +1029,7 @@ struct SettingsToggle: View {
                 Text(title)
                     .font(FontSystem.bodyMedium)
                 if let description = description {
-                    Text(description)
+                    Text(L10n.text(description))
                         .font(FontSystem.captionMedium)
                         .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                 }
@@ -904,7 +1054,7 @@ struct SettingsSlider: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
             HStack {
-                Text(title)
+                Text(L10n.text(title))
                     .font(FontSystem.bodyMedium)
                 Spacer()
                 Text(String(format: "%.0f \(unit)", value * multiplier))
@@ -934,7 +1084,7 @@ struct InstructionRow: View {
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
                 .frame(width: 16, alignment: .leading)
 
-            Text(text)
+            Text(L10n.text(text))
                 .font(FontSystem.captionMedium)
                 .foregroundStyle(DesignTokens.Colors.secondaryLabel)
         }
@@ -954,7 +1104,7 @@ struct RequirementRow: View {
             Image(systemName: icon)
                 .font(.system(size: 12))
                 .foregroundStyle(.green)
-            Text(text)
+            Text(L10n.text(text))
                 .font(FontSystem.captionMedium)
         }
     }
@@ -973,7 +1123,7 @@ struct FeatureRow: View {
             Image(systemName: icon)
                 .font(.system(size: 12))
                 .foregroundStyle(DesignTokens.Colors.accent)
-            Text(text)
+            Text(L10n.text(text))
                 .font(FontSystem.captionMedium)
         }
     }
@@ -1078,7 +1228,7 @@ struct HotKeyRecorder: View {
 
             // 主键选择
             HStack(spacing: 8) {
-                Text("主键:")
+                Text(L10n.text("主键:"))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
 
@@ -1094,21 +1244,16 @@ struct HotKeyRecorder: View {
                     HStack(spacing: 2) {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 10))
-                        Text("重置")
+                        Text(L10n.text("重置"))
                             .font(.system(size: 10))
                     }
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .help("恢复默认")
+                .help(L10n.text("恢复默认"))
 
                 // 显示当前快捷键
-                Text(HotKeyFormatter.format(keyCode: keyCode, modifiers: modifiers))
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                WindowLayoutShortcutBadge(keyCode: keyCode, modifiers: modifiers)
             }
         }
         .padding(8)
@@ -1171,6 +1316,10 @@ struct KeyPicker: View {
         ("Tab", UInt32(kVK_Tab)),
         ("Space", UInt32(kVK_Space)),
         ("Return", UInt32(kVK_Return)),
+        ("←", UInt32(kVK_LeftArrow)),
+        ("→", UInt32(kVK_RightArrow)),
+        ("↑", UInt32(kVK_UpArrow)),
+        ("↓", UInt32(kVK_DownArrow)),
         ("` (Grave)", UInt32(kVK_ANSI_Grave)),
         ("A", UInt32(kVK_ANSI_A)),
         ("B", UInt32(kVK_ANSI_B)),

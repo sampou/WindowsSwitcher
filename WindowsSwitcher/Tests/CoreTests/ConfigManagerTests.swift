@@ -1,5 +1,7 @@
 import XCTest
 import Combine
+import AppKit
+import Carbon
 @testable import WindowsSwitcher
 
 // MARK: - T-039 ConfigManager 完整测试
@@ -130,6 +132,23 @@ final class ConfigManagerTests: XCTestCase {
 
 final class ConfigModelSubstructTests: XCTestCase {
 
+    func testLayoutChordConvertsToNativeMenuShortcut() {
+        let chord = KeyChord(
+            keyCode: UInt32(kVK_LeftArrow),
+            modifiers: UInt32(controlKey | optionKey | cmdKey)
+        )
+
+        XCTAssertEqual(chord.menuKeyEquivalent, UnicodeScalar(NSLeftArrowFunctionKey).map(String.init))
+        XCTAssertEqual(chord.menuModifierMask, [.control, .option, .command])
+    }
+
+    func testUnknownKeyCodeOmitsNativeMenuShortcut() {
+        let chord = KeyChord(keyCode: UInt32.max, modifiers: UInt32(controlKey))
+
+        XCTAssertNil(chord.menuKeyEquivalent)
+        XCTAssertEqual(chord.menuModifierMask, [.control])
+    }
+
     func testHotKeyConfigDefaults() {
         let hk = HotKeyConfig()
         XCTAssertEqual(hk.switchKeyCode, 48)
@@ -137,6 +156,35 @@ final class ConfigModelSubstructTests: XCTestCase {
         XCTAssertEqual(hk.reverseSwitchModifiers, 2560)
         XCTAssertEqual(hk.appSwitchKeyCode, 50)
         XCTAssertEqual(hk.appSwitchModifiers, 2048)
+        XCTAssertTrue(hk.windowLayout.isEnabled)
+        XCTAssertEqual(hk.windowLayout.openPanel, WindowLayoutHotKeyDefaults.openPanel)
+        XCTAssertEqual(hk.windowLayout.commands.count, 12)
+    }
+
+    func testOldHotKeyJSONInjectsWindowLayoutDefaults() throws {
+        let json = """
+        {
+          "switchKeyCode": 48,
+          "switchModifiers": 2048,
+          "appSwitchKeyCode": 50,
+          "appSwitchModifiers": 2048
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(HotKeyConfig.self, from: json)
+
+        XCTAssertEqual(decoded.windowLayout, WindowLayoutHotKeyConfig())
+    }
+
+    func testClearedLayoutShortcutRemainsClearedAfterRoundTrip() throws {
+        var value = WindowLayoutHotKeyConfig()
+        value.setChord(nil, for: .leftHalf)
+        let data = try JSONEncoder().encode(value)
+
+        let decoded = try JSONDecoder().decode(WindowLayoutHotKeyConfig.self, from: data)
+
+        XCTAssertNil(decoded.chord(for: .leftHalf))
+        XCTAssertEqual(decoded.chord(for: .rightHalf), value.chord(for: .rightHalf))
     }
 
     func testAppearanceConfigDefaults() {

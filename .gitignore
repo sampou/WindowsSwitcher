@@ -8,6 +8,8 @@
 build/
 DerivedData/
 *.build/
+.build-release.lock/
+.release-logs/
 
 # Swift Package Manager
 .build/

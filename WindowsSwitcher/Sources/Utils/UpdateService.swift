@@ -211,7 +211,7 @@ class UpdateService: ObservableObject {
         guard let url = URL(string: urlString) else {
             Logger.operation("版本检查", detail: "URL 无效", result: "失败")
             await MainActor.run {
-                self.errorMessage = "未配置版本检查地址"
+                self.errorMessage = L10n.text("未配置版本检查地址")
                 self.updateAvailable = false
                 self.isChecking = false
             }
@@ -240,7 +240,7 @@ class UpdateService: ObservableObject {
 
                 if httpResponse.statusCode == 403 {
                     // API 速率限制
-                    let errorMessage = "GitHub API 速率限制，请稍后再试或配置 GitHub Token"
+                    let errorMessage = L10n.text("GitHub API 速率限制，请稍后再试或配置 GitHub Token")
                     Logger.operation("版本检查", detail: "速率限制", result: "失败")
                     await MainActor.run {
                         self.errorMessage = errorMessage
@@ -252,7 +252,7 @@ class UpdateService: ObservableObject {
                 if httpResponse.statusCode != 200 {
                     Logger.operation("版本检查", detail: "HTTP 错误: \(httpResponse.statusCode)", result: "失败")
                     await MainActor.run {
-                        self.errorMessage = "服务器返回错误: HTTP \(httpResponse.statusCode)"
+                    self.errorMessage = L10n.format("服务器返回错误: HTTP %@", String(httpResponse.statusCode))
                         self.isChecking = false
                     }
                     return
@@ -266,7 +266,7 @@ class UpdateService: ObservableObject {
             guard let versionInfo = VersionInfo(from: giteeRelease) else {
                 Logger.operation("版本检查", detail: "解析版本信息失败", result: "失败")
                 await MainActor.run {
-                    self.errorMessage = "无法解析版本信息"
+                    self.errorMessage = L10n.text("无法解析版本信息")
                     self.isChecking = false
                 }
                 return
@@ -283,7 +283,7 @@ class UpdateService: ObservableObject {
         } catch {
             Logger.operation("版本检查", detail: "检查失败: \(error.localizedDescription)", result: "失败")
             await MainActor.run {
-                self.errorMessage = "检查更新失败: \(error.localizedDescription)"
+                self.errorMessage = L10n.format("检查更新失败: %@", error.localizedDescription)
                 self.isChecking = false
             }
         }
@@ -372,7 +372,7 @@ class UpdateService: ObservableObject {
             return localURL
         } catch {
             await MainActor.run {
-                self.errorMessage = "下载失败: \(error.localizedDescription)"
+                self.errorMessage = L10n.format("下载失败: %@", error.localizedDescription)
             }
             return nil
         }

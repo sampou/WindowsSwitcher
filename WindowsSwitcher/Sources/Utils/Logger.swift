@@ -7,6 +7,11 @@ extension Notification.Name {
 }
 
 class Logger {
+    enum WindowLifecycleEvent: String {
+        case created = "创建"
+        case destroyed = "销毁"
+    }
+
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.moeasy.windowsswitcher"
 
     private static let core = OSLog(subsystem: subsystem, category: "Core")
@@ -111,6 +116,63 @@ class Logger {
                                file: String = #file, function: String = #function, line: Int = #line) {
         operation("窗口激活", detail: windowInfo, result: result,
                   file: file, function: function, line: line)
+    }
+
+    /// 记录窗口创建事件。仅供低频生命周期事件使用，内容会写入 operations.log。
+    static func windowCreated(windowID: UInt32, appName: String, windowTitle: String,
+                              bundleIdentifier: String,
+                              file: String = #file, function: String = #function, line: Int = #line) {
+        operation(
+            "窗口生命周期",
+            detail: windowLifecycleDetail(
+                event: .created,
+                windowID: windowID,
+                appName: appName,
+                windowTitle: windowTitle,
+                bundleIdentifier: bundleIdentifier
+            ),
+            file: file,
+            function: function,
+            line: line
+        )
+    }
+
+    /// 记录窗口销毁事件。销毁事件仅保留窗口 ID，避免依赖已失效的窗口元数据。
+    static func windowDestroyed(windowID: UInt32,
+                                file: String = #file, function: String = #function, line: Int = #line) {
+        operation(
+            "窗口生命周期",
+            detail: windowLifecycleDetail(event: .destroyed, windowID: windowID),
+            file: file,
+            function: function,
+            line: line
+        )
+    }
+
+    /// 生成可确定性测试的窗口生命周期结构化字段。
+    static func windowLifecycleDetail(event: WindowLifecycleEvent, windowID: UInt32,
+                                      appName: String? = nil, windowTitle: String? = nil,
+                                      bundleIdentifier: String? = nil) -> String {
+        var fields = ["事件=\(event.rawValue)", "窗口ID=\(windowID)"]
+
+        if event == .created {
+            fields.append("应用=\(normalizedLifecycleValue(appName))")
+            fields.append("标题=\(normalizedLifecycleValue(windowTitle))")
+            fields.append("BundleID=\(normalizedLifecycleValue(bundleIdentifier))")
+        }
+
+        return fields.joined(separator: " | ")
+    }
+
+    private static func normalizedLifecycleValue(_ value: String?) -> String {
+        guard let value else { return "未知" }
+
+        let normalized = value
+            .replacingOccurrences(of: "|", with: "／")
+            .components(separatedBy: .newlines)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? "未知" : normalized
     }
 
     /// 记录修饰键状态

@@ -1,6 +1,22 @@
 import SwiftUI
 import Combine
 
+struct SameAppSwitchSession: Equatable {
+    let bundleIdentifier: String
+    var windowIDs: [CGWindowID]
+    var selectedIndex: Int
+}
+
+/// 切换面板缩略图加载策略。
+///
+/// 面板中的每个窗口都必须进入缩略图加载队列；并发上限由 `PreviewGenerator`
+/// 统一控制，不能在界面层截断窗口集合，否则排在后面的窗口会永久显示占位图。
+enum SwitchPanelPreviewLoadPolicy {
+    static func windowsToLoad(from windows: [WindowModel]) -> [WindowModel] {
+        windows
+    }
+}
+
 @MainActor
 class SwitchPanelViewModel: ObservableObject {
     @Published var windows: [WindowModel] = []
@@ -24,6 +40,8 @@ class SwitchPanelViewModel: ObservableObject {
     private let filterEngine: FilterEngine
     private let config = ConfigManager.shared
     private var cancellables = Set<AnyCancellable>()
+    private var activitySequence: [CGWindowID: UInt64] = [:]
+    private(set) var sameAppSwitchSession: SameAppSwitchSession?
 
     init(windows: [WindowModel],
          windowManager: WindowManagerProtocol,
@@ -32,6 +50,7 @@ class SwitchPanelViewModel: ObservableObject {
         self.windowManager = windowManager
         self.previewGenerator = previewGenerator
         self.filterEngine = filterEngine
+        self.activitySequence = windowManager.activitySequenceSnapshot()
         self.windows = windows
         // 初始化选中状态
         if !windows.isEmpty {
@@ -44,7 +63,10 @@ class SwitchPanelViewModel: ObservableObject {
     // 刷新窗口列表，确保显示最新的活动窗口
     func refreshWindows() {
         let fresh = windowManager.getAllWindows(forceRefresh: true)
-        updateWindows(fresh)
+        activitySequence = windowManager.activitySequenceSnapshot()
+        let scopedWindows = windowsScopedToActiveSession(fresh)
+        reconcileSameAppSwitchSession(with: scopedWindows)
+        updateWindows(scopedWindows)
     }
 
     // 更新窗口列表（已排序）
@@ -56,13 +78,18 @@ class SwitchPanelViewModel: ObservableObject {
         // 移除不存在的窗口的预览图，防止内存泄漏
         previewImages = previewImages.filter { freshIDs.contains($0.key) }
 
-        windows = newWindows
+        windows = windowsScopedToActiveSession(newWindows)
         applyFilter()
+
+        if sameAppSwitchSession != nil {
+            selectSessionWindow()
+            return
+        }
 
         // 尝试保持之前选中的窗口
         if let previousID = previousSelectedID,
            let newIndex = filteredWindows.firstIndex(where: { $0.id == previousID }) {
-            selectedIndex = newIndex
+            selectWindow(at: newIndex)
         }
     }
 
@@ -89,28 +116,105 @@ class SwitchPanelViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func switchWithinCurrentApp() {
-        guard let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName else { return }
-        let appWindows = windows.filter { $0.appName == frontApp }
-        guard appWindows.count > 1 else { return }
-        if let currentIdx = appWindows.firstIndex(where: { $0.id == selectedWindow?.id }) {
-            let nextIdx = (currentIdx + 1) % appWindows.count
-            if let globalIdx = filteredWindows.firstIndex(where: { $0.id == appWindows[nextIdx].id }) {
-                selectedIndex = globalIdx
-            }
+    static func initialSelectionIndex(
+        windowCount: Int,
+        reversed: Bool,
+        appSwitchMode: Bool,
+        defaultSelectSecond: Bool
+    ) -> Int {
+        guard windowCount > 1 else { return 0 }
+        if reversed { return windowCount - 1 }
+        if appSwitchMode { return 1 }
+        if defaultSelectSecond { return 1 }
+        return 0
+    }
+
+    /// 按当前过滤列表的索引设置唯一选中窗口，并同步稳定窗口 ID。
+    ///
+    /// 所有界面入口都通过该方法更新选择，避免列表刷新后高亮索引与最终激活 ID 分离。
+    @discardableResult
+    func selectWindow(at index: Int) -> WindowModel? {
+        guard filteredWindows.indices.contains(index) else {
+            selectedIndex = 0
+            selectedWindowID = nil
+            return nil
         }
+        let window = filteredWindows[index]
+        selectedIndex = index
+        selectedWindowID = window.id
+        return window
+    }
+
+    func beginSameAppSwitchSession(bundleIdentifier: String, initialIndex: Int) {
+        guard !bundleIdentifier.isEmpty else {
+            endSameAppSwitchSession()
+            return
+        }
+
+        let appWindows = windows.filter { $0.bundleIdentifier == bundleIdentifier }
+        let orderedWindows = WindowOrdering().sort(
+            appWindows,
+            by: .recent,
+            activitySequence: activitySequence
+        )
+        guard orderedWindows.count > 1 else {
+            endSameAppSwitchSession()
+            return
+        }
+
+        let clampedIndex = min(max(0, initialIndex), orderedWindows.count - 1)
+        sameAppSwitchSession = SameAppSwitchSession(
+            bundleIdentifier: bundleIdentifier,
+            windowIDs: orderedWindows.map(\.id),
+            selectedIndex: clampedIndex
+        )
+        windows = orderedWindows
+        applyFilter()
+        selectSessionWindow()
+    }
+
+    func advanceSameAppSwitchSession(reversed: Bool) {
+        guard var session = sameAppSwitchSession, session.windowIDs.count > 1 else { return }
+        let delta = reversed ? -1 : 1
+        session.selectedIndex = (session.selectedIndex + delta + session.windowIDs.count) % session.windowIDs.count
+        sameAppSwitchSession = session
+        selectSessionWindow()
+    }
+
+    func reconcileSameAppSwitchSession(with availableWindows: [WindowModel]) {
+        guard var session = sameAppSwitchSession else { return }
+        let availableIDs = Set(
+            availableWindows
+                .filter { $0.bundleIdentifier == session.bundleIdentifier }
+                .map(\.id)
+        )
+        let selectedID = session.windowIDs.indices.contains(session.selectedIndex)
+            ? session.windowIDs[session.selectedIndex]
+            : nil
+        session.windowIDs.removeAll { !availableIDs.contains($0) }
+
+        guard session.windowIDs.count > 1 else {
+            endSameAppSwitchSession()
+            return
+        }
+        if let selectedID, let index = session.windowIDs.firstIndex(of: selectedID) {
+            session.selectedIndex = index
+        } else {
+            session.selectedIndex = min(session.selectedIndex, session.windowIDs.count - 1)
+        }
+        sameAppSwitchSession = session
+    }
+
+    func endSameAppSwitchSession() {
+        sameAppSwitchSession = nil
+    }
+
+    func switchWithinCurrentApp() {
+        advanceSameAppSwitchSession(reversed: false)
     }
 
     func switchWithinCurrentAppReverse() {
-        guard let frontApp = NSWorkspace.shared.frontmostApplication?.localizedName else { return }
-        let appWindows = windows.filter { $0.appName == frontApp }
-        guard appWindows.count > 1 else { return }
-        if let currentIdx = appWindows.firstIndex(where: { $0.id == selectedWindow?.id }) {
-            let prevIdx = (currentIdx - 1 + appWindows.count) % appWindows.count
-            if let globalIdx = filteredWindows.firstIndex(where: { $0.id == appWindows[prevIdx].id }) {
-                selectedIndex = globalIdx
-            }
-        }
+        advanceSameAppSwitchSession(reversed: true)
     }
 
     func applyFilter() {
@@ -122,23 +226,47 @@ class SwitchPanelViewModel: ObservableObject {
             searchText: searchText,
             showOffScreen: config.config.behavior.showOffScreenWindows
         )
-        filteredWindows = filterEngine.filterAndSort(windows, criteria: criteria,
-                                                     order: config.config.behavior.sortOrder)
+        let sortedWindows = filterEngine.filterAndSort(
+            windows,
+            criteria: criteria,
+            order: config.config.behavior.sortOrder,
+            activitySequence: activitySequence
+        )
+        if let session = sameAppSwitchSession {
+            let sessionRank = Dictionary(uniqueKeysWithValues: session.windowIDs.enumerated().map { ($0.element, $0.offset) })
+            filteredWindows = sortedWindows.sorted {
+                (sessionRank[$0.id] ?? .max) < (sessionRank[$1.id] ?? .max)
+            }
+        } else {
+            filteredWindows = sortedWindows
+        }
 
         // 恢复选中状态：优先使用之前的窗口 ID
         if let prevID = previousSelectedID,
            let newIndex = filteredWindows.firstIndex(where: { $0.id == prevID }) {
-            selectedIndex = newIndex
-            selectedWindowID = prevID
+            selectWindow(at: newIndex)
         } else {
-            selectedIndex = min(selectedIndex, max(0, filteredWindows.count - 1))
-            // 更新 selectedWindowID
-            if filteredWindows.indices.contains(selectedIndex) {
-                selectedWindowID = filteredWindows[selectedIndex].id
-            }
+            selectWindow(at: min(selectedIndex, max(0, filteredWindows.count - 1)))
         }
 
         loadVisiblePreviews()
+    }
+
+    private func windowsScopedToActiveSession(_ candidateWindows: [WindowModel]) -> [WindowModel] {
+        guard let session = sameAppSwitchSession else { return candidateWindows }
+        let frozenWindowIDs = Set(session.windowIDs)
+        return candidateWindows.filter {
+            $0.bundleIdentifier == session.bundleIdentifier && frozenWindowIDs.contains($0.id)
+        }
+    }
+
+    private func selectSessionWindow() {
+        guard let session = sameAppSwitchSession,
+              session.windowIDs.indices.contains(session.selectedIndex) else { return }
+        let windowID = session.windowIDs[session.selectedIndex]
+        if let index = filteredWindows.firstIndex(where: { $0.id == windowID }) {
+            selectWindow(at: index)
+        }
     }
 
     // 记录当前选中窗口的应用（用于检测应用切换）
@@ -159,7 +287,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 操作日志：窗口选择
         Logger.windowSelect("Tab", windowInfo: "\(nextWindow.appName) - \(nextWindow.windowTitle)")
 
-        selectedIndex = nextIndex
+        selectWindow(at: nextIndex)
 
         // 刷新选中窗口的预览（实时获取最新内容）
         refreshSelectedWindowPreview()
@@ -174,7 +302,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 操作日志：窗口选择
         Logger.windowSelect("Shift+Tab", windowInfo: "\(prevWindow.appName) - \(prevWindow.windowTitle)")
 
-        selectedIndex = prevIndex
+        selectWindow(at: prevIndex)
 
         // 刷新选中窗口的预览（实时获取最新内容）
         refreshSelectedWindowPreview()
@@ -201,7 +329,7 @@ class SwitchPanelViewModel: ObservableObject {
 
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
-            selectedIndex = targetIndex
+            selectWindow(at: targetIndex)
             // 刷新选中窗口的预览（实时获取最新内容）
             refreshSelectedWindowPreview()
         }
@@ -229,7 +357,7 @@ class SwitchPanelViewModel: ObservableObject {
 
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
-            selectedIndex = targetIndex
+            selectWindow(at: targetIndex)
             // 刷新选中窗口的预览（实时获取最新内容）
             refreshSelectedWindowPreview()
         }
@@ -268,55 +396,12 @@ class SwitchPanelViewModel: ObservableObject {
         }
     }
 
-    /// 根据应用切换重新排列窗口顺序
-    /// 排列规则：
-    /// 1. 目标应用的窗口在最前（按活跃度降序）
-    /// 2. 原应用的其他窗口次之（按活跃度降序）
-    /// 3. 其他应用窗口最后（按活跃度降序）
-    private func rearrangeWindowsForAppSwitch(
-        from currentWindow: WindowModel,
-        to targetWindow: WindowModel,
-        in windows: [WindowModel]
-    ) -> [WindowModel] {
-        let targetAppBundleID = targetWindow.bundleIdentifier
-        let currentAppBundleID = currentWindow.bundleIdentifier
-
-        // 按应用分组
-        var targetAppWindows: [WindowModel] = []
-        var currentAppWindows: [WindowModel] = []
-        var otherAppWindows: [WindowModel] = []
-
-        for window in windows {
-            if window.bundleIdentifier == targetAppBundleID {
-                // 跳过目标窗口本身，避免重复
-                if window.id != targetWindow.id {
-                    targetAppWindows.append(window)
-                }
-            } else if window.bundleIdentifier == currentAppBundleID {
-                currentAppWindows.append(window)
-            } else {
-                otherAppWindows.append(window)
-            }
+    func activateSelected() {
+        // 同应用会话在提交激活前做一次最终协调，跳过会话期间已关闭的窗口。
+        if sameAppSwitchSession != nil {
+            refreshWindows()
         }
 
-        // 按活跃度排序（最近活跃的在前）
-        targetAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
-        currentAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
-        otherAppWindows.sort { $0.lastActiveTime > $1.lastActiveTime }
-
-        // 组合：新窗口 + 原应用窗口 + 其他应用窗口
-        var result: [WindowModel] = []
-        result.append(targetWindow)                    // 目标窗口在最前
-        result.append(contentsOf: targetAppWindows)   // 目标应用其他窗口
-        result.append(contentsOf: currentAppWindows)  // 原应用其他窗口
-        result.append(contentsOf: otherAppWindows)    // 其他应用窗口
-
-        Logger.debug("App switch: \(currentWindow.appName) -> \(targetWindow.appName), rearranged to \(result.count) windows")
-
-        return result
-    }
-
-    func activateSelected() {
         // 优先使用 selectedWindowID 查找，更可靠
         guard let window = selectedWindow else {
             Logger.warning("activateSelected: selectedWindow is nil")
@@ -366,9 +451,7 @@ class SwitchPanelViewModel: ObservableObject {
     private func refreshWindowsAfterDelay() {
         Task {
             try? await Task.sleep(nanoseconds: 50_000_000) // 50ms (从300ms减少，大幅提升响应速度)
-            let fresh = windowManager.getAllWindows(forceRefresh: true)
-            windows = fresh
-            applyFilter()
+            refreshWindows()
         }
     }
 
@@ -382,25 +465,26 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadVisiblePreviews() {
-        // 限制并发数量，避免 CPU 过载
-        let windowsToLoad = Array(filteredWindows.prefix(12))
+        // 全部可见窗口都必须进入加载队列；并发压力由 PreviewGenerator 内部控制。
+        let windowsToLoad = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: filteredWindows)
         let sizeConfig = config.config.appearance.previewSize.dimensions
         let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
+        let previewGenerator = previewGenerator
 
-        Task(priority: .userInitiated) {
+        Task(priority: .userInitiated) { [weak self] in
             await withTaskGroup(of: Void.self) { group in
                 for window in windowsToLoad {
                     group.addTask {
                         // 1. 立即显示缓存图（无论新旧，避免空白）
-                        if let cached = await self.previewGenerator.getCachedPreview(for: window.id) {
+                        if let cached = await previewGenerator.getCachedPreview(for: window.id) {
                             await MainActor.run {
-                                self.previewImages[window.id] = cached
+                                self?.previewImages[window.id] = cached
                             }
                         }
                         // 2. 异步强制生成最新截图，确保内容实时
-                        if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: previewSize) {
+                        if let image = await previewGenerator.generateRealtimePreview(for: window, size: previewSize) {
                             await MainActor.run {
-                                self.previewImages[window.id] = image
+                                self?.previewImages[window.id] = image
                             }
                         }
                     }
@@ -482,16 +566,14 @@ class SwitchPanelViewModel: ObservableObject {
             // 只预加载尚未在内存中的窗口
             guard previewImages[windowToPreload.id] == nil else { continue }
 
+            let previewGenerator = previewGenerator
+            let windowID = windowToPreload.id
             // 低优先级预加载（不阻塞主线程）
-            Task.detached(priority: .background) { [weak self] in
-                guard let self = self else { return }
-                
+            Task(priority: .background) { [weak self, previewGenerator, windowToPreload] in
                 let size = CGSize(width: 124, height: 70)  // 小尺寸预览
                 // PreviewGenerator 内部已包含缓存逻辑
-                if let img = await self.previewGenerator.generatePreview(for: windowToPreload, size: size) {
-                    await MainActor.run {
-                        self.previewImages[windowToPreload.id] = img
-                    }
+                if let img = await previewGenerator.generatePreview(for: windowToPreload, size: size) {
+                    self?.previewImages[windowID] = img
                 }
             }
         }

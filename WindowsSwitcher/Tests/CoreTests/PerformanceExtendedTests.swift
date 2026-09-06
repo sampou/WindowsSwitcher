@@ -78,7 +78,7 @@ final class PerformanceExtendedTests: XCTestCase {
     // MARK: - PreviewCache 读写性能
 
     func testPreviewCacheReadWritePerformance() async {
-        let cache = PreviewCache()
+        let cache = PreviewCache(persistsToDisk: false)
         let image = NSImage(size: NSSize(width: 124, height: 70))
         // 预热
         for i in 0..<10 { await cache.set(image, for: CGWindowID(i)) }

@@ -307,7 +307,7 @@ class DockEventMonitor: ObservableObject {
 
                         if iconRect.contains(axLocation) {
                             // 尝试多种方式获取 bundleID
-                            var bundleID: String? = cachedBundleID
+                            let bundleID: String? = cachedBundleID
 
                             if let bundleID = bundleID {
                                 // 转换回 macOS 屏幕坐标系

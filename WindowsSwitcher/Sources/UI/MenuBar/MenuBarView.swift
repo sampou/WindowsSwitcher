@@ -47,7 +47,7 @@ struct MenuBarView: View {
                 Image(systemName: icon)
                     .frame(width: 16)
                     .foregroundStyle(.secondary)
-                Text(title)
+                Text(L10n.text(title))
                     .font(.system(size: 13))
                 Spacer()
                 Text(shortcut)
