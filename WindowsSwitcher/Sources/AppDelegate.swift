@@ -1818,7 +1818,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     @objc private func showSwitcherFromMenu() {
-        Task { @MainActor in self.showSwitchPanel(focusSearchOnAppear: true) }
+        Task { @MainActor in self.showSwitchPanel() }
     }
 
     private func requestPermissions() {
@@ -2096,8 +2096,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     @MainActor
     func showSwitchPanel(
         reversed: Bool = false,
-        appSwitchMode: Bool = false,
-        focusSearchOnAppear: Bool = false
+        appSwitchMode: Bool = false
     ) {
         let startTime = CFAbsoluteTimeGetCurrent()
 
@@ -2223,7 +2222,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let t3 = CFAbsoluteTimeGetCurrent()
         let view = SwitchPanelView(
             viewModel: vm,
-            focusSearchOnAppear: focusSearchOnAppear,
             onOpenLayout: { [weak self] window in
                 self?.showActionPanel(for: window)
             },
@@ -2307,7 +2305,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             columnCount: columnCount,
             itemHeight: itemHeight,
             screenHeight: screenSize.height,
-            searchAreaHeight: SwitchPanelView.searchAreaHeight
+            toolbarAreaHeight: SwitchPanelView.toolbarAreaHeight
         )
 
         // 设置面板大小

@@ -1,19 +1,18 @@
 import XCTest
 @testable import WindowsSwitcher
 
-/// 搜索栏的 SwiftUI 挂载与绑定契约测试。
+/// 切换面板顶部操作区的 SwiftUI 挂载契约测试。
 ///
-/// 这些测试验证组件结构和 Binding 到 ViewModel 的连接，不模拟鼠标、键盘或系统焦点，
-/// 因此不属于真实 UI E2E 测试。
+/// 窗口搜索已经暂时下线；底层筛选引擎仍可独立测试，面板不得再挂载搜索输入控件。
 @MainActor
 final class SearchUIIntegrationTests: XCTestCase {
-    func testSharedPanelHeightIncludesSearchAreaForSingleRow() {
+    func testSharedPanelHeightIncludesToolbarForSingleRow() {
         let height = SwitchPanelLayout.panelHeight(
             windowCount: 4,
             columnCount: 4,
             itemHeight: 200,
             screenHeight: 1_000,
-            searchAreaHeight: SwitchPanelView.searchAreaHeight
+            toolbarAreaHeight: SwitchPanelView.toolbarAreaHeight
         )
 
         XCTAssertEqual(height, 292)
@@ -25,73 +24,44 @@ final class SearchUIIntegrationTests: XCTestCase {
             columnCount: 4,
             itemHeight: 100,
             screenHeight: 1_000,
-            searchAreaHeight: SwitchPanelView.searchAreaHeight
+            toolbarAreaHeight: SwitchPanelView.toolbarAreaHeight
         )
         let cappedHeight = SwitchPanelLayout.panelHeight(
             windowCount: 20,
             columnCount: 2,
             itemHeight: 200,
             screenHeight: 500,
-            searchAreaHeight: SwitchPanelView.searchAreaHeight
+            toolbarAreaHeight: SwitchPanelView.toolbarAreaHeight
         )
 
         XCTAssertEqual(uncappedHeight, 408)
         XCTAssertEqual(cappedHeight, 400)
     }
 
-    func testSharedPanelHeightKeepsEmptyStateAboveSearchAndBaseContentMinimum() {
+    func testSharedPanelHeightKeepsEmptyStateAboveToolbarAndBaseContentMinimum() {
         let height = SwitchPanelLayout.panelHeight(
             windowCount: 0,
             columnCount: 1,
             itemHeight: 40,
             screenHeight: 1_000,
-            searchAreaHeight: SwitchPanelView.searchAreaHeight
+            toolbarAreaHeight: SwitchPanelView.toolbarAreaHeight
         )
 
         XCTAssertGreaterThanOrEqual(
             height,
-            SwitchPanelView.searchAreaHeight
+            SwitchPanelView.toolbarAreaHeight
                 + SwitchPanelLayout.panelPadding * 2
                 + SwitchPanelLayout.bottomBarHeight
         )
         XCTAssertEqual(height, SwitchPanelLayout.defaultMinimumHeight)
     }
 
-    func testSearchBarExposesProductCopyAndAccessibilityContract() {
-        XCTAssertEqual(SearchBarView.defaultPlaceholder, "搜索应用、窗口或 Bundle ID...")
-        XCTAssertEqual(SearchBarView.searchAccessibilityLabel, "搜索窗口")
-        XCTAssertEqual(
-            SearchBarView.searchAccessibilityHint,
-            "输入应用名称、窗口标题或 Bundle Identifier 搜索"
-        )
-    }
-
-    func testSwitchPanelBodyMountsSearchBar() {
+    func testSwitchPanelBodyDoesNotMountSearchBar() {
         let panel = makePanel()
 
         let bodyType = String(reflecting: type(of: panel.body))
 
-        XCTAssertTrue(bodyType.contains("SearchBarView"), "切换面板必须实际挂载 SearchBarView")
-    }
-
-    func testPanelSearchBindingFiltersApplicationTitleAndBundleIdentifier() {
-        let panel = makePanel()
-        let binding = panel.searchTextBinding
-
-        XCTAssertEqual(binding.wrappedValue, "")
-        XCTAssertEqual(panel.viewModel.filteredWindows.count, 3, "空搜索应保留现有窗口集合")
-
-        binding.wrappedValue = "Atlas"
-        XCTAssertEqual(panel.viewModel.filteredWindows.map(\.id), [1])
-
-        binding.wrappedValue = "Quarterly Roadmap"
-        XCTAssertEqual(panel.viewModel.filteredWindows.map(\.id), [2])
-
-        binding.wrappedValue = "com.example.terminal"
-        XCTAssertEqual(panel.viewModel.filteredWindows.map(\.id), [3])
-
-        binding.wrappedValue = ""
-        XCTAssertEqual(panel.viewModel.filteredWindows.count, 3, "清空搜索应恢复原有窗口集合")
+        XCTAssertFalse(bodyType.contains("SearchBarView"), "窗口搜索下线期间，切换面板不得挂载 SearchBarView")
     }
 
     private func makePanel() -> SwitchPanelView {

@@ -66,7 +66,7 @@ enum SwitchPanelLayout {
         columnCount: Int,
         itemHeight: CGFloat,
         screenHeight: CGFloat,
-        searchAreaHeight: CGFloat
+        toolbarAreaHeight: CGFloat
     ) -> CGFloat {
         let safeColumnCount = max(1, columnCount)
         let rowCount = max(1, (windowCount + safeColumnCount - 1) / safeColumnCount)
@@ -74,14 +74,14 @@ enum SwitchPanelLayout {
             + itemVerticalSpacing
             + panelPadding * 2
             + bottomBarHeight
-            + searchAreaHeight
+            + toolbarAreaHeight
         let contentHeight = CGFloat(rowCount) * (itemHeight + itemVerticalSpacing)
             + panelPadding * 2
             + bottomBarHeight
-            + searchAreaHeight
+            + toolbarAreaHeight
         let baseMinimumHeight = max(
             defaultMinimumHeight,
-            panelPadding * 2 + bottomBarHeight + searchAreaHeight
+            panelPadding * 2 + bottomBarHeight + toolbarAreaHeight
         )
         let minimumHeight = (1...4).contains(windowCount) ? singleRowHeight : baseMinimumHeight
         let maximumHeight = screenHeight * 0.8
@@ -90,29 +90,21 @@ enum SwitchPanelLayout {
 }
 
 struct SwitchPanelView: View {
-    static let searchAreaHeight: CGFloat = 48
+    /// 顶部操作区仅保留窗口布局入口；窗口搜索已暂时下线。
+    static let toolbarAreaHeight: CGFloat = 48
 
     @ObservedObject var viewModel: SwitchPanelViewModel
     @ObservedObject private var configManager = ConfigManager.shared
     let onDismiss: () -> Void
     let onOpenLayout: (WindowModel) -> Void
-    let focusSearchOnAppear: Bool
-
     init(
         viewModel: SwitchPanelViewModel,
-        focusSearchOnAppear: Bool = false,
         onOpenLayout: @escaping (WindowModel) -> Void = { _ in },
         onDismiss: @escaping () -> Void
     ) {
         self.viewModel = viewModel
-        self.focusSearchOnAppear = focusSearchOnAppear
         self.onOpenLayout = onOpenLayout
         self.onDismiss = onDismiss
-    }
-
-    /// 搜索栏与 ViewModel 的唯一连接点，便于验证 UI 绑定契约。
-    var searchTextBinding: Binding<String> {
-        $viewModel.searchText
     }
 
     // 动态获取预览尺寸
@@ -192,7 +184,7 @@ struct SwitchPanelView: View {
             columnCount: columnCount,
             itemHeight: previewSize.itemDimensions.height,
             screenHeight: screenSize.height,
-            searchAreaHeight: Self.searchAreaHeight
+            toolbarAreaHeight: Self.toolbarAreaHeight
         )
     }
 
@@ -204,10 +196,7 @@ struct SwitchPanelView: View {
 
             VStack(spacing: 0) {
                 HStack(spacing: DesignTokens.Spacing.sm) {
-                    SearchBarView(
-                        text: searchTextBinding,
-                        requestsFocusOnAppear: focusSearchOnAppear
-                    )
+                    Spacer(minLength: 0)
 
                     Button(action: openLayoutPanel) {
                         Image(systemName: "rectangle.3.group")

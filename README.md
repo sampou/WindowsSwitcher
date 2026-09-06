@@ -23,7 +23,6 @@ Windows Switcher is a native macOS window switcher inspired by the Windows Alt+T
 
 - Press **Option+Tab** to open the switcher and preview all discovered windows.
 - Cycle forward with Tab, cycle backward with Shift+Tab, and release Option to activate the selected window.
-- Search by application name, window title, or bundle identifier.
 - Sort by most recently used, application name, window title, or application group.
 - Configure preview size and grid columns, and optionally include minimized or hidden windows.
 - Navigate with the keyboard or mouse while keeping the selected item visible.
