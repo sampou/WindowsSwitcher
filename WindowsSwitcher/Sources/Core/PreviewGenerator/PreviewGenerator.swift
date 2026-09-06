@@ -23,6 +23,12 @@ struct PreviewCacheConfig {
     static let maxConcurrentGeneration = 4
 }
 
+/// 背景预览的大图仅保留在内存中，避免将缩略图放大后显示模糊画面。
+private enum FullResolutionPreviewCacheConfig {
+    static let maxMemorySize = 12
+    static let refreshInterval: TimeInterval = 5
+}
+
 // MARK: - 预览缓存
 actor PreviewCache {
     private var memoryCache: [String: CachedEntry] = [:]
@@ -283,8 +289,31 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         return syncMemoryCache[windowID]
     }
 
+    /// 同步读取背景预览使用的全分辨率截图；身份不一致时拒绝复用，避免窗口 ID 回收后串图。
+    func getCachedFullResolutionPreviewSync(for window: WindowModel) -> NSImage? {
+        syncCacheLock.lock()
+        defer { syncCacheLock.unlock() }
+        guard let entry = fullResolutionSyncCache[window.id], entry.matches(window) else {
+            fullResolutionSyncCache.removeValue(forKey: window.id)
+            return nil
+        }
+        return entry.image
+    }
+
     /// 内存缓存镜像（供主线程同步快速读取，避免 actor 异步开销）
     private var syncMemoryCache: [CGWindowID: NSImage] = [:]
+    private struct FullResolutionCacheEntry {
+        let image: NSImage
+        let ownerPID: pid_t
+        let bundleIdentifier: String
+        let timestamp: Date
+
+        func matches(_ window: WindowModel) -> Bool {
+            ownerPID == window.ownerPID && bundleIdentifier == window.bundleIdentifier
+        }
+    }
+
+    private var fullResolutionSyncCache: [CGWindowID: FullResolutionCacheEntry] = [:]
     private let syncCacheLock = NSLock()
 
     /// 更新内存缓存镜像（线程安全）
@@ -301,10 +330,27 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         syncCacheLock.unlock()
     }
 
+    /// 更新全分辨率背景截图缓存，并限制大图数量以控制内存占用。
+    private func updateFullResolutionSyncCache(for window: WindowModel, image: NSImage) {
+        syncCacheLock.lock()
+        fullResolutionSyncCache[window.id] = FullResolutionCacheEntry(
+            image: image,
+            ownerPID: window.ownerPID,
+            bundleIdentifier: window.bundleIdentifier,
+            timestamp: Date()
+        )
+        while fullResolutionSyncCache.count > FullResolutionPreviewCacheConfig.maxMemorySize {
+            guard let firstKey = fullResolutionSyncCache.keys.first else { break }
+            fullResolutionSyncCache.removeValue(forKey: firstKey)
+        }
+        syncCacheLock.unlock()
+    }
+
     /// 移除同步镜像缓存中的单个条目
     private func removeSyncCache(windowID: CGWindowID) {
         syncCacheLock.lock()
         syncMemoryCache.removeValue(forKey: windowID)
+        fullResolutionSyncCache.removeValue(forKey: windowID)
         syncCacheLock.unlock()
     }
 
@@ -312,6 +358,7 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
     private func clearSyncCache() {
         syncCacheLock.lock()
         syncMemoryCache.removeAll()
+        fullResolutionSyncCache.removeAll()
         syncCacheLock.unlock()
     }
 
@@ -344,15 +391,67 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
     }
 
     /// 生成原始分辨率预览
-    func generateFullResolutionPreview(for window: WindowModel) async -> NSImage? {
+    func generateFullResolutionPreview(
+        for window: WindowModel,
+        priority: Operation.QueuePriority = .normal,
+        forceRefresh: Bool = false
+    ) async -> NSImage? {
         let windowID = window.id
+        if !forceRefresh, let cached = getCachedFullResolutionPreviewSync(for: window) {
+            return cached
+        }
         let windowFrame = window.frame
 
         return await withCheckedContinuation { continuation in
-            Self.generationQueue.addOperation {
+            let operation = BlockOperation {
                 let image = Self.captureWindowFullResolution(windowID, windowFrame: windowFrame)
+                if let image {
+                    self.updateFullResolutionSyncCache(for: window, image: image)
+                }
                 continuation.resume(returning: image)
             }
+            operation.queuePriority = priority
+            Self.generationQueue.addOperation(operation)
+        }
+    }
+
+    /// 面板隐藏期间预热近期窗口的大图。面板唤起时只读取缓存，绝不等待截图。
+    func prefetchFullResolutionPreviews(for windows: [WindowModel]) async {
+        let candidates = Array(windows.prefix(FullResolutionPreviewCacheConfig.maxMemorySize))
+        await withTaskGroup(of: Void.self) { group in
+            for window in candidates where isFullResolutionCacheStale(for: window) {
+                group.addTask { [self] in
+                    let image = await Self.captureFullResolutionPreview(
+                        windowID: window.id,
+                        windowFrame: window.frame,
+                        priority: .veryLow
+                    )
+                    if let image {
+                        updateFullResolutionSyncCache(for: window, image: image)
+                    }
+                }
+            }
+        }
+    }
+
+    private func isFullResolutionCacheStale(for window: WindowModel) -> Bool {
+        syncCacheLock.lock()
+        defer { syncCacheLock.unlock() }
+        guard let entry = fullResolutionSyncCache[window.id], entry.matches(window) else { return true }
+        return Date().timeIntervalSince(entry.timestamp) >= FullResolutionPreviewCacheConfig.refreshInterval
+    }
+
+    private static func captureFullResolutionPreview(
+        windowID: CGWindowID,
+        windowFrame: CGRect,
+        priority: Operation.QueuePriority
+    ) async -> NSImage? {
+        await withCheckedContinuation { continuation in
+            let operation = BlockOperation {
+                continuation.resume(returning: captureWindowFullResolution(windowID, windowFrame: windowFrame))
+            }
+            operation.queuePriority = priority
+            generationQueue.addOperation(operation)
         }
     }
 

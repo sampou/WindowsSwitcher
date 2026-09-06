@@ -18,7 +18,8 @@ class DockPreviewManager: ObservableObject {
     @Published var largePreviewFrame: CGRect = .zero    // 大预览窗口的 frame
     @Published var isLargePreviewVisible: Bool = false // 大预览窗口是否可见
 
-    let previewGenerator = PreviewGenerator()
+    /// 默认实例只用于应用尚未完成依赖装配前；启动后由 AppDelegate 注入切换器的实例。
+    private(set) var previewGenerator = PreviewGenerator()
 
     // 大预览窗口尺寸
     var largePreviewWidth: CGFloat = 600
@@ -30,6 +31,12 @@ class DockPreviewManager: ObservableObject {
 
     private init() {
         setupBindings()
+    }
+
+    /// 程序坞预览与窗口切换器必须使用同一个预览生成器，才能共享全分辨率截图缓存和失效策略。
+    func configure(previewGenerator: PreviewGenerator) {
+        guard self.previewGenerator !== previewGenerator else { return }
+        self.previewGenerator = previewGenerator
     }
 
     func start() {
@@ -1080,29 +1087,40 @@ struct LargeDockPreviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
-        .onAppear {
-            loadFullResolutionPreview()
+        .task(id: item.id, priority: .userInitiated) {
+            await refreshFullResolutionPreview(forceRefresh: false)
+
+            // 鼠标停留在大预览上时仍持续刷新，避免只命中旧的全分辨率缓存。
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                await refreshFullResolutionPreview(forceRefresh: true)
+            }
         }
     }
 
-    /// 使用全分辨率预览，类似于窗口切换器的背景预览
-    private func loadFullResolutionPreview() {
-        // 如果已有图片且是相同窗口，直接使用
-        if previewImage != nil && !isLoading {
+    /// 先同步显示共享的全分辨率缓存，再以同一缓存源刷新，避免悬停时长期停留在旧图。
+    private func refreshFullResolutionPreview(forceRefresh: Bool) async {
+        guard let previewGenerator else {
+            isLoading = false
             return
         }
 
-        Task(priority: .userInitiated) {
-            // 使用全分辨率预览生成器
-            if let image = await previewGenerator?.generateFullResolutionPreview(for: item.windowModel) {
-                await MainActor.run {
-                    self.previewImage = image
-                    self.isLoading = false
-                }
-            } else {
-                // 降级使用实时预览
-                await loadRealTimePreview()
-            }
+        if let cached = previewGenerator.getCachedFullResolutionPreviewSync(for: item.windowModel) {
+            previewImage = cached
+            isLoading = false
+        }
+
+        if let image = await previewGenerator.generateFullResolutionPreview(
+            for: item.windowModel,
+            priority: .veryHigh,
+            forceRefresh: forceRefresh || previewImage != nil
+        ) {
+            previewImage = image
+            isLoading = false
+        } else if previewImage == nil {
+            // 全分辨率截图不可用时才降级到实时缩略图。
+            await loadRealTimePreview()
         }
     }
 

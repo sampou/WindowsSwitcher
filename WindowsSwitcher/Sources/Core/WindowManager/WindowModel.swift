@@ -100,6 +100,16 @@ struct NonStandardWindowRules {
 
         return false
     }
+
+    /// 辅助功能窗口的角色用于补充 CGWindow 的 layer 判断。
+    /// 浏览器的搜索框、弹出面板等可能同样位于 layer 0，只有通过 AXSubrole 才能与主窗口区分。
+    /// 角色缺失时保守放行，避免因应用未完整实现辅助功能接口而遗漏正常窗口。
+    static func isStandardAccessibilityWindow(role: String?, subrole: String?) -> Bool {
+        guard let role else { return true }
+        guard role == "AXWindow" else { return false }
+        guard let subrole, !subrole.isEmpty else { return true }
+        return subrole == "AXStandardWindow"
+    }
 }
 
 struct WindowModel: Identifiable, Equatable {

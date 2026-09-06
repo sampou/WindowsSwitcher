@@ -108,6 +108,21 @@ final class PreviewGeneratorTests: XCTestCase {
         XCTAssertEqual(windowsToLoad.count, 37, "切换面板必须为全部窗口加载缩略图")
     }
 
+    func testBackgroundPreviewUsesCachedImageWithoutReplacement() {
+        let cachedImage = NSImage(size: NSSize(width: 124, height: 70))
+
+        XCTAssertTrue(BackgroundPreviewLoadPolicy.initialImage(from: cachedImage) === cachedImage)
+        XCTAssertNil(BackgroundPreviewLoadPolicy.initialImage(from: nil))
+    }
+
+    func testWindowIDDeduplicatorKeepsFirstWindow() {
+        let first = makeInvalidWindow(id: 731)
+        let second = makeInvalidWindow(id: 731)
+        let distinct = makeInvalidWindow(id: 732)
+
+        XCTAssertEqual(WindowIDDeduplicator.unique([first, second, distinct]).map(\.id), [731, 732])
+    }
+
     func testGeneratePreviewSize() async {
         let generator = PreviewGenerator()
         // 使用真实存在的窗口（取第一个屏幕上的窗口）

@@ -399,6 +399,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
             Task(priority: .background) {
                 await self.previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+                await self.previewGenerator.prefetchFullResolutionPreviews(
+                    for: self.backgroundPreviewCandidates(from: windows)
+                )
             }
         }
         timer.resume()
@@ -680,8 +683,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private func startDockPreview() {
         Logger.info(">>> Starting Dock Preview...")
 
-        // 启动 DockPreviewManager
-        DockPreviewManager.shared.start()
+        // 程序坞大预览与切换器背景预览共用同一个全分辨率缓存。
+        let dockPreviewManager = DockPreviewManager.shared
+        dockPreviewManager.configure(previewGenerator: previewGenerator)
+        dockPreviewManager.start()
         Logger.info("DockPreviewManager.start() called")
 
         // 监听预览显示状态变化，创建/隐藏预览窗口
@@ -1348,7 +1353,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
         Task(priority: .background) { [previewGenerator] in
             await previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+            await previewGenerator.prefetchFullResolutionPreviews(
+                for: self.backgroundPreviewCandidates(from: windows)
+            )
         }
+    }
+
+    /// 背景大图优先预热最近使用的窗口，和切换器的初始选择顺序保持一致。
+    private func backgroundPreviewCandidates(from windows: [WindowModel]) -> [WindowModel] {
+        WindowOrdering().sort(
+            windows,
+            by: .recent,
+            activitySequence: windowManager.activitySequenceSnapshot()
+        )
     }
 
     // MARK: - 快捷键注册
@@ -2453,11 +2470,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // MARK: - 背景预览窗口
     private var backgroundPreviewWindow: NSPanel?
 
+    @MainActor
     private func showBackgroundPreview(for window: WindowModel?, screenFrame: CGRect, panelFrame: CGRect) {
         // 检查是否启用背景预览
         guard ConfigManager.shared.config.behavior.showBackgroundPreview else { return }
 
         guard let window = window else { return }
+        let cachedPreview = previewGenerator.getCachedFullResolutionPreviewSync(for: window)
 
         // 背景预览窗口覆盖整个屏幕
         let previewFrame = screenFrame
@@ -2481,7 +2500,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         previewPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
         // 创建预览视图
-        let previewView = BackgroundPreviewContainer(selectedWindow: window)
+        let previewView = BackgroundPreviewContainer(
+            selectedWindow: window,
+            cachedPreview: cachedPreview,
+            previewGenerator: previewGenerator
+        )
         let hostingView = NSHostingView(rootView: previewView)
         hostingView.frame = NSRect(origin: .zero, size: previewFrame.size)
         previewPanel.contentView = hostingView
@@ -2493,22 +2516,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         Logger.info("==> Background preview shown for: \(window.appName), frame: \(window.frame)")
     }
 
+    @MainActor
     private func updateBackgroundPreview(for window: WindowModel?) {
         guard ConfigManager.shared.config.behavior.showBackgroundPreview else { return }
         guard let window = window else { return }
+        let cachedPreview = previewGenerator.getCachedFullResolutionPreviewSync(for: window)
 
         Logger.info("==> Updating background preview for: \(window.appName), windowID: \(window.id)")
 
         // 更新预览内容 - 重新创建整个视图确保更新
         if let panel = backgroundPreviewWindow {
             let previewFrame = panel.frame
-            let newView = BackgroundPreviewContainer(selectedWindow: window)
+            let newView = BackgroundPreviewContainer(
+                selectedWindow: window,
+                cachedPreview: cachedPreview,
+                previewGenerator: previewGenerator
+            )
             let newHostingView = NSHostingView(rootView: newView)
             newHostingView.frame = NSRect(origin: .zero, size: previewFrame.size)
             panel.contentView = newHostingView
         }
     }
 
+    @MainActor
     private func hideBackgroundPreview() {
         backgroundPreviewWindow?.orderOut(nil)
         backgroundPreviewWindow = nil

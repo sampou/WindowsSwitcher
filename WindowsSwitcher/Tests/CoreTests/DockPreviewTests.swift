@@ -369,4 +369,16 @@ final class DockPreviewDesignTokensTests: XCTestCase {
         let manager = DockPreviewManager.shared
         XCTAssertNotNil(manager.previewGenerator, "应该包含共享的 PreviewGenerator")
     }
+
+    func testDockPreviewManagerUsesInjectedSharedPreviewGenerator() {
+        let manager = DockPreviewManager.shared
+        let sharedGenerator = PreviewGenerator()
+
+        manager.configure(previewGenerator: sharedGenerator)
+
+        XCTAssertTrue(
+            manager.previewGenerator === sharedGenerator,
+            "程序坞预览应使用 AppDelegate 注入的切换器预览缓存实例"
+        )
+    }
 }

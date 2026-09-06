@@ -35,6 +35,86 @@ struct WindowFocusRetryPolicy {
     }
 }
 
+/// AX 跨进程采集的时间预算与候选窗口收敛规则。
+struct AXWindowFilteringPolicy {
+    static let perElementTimeout: TimeInterval = 0.15
+    static let totalBudget: TimeInterval = 0.20
+    static let circuitBreakerThreshold = 3
+    static let circuitBreakerCooldown: TimeInterval = 5
+
+    static func candidateOwnerPIDs(in windowInfoList: [[String: Any]]) -> Set<pid_t> {
+        Set(windowInfoList.compactMap { info in
+            guard (info[kCGWindowLayer as String] as? Int) == 0 else { return nil }
+            return info[kCGWindowOwnerPID as String] as? pid_t
+        })
+    }
+
+    static func timeout(remainingBudget: TimeInterval) -> TimeInterval? {
+        guard remainingBudget > 0 else { return nil }
+        return min(perElementTimeout, remainingBudget)
+    }
+}
+
+/// 连续耗尽预算时临时关闭 AX 过滤，确保切换器优先保持可用。
+struct AXWindowFilteringCircuitBreaker {
+    private var consecutiveBudgetExhaustions = 0
+    private var disabledUntil: Date?
+
+    mutating func isEnabled(now: Date) -> Bool {
+        guard let disabledUntil else { return true }
+        guard now < disabledUntil else {
+            self.disabledUntil = nil
+            consecutiveBudgetExhaustions = 0
+            return true
+        }
+        return false
+    }
+
+    /// 返回是否在本次记录后进入临时降级状态。
+    mutating func record(budgetExhausted: Bool, now: Date) -> Bool {
+        guard budgetExhausted else {
+            consecutiveBudgetExhaustions = 0
+            return false
+        }
+
+        consecutiveBudgetExhaustions += 1
+        guard consecutiveBudgetExhaustions >= AXWindowFilteringPolicy.circuitBreakerThreshold else {
+            return false
+        }
+
+        disabledUntil = now.addingTimeInterval(AXWindowFilteringPolicy.circuitBreakerCooldown)
+        return true
+    }
+}
+
+private struct AXWindowCollectionResult {
+    let nonStandardWindowIDs: Set<CGWindowID>
+    let candidateProcessCount: Int
+    let successfulProcessCount: Int
+    let failedProcessCount: Int
+    let budgetExhausted: Bool
+    let elapsedMilliseconds: Int
+    let attempted: Bool
+
+    static let skipped = AXWindowCollectionResult(
+        nonStandardWindowIDs: [],
+        candidateProcessCount: 0,
+        successfulProcessCount: 0,
+        failedProcessCount: 0,
+        budgetExhausted: false,
+        elapsedMilliseconds: 0,
+        attempted: false
+    )
+}
+
+/// CGWindowID 是系统截图和窗口激活的唯一标识；重复条目只保留最前面的一个。
+struct WindowIDDeduplicator {
+    static func unique(_ windows: [WindowModel]) -> [WindowModel] {
+        var seen = Set<CGWindowID>()
+        return windows.filter { seen.insert($0.id).inserted }
+    }
+}
+
 /// 系统窗口快照的创建/销毁差分。
 ///
 /// 创建事件保持当前快照顺序，销毁事件按窗口 ID 排序，确保生产行为与测试结果稳定。
@@ -288,6 +368,7 @@ class WindowManager: WindowManagerProtocol {
     // 记录刚激活的窗口（防止 didActivateApplicationNotification 错误更新其他窗口）
     private var lastActivatedWindowID: CGWindowID?
     private var lastActivatedTime: Date?
+    private var axFilterCircuitBreaker = AXWindowFilteringCircuitBreaker()
 
     private init() {}
 
@@ -352,12 +433,36 @@ class WindowManager: WindowManagerProtocol {
             return result
         }
 
+        let axFilteringEnabled = axFilterCircuitBreaker.isEnabled(now: now)
+        // AX 是同步跨进程调用。采集必须在 stateLock 外完成，避免目标应用无响应时
+        // 阻塞缓存读写和快捷键触发的同步刷新。
+        stateLock.unlock()
+
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            stateLock.unlock()
             return []
         }
-        let windows = list.compactMap { buildWindowModel(from: $0) }
+
+        let axCollection = axFilteringEnabled
+            ? collectNonStandardAccessibilityWindows(for: AXWindowFilteringPolicy.candidateOwnerPIDs(in: list))
+            : .skipped
+
+        stateLock.lock()
+        if axCollection.attempted {
+            let circuitOpened = axFilterCircuitBreaker.record(
+                budgetExhausted: axCollection.budgetExhausted,
+                now: Date()
+            )
+            logAXCollection(axCollection, circuitOpened: circuitOpened)
+        } else if !axFilteringEnabled {
+            Logger.warning("AX窗口过滤临时降级：连续预算耗尽后仅使用基础窗口规则")
+        }
+
+        // CGWindow 的 layer 不足以区分应用搜索浮层等 layer 0 面板。
+        // 仅在 AX API 能按 CGWindowID 精确识别为非标准窗口时排除；不可访问的应用保持原有行为。
+        let windows = WindowIDDeduplicator.unique(list.compactMap {
+            buildWindowModel(from: $0, nonStandardAccessibilityWindowIDs: axCollection.nonStandardWindowIDs)
+        })
         let windowEvents = WindowSnapshotReconciler.events(
             previous: windowCache,
             current: windows,
@@ -938,13 +1043,110 @@ class WindowManager: WindowManagerProtocol {
         return windowID
     }
 
-    private func buildWindowModel(from info: [String: Any]) -> WindowModel? {
+    /// 在总预算内收集可精确识别的非标准 AX 窗口。失败或预算耗尽的进程按保守策略放行。
+    private func collectNonStandardAccessibilityWindows(for ownerPIDs: Set<pid_t>) -> AXWindowCollectionResult {
+        let start = ProcessInfo.processInfo.systemUptime
+        var result = Set<CGWindowID>()
+        var successfulProcessCount = 0
+        var failedProcessCount = 0
+        var budgetExhausted = false
+
+        for ownerPID in ownerPIDs.sorted() {
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            guard let applicationTimeout = AXWindowFilteringPolicy.timeout(
+                remainingBudget: AXWindowFilteringPolicy.totalBudget - elapsed
+            ) else {
+                budgetExhausted = true
+                break
+            }
+
+            let application = AXUIElementCreateApplication(ownerPID)
+            AXUIElementSetMessagingTimeout(application, Float(applicationTimeout))
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
+                  let windows = value as? [AXUIElement] else {
+                failedProcessCount += 1
+                continue
+            }
+            successfulProcessCount += 1
+
+            for window in windows {
+                let elapsed = ProcessInfo.processInfo.systemUptime - start
+                guard let windowTimeout = AXWindowFilteringPolicy.timeout(
+                    remainingBudget: AXWindowFilteringPolicy.totalBudget - elapsed
+                ) else {
+                    budgetExhausted = true
+                    break
+                }
+
+                AXUIElementSetMessagingTimeout(window, Float(windowTimeout))
+                var windowID: CGWindowID = 0
+                guard _AXUIElementGetWindow(window, &windowID) == .success else { continue }
+
+                var roleValue: CFTypeRef?
+                let role = AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &roleValue) == .success
+                    ? roleValue as? String
+                    : nil
+                let elapsedAfterRole = ProcessInfo.processInfo.systemUptime - start
+                guard let subroleTimeout = AXWindowFilteringPolicy.timeout(
+                    remainingBudget: AXWindowFilteringPolicy.totalBudget - elapsedAfterRole
+                ) else {
+                    budgetExhausted = true
+                    break
+                }
+                AXUIElementSetMessagingTimeout(window, Float(subroleTimeout))
+                var subroleValue: CFTypeRef?
+                let subrole = AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleValue) == .success
+                    ? subroleValue as? String
+                    : nil
+
+                if !NonStandardWindowRules.isStandardAccessibilityWindow(role: role, subrole: subrole) {
+                    result.insert(windowID)
+                }
+            }
+
+            if budgetExhausted { break }
+        }
+
+        let elapsedMilliseconds = Int((ProcessInfo.processInfo.systemUptime - start) * 1_000)
+        return AXWindowCollectionResult(
+            nonStandardWindowIDs: result,
+            candidateProcessCount: ownerPIDs.count,
+            successfulProcessCount: successfulProcessCount,
+            failedProcessCount: failedProcessCount,
+            budgetExhausted: budgetExhausted,
+            elapsedMilliseconds: elapsedMilliseconds,
+            attempted: true
+        )
+    }
+
+    /// 仅记录计数与耗时，不写入窗口标题、搜索文本或应用页面内容。
+    private func logAXCollection(_ result: AXWindowCollectionResult, circuitOpened: Bool) {
+        let detail = "候选进程=\(result.candidateProcessCount) 成功=\(result.successfulProcessCount) 失败=\(result.failedProcessCount) 预算耗尽=\(result.budgetExhausted) 排除窗口=\(result.nonStandardWindowIDs.count) 耗时毫秒=\(result.elapsedMilliseconds)"
+        if circuitOpened {
+            Logger.warning("AX窗口过滤触发临时降级：\(detail)")
+        } else if result.budgetExhausted || result.failedProcessCount > 0 {
+            Logger.info("AX窗口过滤降级采集：\(detail)")
+        } else {
+            Logger.debug("AX窗口过滤采集：\(detail)")
+        }
+    }
+
+    private func buildWindowModel(
+        from info: [String: Any],
+        nonStandardAccessibilityWindowIDs: Set<CGWindowID>
+    ) -> WindowModel? {
         guard
             let windowID = info[kCGWindowNumber as String] as? CGWindowID,
             let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
             let layer = info[kCGWindowLayer as String] as? Int,
             layer == 0
         else { return nil }
+
+        guard !nonStandardAccessibilityWindowIDs.contains(windowID) else {
+            Logger.debug("Skipping AX non-standard window: ID \(windowID)")
+            return nil
+        }
 
         let appName = info[kCGWindowOwnerName as String] as? String ?? "Unknown"
         let windowTitle = info[kCGWindowName as String] as? String ?? ""
