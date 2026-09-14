@@ -1171,6 +1171,10 @@ class DockEventMonitor: ObservableObject {
             NSEvent.removeMonitor(monitor)
             globalMouseMonitor = nil
         }
+        if let monitor = localMouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            localMouseMonitor = nil
+        }
 
         // 清理旧的 CGEvent tap
         if let tap = eventTap {
@@ -1185,6 +1189,13 @@ class DockEventMonitor: ObservableObject {
         runLoopSource = nil
         hoverTimer?.invalidate()
         hoverTimer = nil
+        hideTimer?.invalidate()
+        hideTimer = nil
+        wasInDockArea = false
+        hoveredAppBundleID = nil
+        hoveredIconInfo = nil
+        isMouseInPreviewWindow = false
+        invalidateCaches()
 
         Logger.info("DockEventMonitor stopped")
     }

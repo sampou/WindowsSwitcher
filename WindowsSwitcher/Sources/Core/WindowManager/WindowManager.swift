@@ -359,6 +359,9 @@ class WindowManager: WindowManagerProtocol {
     // 进程内窗口活动序号（不跨启动持久化）
     private let activitySequence = WindowActivitySequence()
 
+    // 串行化 CGWindow/AX 快照，避免远程桌面或虚拟显示变化时旧快照覆盖新快照。
+    private let enumerationLock = NSLock()
+
     // 焦点窗口轮询定时器（用于监听同一应用内的窗口切换，如 Command+`）
     private var focusPollingTimer: Timer?
     // 低频主动枚举，用于发现未伴随应用激活通知的外部窗口创建/销毁。
@@ -415,6 +418,9 @@ class WindowManager: WindowManagerProtocol {
     }
 
     func getAllWindows(forceRefresh: Bool = false) -> [WindowModel] {
+        enumerationLock.lock()
+        defer { enumerationLock.unlock() }
+
         stateLock.lock()
 
         // 强制刷新时清除缓存时间戳
@@ -440,7 +446,11 @@ class WindowManager: WindowManagerProtocol {
 
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return []
+            stateLock.lock()
+            let stableWindows = cachedWindows
+            stateLock.unlock()
+            Logger.warning("CGWindowListCopyWindowInfo failed; retaining previous window snapshot")
+            return stableWindows
         }
 
         let axCollection = axFilteringEnabled
@@ -473,10 +483,11 @@ class WindowManager: WindowManagerProtocol {
 
         for window in windows {
             windowCache[window.id] = window
-            recordFirstObservationLocked(windowID: window.id)
+            // CGWindow 的枚举顺序不是 MRU，不能用首次观察顺序推进活动序号。
+            // 新窗口在获得真实焦点/激活事件后再记录活动；当前仅保留中性时间兜底。
         }
         staleWindowIDs.forEach { windowCache.removeValue(forKey: $0) }
-        removeActivityLocked(windowIDs: staleWindowIDs)
+        // 远程桌面/虚拟显示短暂丢失窗口时，不删除活动序号；窗口重新出现仍沿用原有 MRU 元数据。
         hasWindowSnapshotBaseline = true
 
         let revision = activitySequence.revision

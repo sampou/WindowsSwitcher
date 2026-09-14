@@ -383,29 +383,58 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         Logger.info("=== Deferred initialization completed ===")
     }
 
+    /// 后台预览预取任务；面板显示或新一轮交互开始时取消，避免占满截图队列。
+    private var previewPrefetchTask: Task<Void, Never>?
+    private var previewPrefetchGeneration: UInt64 = 0
+
     // MARK: - 后台预览预取
     /// 启动后台定时器，定期生成所有窗口预览并预热缓存
     /// 面板可见时跳过（面板有自己的实时加载逻辑），避免重复截图
     private func startPreviewPrefetcher() {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        timer.schedule(deadline: .now() + 3, repeating: 6)  // 首次3秒后，之后每6秒（短于缓存TTL 10秒）
+        timer.schedule(deadline: .now() + 3, repeating: 6)  // 首次3秒后，之后每6秒
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            // 面板可见时不预取，避免与面板加载冲突
-            if self.isPanelVisible { return }
-            let windows = self.windowManager.getAllWindows(forceRefresh: false)
-            guard !windows.isEmpty else { return }
-            let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
-            let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
-            Task(priority: .background) {
-                await self.previewGenerator.prefetchPreviews(for: windows, size: previewSize)
-                await self.previewGenerator.prefetchFullResolutionPreviews(
-                    for: self.backgroundPreviewCandidates(from: windows)
-                )
+            Task { @MainActor [weak self] in
+                guard let self, !self.isPanelVisible else { return }
+                self.startPreviewPrefetchTask()
             }
         }
         timer.resume()
         previewPrefetchTimer = timer
+    }
+
+    /// 启动一次后台预览预取；所有状态决策在 MainActor 上完成。
+    @MainActor
+    private func startPreviewPrefetchTask() {
+        guard !isPanelVisible, !DockPreviewManager.shared.isPreviewVisible else { return }
+        previewPrefetchTask?.cancel()
+        previewPrefetchGeneration &+= 1
+        let generation = previewPrefetchGeneration
+        let windows = windowManager.getAllWindows(forceRefresh: false)
+        guard !windows.isEmpty else { return }
+        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
+        let candidates = backgroundPreviewCandidates(from: windows)
+
+        previewPrefetchTask = Task(priority: .background) { [weak self, previewGenerator] in
+            guard let self else { return }
+            await previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+            guard !Task.isCancelled else { return }
+            await previewGenerator.prefetchFullResolutionPreviews(for: candidates)
+            await MainActor.run {
+                guard self.previewPrefetchGeneration == generation else { return }
+                self.previewPrefetchTask = nil
+            }
+        }
+    }
+
+    /// 取消后台预取，给切换器和 Dock 的交互截图让出队列。
+    @MainActor
+    private func cancelPreviewPrefetch() {
+        previewPrefetchGeneration &+= 1
+        previewPrefetchTask?.cancel()
+        previewPrefetchTask = nil
     }
 
     /// 唤起切换器时，同步用缓存的预览图填充 viewModel（命中内存缓存瞬时完成，避免后面窗口空白）
@@ -695,7 +724,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             .sink { [weak self] isVisible in
                 if isVisible {
                     Task { @MainActor in
-                        self?.showDockPreviewPanel()
+                        guard let self else { return }
+                        self.cancelPreviewPrefetch()
+                        self.showDockPreviewPanel()
                     }
                 } else {
                     Task { @MainActor in
@@ -1345,18 +1376,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         triggerPreviewPrefetch()
     }
 
-    /// 触发一次后台预览预取（面板关闭后调用，刷新缓存）
+    /// 旧接口保留为统一调度入口，避免调用方直接创建不可取消的后台任务。
+    @MainActor
     private func triggerPreviewPrefetch() {
-        let windows = windowManager.getAllWindows(forceRefresh: false)
-        guard !windows.isEmpty else { return }
-        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
-        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
-        Task(priority: .background) { [previewGenerator] in
-            await previewGenerator.prefetchPreviews(for: windows, size: previewSize)
-            await previewGenerator.prefetchFullResolutionPreviews(
-                for: self.backgroundPreviewCandidates(from: windows)
-            )
-        }
+        guard !isPanelVisible else { return }
+        startPreviewPrefetchTask()
     }
 
     /// 背景大图优先预热最近使用的窗口，和切换器的初始选择顺序保持一致。
@@ -2115,6 +2139,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         reversed: Bool = false,
         appSwitchMode: Bool = false
     ) {
+        // 面板显示前取消后台预取，避免与交互截图争抢共享队列
+        cancelPreviewPrefetch()
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）

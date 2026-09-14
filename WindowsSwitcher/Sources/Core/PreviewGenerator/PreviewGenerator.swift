@@ -203,6 +203,16 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         queue.maxConcurrentOperationCount = PreviewCacheConfig.maxConcurrentGeneration
         return queue
     }()
+
+    /// Dock/切换器交互截图使用独立队列，不能被后台预取的大量任务阻塞。
+    /// 交互请求必须在显示预览时尽快获取最新内容。
+    private static let interactiveGenerationQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.windowsswitcher.preview.interactive"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = 2
+        return queue
+    }()
     private var diskCleanupTimer: DispatchSourceTimer?
 
     init() {
@@ -238,7 +248,7 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         let cacheRef = self.cache
 
         return await withCheckedContinuation { continuation in
-            Self.generationQueue.addOperation {
+            Self.interactiveGenerationQueue.addOperation {
                 let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
 
@@ -259,7 +269,7 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         let cacheRef = self.cache
 
         return await withCheckedContinuation { continuation in
-            Self.generationQueue.addOperation {
+            Self.interactiveGenerationQueue.addOperation {
                 let image = Self.captureWindowSync(windowID, size: size)
                 continuation.resume(returning: image)
 

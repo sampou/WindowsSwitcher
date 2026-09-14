@@ -46,6 +46,13 @@ class DockPreviewManager: ObservableObject {
     func stop() {
         eventMonitor.stopMonitoring()
         mouseCheckTimer?.invalidate()
+        mouseCheckTimer = nil
+        previewTask?.cancel()
+        previewTask = nil
+        previewGeneration &+= 1
+        previewImages.removeAll()
+        previewItems.removeAll()
+        hoveredIndex = nil
         isPreviewVisible = false
     }
 
@@ -170,7 +177,13 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
+    private var previewGeneration: UInt64 = 0
+    private var previewTask: Task<Void, Never>?
+
     private func handleHoverChange(bundleID: String?) {
+        previewTask?.cancel()
+        previewGeneration &+= 1
+        previewImages.removeAll()
         guard let bundleID = bundleID else {
             hidePreview()
             return
@@ -188,10 +201,8 @@ class DockPreviewManager: ObservableObject {
             }
         }
 
-        // 强制刷新窗口缓存，确保获取最新的窗口列表
-        WindowManager.shared.refreshCache()
-
-        // 获取该应用的所有窗口
+        // 获取当前应用窗口；查询期间避免在主线程执行可阻塞的强制刷新。
+        // Dock 预览沿用 WindowManager 当前可见窗口语义：最小化/离屏窗口不显示。
         let allWindows = WindowManager.shared.windows
         let matchingWindows = allWindows.filter { $0.bundleIdentifier == bundleID }
 
@@ -214,7 +225,11 @@ class DockPreviewManager: ObservableObject {
             return item
         }
 
-        // 先加载第一个预览图，减少空白闪烁
+        // 先同步填充已有缓存，面板显示时立即有图；随后强制异步刷新为最新截图。
+        previewImages = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            guard let cached = previewGenerator.getCachedPreviewSync(for: window.id) else { return nil }
+            return (window.id, cached)
+        })
         preloadFirstPreviewAndShow(for: sortedWindows)
     }
 
@@ -222,32 +237,25 @@ class DockPreviewManager: ObservableObject {
     private func preloadFirstPreviewAndShow(for windows: [WindowModel]) {
         let previewSize = ConfigManager.shared.config.appearance.previewSize.dimensions
         let size = CGSize(width: previewSize.width, height: previewSize.height)
+        let generation = previewGeneration
+        let bundleID = windows.first?.bundleIdentifier
 
-        Task(priority: .userInitiated) {
-            // 先加载第一个窗口的预览图
-            if let firstWindow = windows.first {
-                if let image = await self.previewGenerator.generateRealtimePreview(for: firstWindow, size: size) {
-                    await MainActor.run {
-                        self.previewImages[firstWindow.id] = image
-                    }
-                }
-            }
-
-            // 显示面板
-            await MainActor.run {
-                showPreview()
-            }
-
-            // 继续加载其余预览图
-            if windows.count > 1 {
-                await withTaskGroup(of: Void.self) { group in
-                    for window in windows.dropFirst() {
-                        group.addTask {
-                            if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size) {
-                                await MainActor.run {
-                                    self.previewImages[window.id] = image
-                                }
-                            }
+        // 面板显示不再等待截图；先显示窗口卡片/占位图，截图异步补齐。
+        showPreview()
+        previewTask?.cancel()
+        previewTask = Task(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                for window in windows {
+                    group.addTask {
+                        guard !Task.isCancelled,
+                              let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size)
+                        else { return }
+                        await MainActor.run {
+                            guard self.previewGeneration == generation,
+                                  self.previewItems.contains(where: { $0.id == window.id }),
+                                  bundleID == self.previewItems.first?.windowModel.bundleIdentifier else { return }
+                            self.previewImages[window.id] = image
                         }
                     }
                 }
@@ -774,8 +782,6 @@ struct DockPreviewItemView: View {
     let onTap: () -> Void
     let onHover: (Bool) -> Void
 
-    @State private var previewImage: NSImage?
-
     // 与切换器一致的图标尺寸
     private var iconSize: CGFloat { DesignTokens.WindowItem.iconSize }
     private var iconCornerRadius: CGFloat { DesignTokens.WindowItem.iconCornerRadius }
@@ -831,14 +837,6 @@ struct DockPreviewItemView: View {
         .animation(.easeInOut(duration: 0.1), value: isHovered)
         .onTapGesture(perform: onTap)
         .onHover(perform: onHover)
-        .onAppear {
-            // 优先使用缓存图片，没有缓存时才加载
-            if cachedImage != nil {
-                previewImage = cachedImage
-            } else {
-                loadPreview()
-            }
-        }
     }
 
     @ViewBuilder
@@ -848,8 +846,8 @@ struct DockPreviewItemView: View {
             RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
                 .fill(Color.clear)
 
-            // 优先显示预览图，其次显示缓存图片，最后显示占位图标
-            if let image = previewImage ?? cachedImage {
+            // 优先显示 manager 的最新图片，其次显示当前预加载缓存，最后显示占位图标
+            if let image = cachedImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -879,21 +877,6 @@ struct DockPreviewItemView: View {
             return DesignTokens.Colors.selectedBackground
         }
         return Color.clear
-    }
-
-    private func loadPreview() {
-        Task(priority: .userInitiated) {
-            let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
-            // 使用实时预览方法，确保获取最新窗口内容
-            if let image = await generator.generateRealtimePreview(
-                for: item.windowModel,
-                size: CGSize(width: previewWidth, height: previewHeight)
-            ) {
-                await MainActor.run {
-                    self.previewImage = image
-                }
-            }
-        }
     }
 }
 
