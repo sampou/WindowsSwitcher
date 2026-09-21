@@ -367,6 +367,9 @@ class WindowManager: WindowManagerProtocol {
     // 低频主动枚举，用于发现未伴随应用激活通知的外部窗口创建/销毁。
     private var windowLifecyclePoller: WindowLifecyclePoller?
     private var lastFocusedWindowID: CGWindowID?
+    private var pendingFocusedWindowID: CGWindowID?
+    private var pendingFocusedPID: pid_t?
+    private var pendingFocusTime: Date?
 
     // 记录刚激活的窗口（防止 didActivateApplicationNotification 错误更新其他窗口）
     private var lastActivatedWindowID: CGWindowID?
@@ -419,7 +422,6 @@ class WindowManager: WindowManagerProtocol {
 
     func getAllWindows(forceRefresh: Bool = false) -> [WindowModel] {
         enumerationLock.lock()
-        defer { enumerationLock.unlock() }
 
         stateLock.lock()
 
@@ -436,6 +438,7 @@ class WindowManager: WindowManagerProtocol {
            !cachedWindows.isEmpty {
             let result = cachedWindows
             stateLock.unlock()
+            enumerationLock.unlock()
             return result
         }
 
@@ -449,7 +452,18 @@ class WindowManager: WindowManagerProtocol {
             stateLock.lock()
             let stableWindows = cachedWindows
             stateLock.unlock()
+            enumerationLock.unlock()
             Logger.warning("CGWindowListCopyWindowInfo failed; retaining previous window snapshot")
+            return stableWindows
+        }
+
+        // 远程桌面/虚拟显示重配置时可能短暂得到空集合；保留稳定快照，避免全量销毁。
+        if list.isEmpty {
+            stateLock.lock()
+            let stableWindows = cachedWindows
+            stateLock.unlock()
+            enumerationLock.unlock()
+            Logger.warning("CGWindowListCopyWindowInfo returned empty snapshot; retaining previous window snapshot")
             return stableWindows
         }
 
@@ -483,8 +497,13 @@ class WindowManager: WindowManagerProtocol {
 
         for window in windows {
             windowCache[window.id] = window
-            // CGWindow 的枚举顺序不是 MRU，不能用首次观察顺序推进活动序号。
-            // 新窗口在获得真实焦点/激活事件后再记录活动；当前仅保留中性时间兜底。
+            if window.id == pendingFocusedWindowID,
+               pendingFocusedPID == window.ownerPID,
+               pendingFocusTime.map({ Date().timeIntervalSince($0) < 2.0 }) == true {
+                updateActivityLocked(for: window, at: Date())
+                clearPendingFocusLocked()
+            }
+            // 不把 CGWindow 枚举顺序当作 MRU；其他新窗口等待真实焦点/激活事件记录活动。
         }
         staleWindowIDs.forEach { windowCache.removeValue(forKey: $0) }
         // 远程桌面/虚拟显示短暂丢失窗口时，不删除活动序号；窗口重新出现仍沿用原有 MRU 元数据。
@@ -508,6 +527,7 @@ class WindowManager: WindowManagerProtocol {
             cacheTimestamp = now
         }
         stateLock.unlock()
+        enumerationLock.unlock()
 
         // 事件回调可能触发面板刷新；必须在 WindowManager 锁外执行，避免重入死锁。
         emitWindowEvents(windowEvents)
@@ -528,15 +548,128 @@ class WindowManager: WindowManagerProtocol {
         return snapshot
     }
 
-    /// 面板打开前同步记录指定应用的真实焦点窗口。
     @discardableResult
     func recordFocusedWindowActivity(pid: pid_t) -> CGWindowID? {
-        guard let windowID = getFocusedWindowID(pid: pid) else { return nil }
+        guard let windowID = getFocusedWindowID(pid: pid) else {
+            stateLock.lock()
+            markPendingFocusLocked(pid: pid)
+            stateLock.unlock()
+            return nil
+        }
+
         stateLock.lock()
-        recordActivityLocked(windowID: windowID)
-        lastFocusedWindowID = windowID
+        // 焦点可能早于 CGWindow 枚举进入；此时仅记录 pending，下一次快照会消费。
+        guard let model = windowCache[windowID], model.ownerPID == pid else {
+            markPendingFocusLocked(pid: pid, windowID: windowID)
+            stateLock.unlock()
+            return windowID
+        }
+
+        updateActivityLocked(for: model, at: Date())
+        clearPendingFocusLocked()
         stateLock.unlock()
         return windowID
+    }
+
+    /// 在窗口快照建立后重新协调前台窗口。
+    /// AX 在新应用启动瞬间可能暂时无法返回焦点窗口；若该应用当前只有一个可见窗口，
+    /// 该唯一候选是无歧义的安全兜底，否则保留 pending 状态，绝不猜测多个窗口中的某一个。
+    @discardableResult
+    func reconcileFocusedWindow(pid: pid_t) -> CGWindowID? {
+        var updatedModel: WindowModel?
+
+        if let windowID = getFocusedWindowID(pid: pid) {
+            stateLock.lock()
+            if let model = windowCache[windowID], model.ownerPID == pid {
+                // 如果本次焦点已经记录且没有待处理意图，不重复推进活动序号。
+                let shouldRecord = lastFocusedWindowID != windowID || pendingFocusedPID == pid
+                if shouldRecord {
+                    updateActivityLocked(for: model, at: Date())
+                    updatedModel = windowCache[windowID]
+                }
+                clearPendingFocusLocked()
+                stateLock.unlock()
+                if let updatedModel {
+                    emitWindowEvents([.windowStateChanged(updatedModel)])
+                }
+                return windowID
+            }
+            markPendingFocusLocked(pid: pid, windowID: windowID)
+            stateLock.unlock()
+            return nil
+        }
+
+        stateLock.lock()
+        let candidates = windowCache.values.filter {
+            $0.ownerPID == pid && $0.isOnScreen && !$0.isMinimized && !$0.isHidden
+        }
+        let pendingIsRecent = pendingFocusedPID == pid
+            && pendingFocusTime.map { Date().timeIntervalSince($0) < 1.0 } == true
+        guard pendingIsRecent, candidates.count == 1, let candidate = candidates.first else {
+            stateLock.unlock()
+            return nil
+        }
+
+        updateActivityLocked(for: candidate, at: Date())
+        updatedModel = windowCache[candidate.id]
+        clearPendingFocusLocked()
+        stateLock.unlock()
+        Logger.debug("==> Focus AX unavailable; promoted unique visible window for PID \(pid)")
+        if let updatedModel {
+            emitWindowEvents([.windowStateChanged(updatedModel)])
+        }
+        return candidate.id
+    }
+
+    /// 在新应用启动或窗口刚创建的短暂 AX 延迟期间，重试解析其精确焦点窗口。
+    /// 只在 AX 返回具体窗口 ID，或同 PID 只有一个无歧义可见窗口时记录活动；绝不猜测多窗口应用。
+    func scheduleFocusedWindowReconciliation(pid: pid_t) {
+        let retryDelays: [TimeInterval] = [0.05, 0.15, 0.30]
+        for delay in retryDelays {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self else { return }
+                // 每次重试都先刷新快照，覆盖“激活通知/AX 焦点早于 CGWindow 枚举”的顺序。
+                _ = self.reconcileFocusedWindow(pid: pid)
+                _ = self.getAllWindows(forceRefresh: true)
+            }
+        }
+    }
+
+    /// 调用方必须已持有 stateLock。
+    private func markPendingFocusLocked(pid: pid_t, windowID: CGWindowID? = nil) {
+        pendingFocusedWindowID = windowID
+        pendingFocusedPID = pid
+        pendingFocusTime = Date()
+    }
+
+    /// 调用方必须已持有 stateLock。
+    private func clearPendingFocusLocked() {
+        pendingFocusedWindowID = nil
+        pendingFocusedPID = nil
+        pendingFocusTime = nil
+    }
+
+    /// 调用方必须已持有 stateLock。
+    private func updateActivityLocked(for model: WindowModel, at time: Date) {
+        windowCache[model.id] = WindowModel(
+            id: model.id,
+            appName: model.appName,
+            bundleIdentifier: model.bundleIdentifier,
+            windowTitle: model.windowTitle,
+            appIcon: model.appIcon,
+            frame: model.frame,
+            isMinimized: model.isMinimized,
+            isHidden: model.isHidden,
+            isOnScreen: model.isOnScreen,
+            lastActiveTime: time,
+            windowLayer: model.windowLayer,
+            ownerPID: model.ownerPID,
+            isStandardWindow: model.isStandardWindow
+        )
+        recordActivityLocked(windowID: model.id)
+        lastFocusedWindowID = model.id
+        lastActivatedWindowID = model.id
+        lastActivatedTime = time
     }
 
     func activateWindow(_ window: WindowModel) {
@@ -851,44 +984,10 @@ class WindowManager: WindowManagerProtocol {
                 self.stateLock.unlock()
                 Logger.debug("==> Updated lastActiveTime for focused window: \(model.windowTitle)")
             } else {
-                // 如果无法获取焦点窗口，更新该应用最新的窗口（降级方案）
-                let appWindows = self.windowCache.values.filter { $0.ownerPID == pid }
-                let activitySequence = self.activitySequence.snapshot()
+                // AX 无法确认焦点时，不把同一应用的任意窗口伪造为最近使用。
+                // 远程桌面/虚拟显示可能不暴露本地焦点，保留既有活动元数据。
                 self.stateLock.unlock()
-
-                let orderedAppWindows = WindowOrdering().sort(
-                    appWindows,
-                    by: .recent,
-                    activitySequence: activitySequence
-                )
-                if let first = orderedAppWindows.first {
-                    var model = first
-                    model = WindowModel(
-                        id: model.id,
-                        appName: model.appName,
-                        bundleIdentifier: model.bundleIdentifier,
-                        windowTitle: model.windowTitle,
-                        appIcon: model.appIcon,
-                        frame: model.frame,
-                        isMinimized: model.isMinimized,
-                        isHidden: model.isHidden,
-                        isOnScreen: model.isOnScreen,
-                        lastActiveTime: now,
-                        windowLayer: model.windowLayer,
-                        ownerPID: model.ownerPID,
-                        isStandardWindow: model.isStandardWindow
-                    )
-                    self.stateLock.lock()
-                    guard self.windowCache[model.id] != nil else {
-                        self.stateLock.unlock()
-                        return
-                    }
-                    self.windowCache[model.id] = model
-                    self.recordActivityLocked(windowID: model.id)
-                    self.lastFocusedWindowID = model.id
-                    self.stateLock.unlock()
-                    Logger.debug("==> Fallback: Updated lastActiveTime for newest window: \(model.windowTitle)")
-                }
+                Logger.debug("==> Focus window unavailable for PID \(pid); preserving activity metadata")
             }
         }
         observers.append(token)
@@ -982,37 +1081,27 @@ class WindowManager: WindowManagerProtocol {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return }
         let pid = frontmostApp.processIdentifier
 
-        guard let focusedWindowID = getFocusedWindowID(pid: pid) else { return }
+        guard let focusedWindowID = getFocusedWindowID(pid: pid) else {
+            stateLock.lock()
+            markPendingFocusLocked(pid: pid)
+            stateLock.unlock()
+            return
+        }
 
         let now = Date()
         stateLock.lock()
+        guard let model = windowCache[focusedWindowID], model.ownerPID == pid else {
+            markPendingFocusLocked(pid: pid, windowID: focusedWindowID)
+            stateLock.unlock()
+            return
+        }
         guard focusedWindowID != lastFocusedWindowID else {
             stateLock.unlock()
             return
         }
-        lastFocusedWindowID = focusedWindowID
 
-        guard var model = windowCache[focusedWindowID] else {
-            stateLock.unlock()
-            return
-        }
-        model = WindowModel(
-            id: model.id,
-            appName: model.appName,
-            bundleIdentifier: model.bundleIdentifier,
-            windowTitle: model.windowTitle,
-            appIcon: model.appIcon,
-            frame: model.frame,
-            isMinimized: model.isMinimized,
-            isHidden: model.isHidden,
-            isOnScreen: model.isOnScreen,
-            lastActiveTime: now,
-            windowLayer: model.windowLayer,
-            ownerPID: model.ownerPID,
-            isStandardWindow: model.isStandardWindow
-        )
-        windowCache[focusedWindowID] = model
-        recordActivityLocked(windowID: focusedWindowID)
+        updateActivityLocked(for: model, at: now)
+        clearPendingFocusLocked()
         stateLock.unlock()
 
         Logger.debug("==> Focus window changed (same app): \(model.windowTitle)")

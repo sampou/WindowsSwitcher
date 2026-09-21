@@ -816,13 +816,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             panelHeight = 3 * itemHeight + 2 * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
         }
 
-        // 获取屏幕信息
-        let screenFrame = NSScreen.main?.frame ?? .zero
+        // 获取屏幕信息：以图标中心所在屏幕为定位上下文，不能固定使用主屏。
+        let iconCenter = DockPreviewManager.shared.getCurrentIconCenter()
+        let targetScreen = iconCenter.flatMap { point in
+            NSScreen.screens.first { $0.frame.contains(point) }
+        } ?? NSScreen.main
+        let screenFrame = targetScreen?.frame ?? .zero
         let dockPosition = DockPreviewManager.shared.currentDockPosition
-        let dockFrame = DockGeometry.getDockFrame()
+        let dockFrame = DockGeometry.getDockFrame(on: targetScreen)
 
         // 获取智能间距（如果用户设置了自定义值则使用自定义值，否则使用系统推荐的智能间距）
-        let recommendedSpacing = DockGeometry.getRecommendedSpacing()
+        let recommendedSpacing = DockGeometry.getRecommendedSpacing(on: targetScreen)
+
         let verticalSpacing = config.verticalSpacing > 0 ? CGFloat(config.verticalSpacing) : recommendedSpacing.vertical
         let horizontalSpacing = config.horizontalSpacing > 0 ? CGFloat(config.horizontalSpacing) : recommendedSpacing.horizontal
 
@@ -838,20 +843,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
             switch dockPosition {
             case .bottom:
-                // Dock 在底部：面板底部边缘与 Dock 顶部边缘保持间距
-                // iconCenter.y 是图标中心的 Y 坐标，图标在 Dock 内
-                // 面板底部应该在 Dock 顶部上方 verticalSpacing 像素
-                panelY = dockFrame.height + verticalSpacing
+                panelY = dockFrame.maxY + verticalSpacing
             case .top:
-                // Dock 在顶部：面板顶部边缘与 Dock 底部边缘保持间距
-                panelY = screenFrame.height - dockFrame.height - panelHeight - verticalSpacing
+                panelY = dockFrame.minY - panelHeight - verticalSpacing
             case .left:
-                // Dock 在左侧：面板左边缘与 Dock 右边缘保持间距
-                panelX = dockFrame.width + horizontalSpacing
+                panelX = dockFrame.maxX + horizontalSpacing
                 panelY = iconCenter.y - panelHeight / 2
             case .right:
-                // Dock 在右侧：面板右边缘与 Dock 左边缘保持间距
-                panelX = screenFrame.width - dockFrame.width - panelWidth - horizontalSpacing
+                panelX = dockFrame.minX - panelWidth - horizontalSpacing
                 panelY = iconCenter.y - panelHeight / 2
             }
         } else {
@@ -860,41 +859,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
             switch dockPosition {
             case .bottom:
-                panelY = dockFrame.height + verticalSpacing
+                panelY = dockFrame.maxY + verticalSpacing
             case .top:
-                panelY = screenFrame.height - dockFrame.height - panelHeight - verticalSpacing
+                panelY = dockFrame.minY - panelHeight - verticalSpacing
             case .left:
-                panelX = dockFrame.width + horizontalSpacing
+                panelX = dockFrame.maxX + horizontalSpacing
                 panelY = screenFrame.midY - panelHeight / 2
             case .right:
-                panelX = screenFrame.width - dockFrame.width - panelWidth - horizontalSpacing
+                panelX = dockFrame.minX - panelWidth - horizontalSpacing
                 panelY = screenFrame.midY - panelHeight / 2
             }
         }
 
-        // 确保面板不超出屏幕边界（跨分辨率适配）
+        // 以目标屏幕的绝对 visibleFrame 做边界限制，保留副屏/负坐标 origin。
         // 注意：需要确保不会把面板拉回到覆盖 Dock 的位置
         switch dockPosition {
         case .bottom:
-            // Dock 在底部：确保面板底部不低于 Dock 顶部 + 计算的间距
-            let minY = dockFrame.height + verticalSpacing
-            panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
-            panelY = max(minY, min(panelY, screenFrame.height - panelHeight - 5))
+            // Dock 在底部，面板位于 Dock 上方
+            let minY = dockFrame.maxY + verticalSpacing
+            panelX = max(screenFrame.minX + 5, min(panelX, screenFrame.maxX - panelWidth - 5))
+            panelY = max(minY, min(panelY, screenFrame.maxY - panelHeight - 5))
         case .top:
-            // Dock 在顶部：确保面板顶部不高于 Dock 底部 + 计算的间距
-            let maxY = screenFrame.height - dockFrame.height - verticalSpacing - panelHeight
-            panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
-            panelY = max(5, min(panelY, maxY))
+            // Dock 在顶部，面板位于 Dock 下方
+            let maxY = dockFrame.minY - panelHeight - verticalSpacing
+            panelX = max(screenFrame.minX + 5, min(panelX, screenFrame.maxX - panelWidth - 5))
+            panelY = min(max(5 + screenFrame.minY, panelY), maxY)
         case .left:
-            // Dock 在左侧：确保面板左边缘不低于 Dock 右边缘 + 计算的间距
-            let minX = dockFrame.width + horizontalSpacing
-            panelX = max(minX, min(panelX, screenFrame.width - panelWidth - 5))
-            panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
+            // Dock 在左侧，面板位于 Dock 右侧
+            let minX = dockFrame.maxX + horizontalSpacing
+            panelX = max(minX, min(panelX, screenFrame.maxX - panelWidth - 5))
+            panelY = max(screenFrame.minY + 5, min(panelY, screenFrame.maxY - panelHeight - 5))
         case .right:
-            // Dock 在右侧：确保面板右边缘不高于 Dock 左边缘 + 计算的间距
-            let maxX = screenFrame.width - dockFrame.width - horizontalSpacing - panelWidth
-            panelX = max(5, min(panelX, maxX))
-            panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
+            // Dock 在右侧，面板位于 Dock 左侧
+            let maxX = dockFrame.minX - panelWidth - horizontalSpacing
+            panelX = min(max(screenFrame.minX + 5, panelX), maxX)
+            panelY = max(screenFrame.minY + 5, min(panelY, screenFrame.maxY - panelHeight - 5))
         }
 
         // 创建 SwiftUI 视图
@@ -2205,6 +2204,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let t0 = CFAbsoluteTimeGetCurrent()
         windowManager.refreshCache()  // 强制刷新缓存，确保新窗口被包含
         var windows = windowManager.getAllWindows(forceRefresh: true)
+
+        // getAllWindows 期间新应用的 AX 焦点可能尚未稳定；在窗口已入缓存后
+        // 立即再协调一次精确焦点，并用最终活动序号重新排序，避免首次打开落后。
+        if let previousPID {
+            _ = windowManager.reconcileFocusedWindow(pid: previousPID)
+            windows = windowManager.getAllWindows(forceRefresh: true)
+        }
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
         // 调试：打印 Chrome 窗口数量

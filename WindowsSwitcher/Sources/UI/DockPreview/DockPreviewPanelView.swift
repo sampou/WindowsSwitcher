@@ -917,9 +917,9 @@ enum DockPosition {
 
 // MARK: - DockGeometry
 struct DockGeometry {
-    /// 获取 Dock 的实际位置和尺寸
-    static func getDockFrame() -> CGRect {
-        guard let screen = NSScreen.main else {
+    /// 获取 Dock 的实际位置和尺寸；屏幕坐标包含 frame.origin。
+    static func getDockFrame(on screen: NSScreen? = NSScreen.main) -> CGRect {
+        guard let screen else {
             return CGRect(x: 0, y: 0, width: 800, height: 80)
         }
 
@@ -930,29 +930,29 @@ struct DockGeometry {
         switch dockPosition {
         case .bottom:
             return CGRect(
-                x: 0,
-                y: 0,
+                x: screenFrame.minX,
+                y: screenFrame.minY,
                 width: screenFrame.width,
                 height: dockSize
             )
         case .top:
             return CGRect(
-                x: 0,
-                y: screenFrame.height - dockSize,
+                x: screenFrame.minX,
+                y: screenFrame.maxY - dockSize,
                 width: screenFrame.width,
                 height: dockSize
             )
         case .left:
             return CGRect(
-                x: 0,
-                y: 0,
+                x: screenFrame.minX,
+                y: screenFrame.minY,
                 width: dockSize,
                 height: screenFrame.height
             )
         case .right:
             return CGRect(
-                x: screenFrame.width - dockSize,
-                y: 0,
+                x: screenFrame.maxX - dockSize,
+                y: screenFrame.minY,
                 width: dockSize,
                 height: screenFrame.height
             )
@@ -1001,10 +1001,10 @@ struct DockGeometry {
         return max(70, min(140, totalHeight))
     }
 
-    /// 获取推荐间距（基于屏幕分辨率和 Dock 大小）
+    /// 获取推荐间距（基于目标屏幕分辨率和 Dock 大小）
     /// 返回预览窗口与 Dock 之间的安全间距，确保不遮挡程序坞
-    static func getRecommendedSpacing() -> (vertical: CGFloat, horizontal: CGFloat) {
-        guard let screen = NSScreen.main else {
+    static func getRecommendedSpacing(on screen: NSScreen? = NSScreen.main) -> (vertical: CGFloat, horizontal: CGFloat) {
+        guard let screen else {
             return (vertical: 36, horizontal: 28)
         }
 
