@@ -71,20 +71,32 @@ class PermissionManager: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
     private var statusCheckTimer: Timer?
+    private let accessibilityCheck: () -> Bool
+    private let screenRecordingCheck: () -> Bool
+    private let notificationCenter: NotificationCenter
 
-    private init() {
+    /// 注入查询函数以测试授权变更，测试不触发系统授权请求。
+    init(accessibilityCheck: @escaping () -> Bool = { AXIsProcessTrusted() },
+         screenRecordingCheck: @escaping () -> Bool = { CGPreflightScreenCaptureAccess() },
+         notificationCenter: NotificationCenter = .default) {
+        self.accessibilityCheck = accessibilityCheck
+        self.screenRecordingCheck = screenRecordingCheck
+        self.notificationCenter = notificationCenter
         checkAllPermissions()
     }
 
     // MARK: - 检查所有权限状态
     func checkAllPermissions() {
         // 检查辅助功能权限
-        let hasAccessibility = AXIsProcessTrusted()
-        accessibilityStatus = hasAccessibility ? .authorized : .denied
+        let accessibility: PermissionStatus = accessibilityCheck() ? .authorized : .denied
 
         // 检查屏幕录制权限
-        let hasScreenRecording = CGPreflightScreenCaptureAccess()
-        screenRecordingStatus = hasScreenRecording ? .authorized : .denied
+        let screenRecording: PermissionStatus = screenRecordingCheck() ? .authorized : .denied
+        let changed = accessibility != accessibilityStatus || screenRecording != screenRecordingStatus
+        if accessibility != accessibilityStatus { accessibilityStatus = accessibility }
+        if screenRecording != screenRecordingStatus { screenRecordingStatus = screenRecording }
+        // 两个状态更新后才通知；未变更的轮询不会重复重建系统监听器。
+        if changed { notificationCenter.post(name: .permissionStatusChanged, object: self) }
     }
 
     // MARK: - 请求辅助功能权限
@@ -94,7 +106,6 @@ class PermissionManager: ObservableObject {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.checkAllPermissions()
-            NotificationCenter.default.post(name: .permissionStatusChanged, object: nil)
         }
     }
 
@@ -110,7 +121,6 @@ class PermissionManager: ObservableObject {
             }
             self.checkAllPermissions()
             completion?(self.screenRecordingStatus.isAuthorized)
-            NotificationCenter.default.post(name: .permissionStatusChanged, object: nil)
         }
     }
 
@@ -139,6 +149,7 @@ class PermissionManager: ObservableObject {
         statusCheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             self?.checkAllPermissions()
         }
+        statusCheckTimer?.tolerance = 1.0
     }
 
     func stopMonitoring() {
@@ -157,7 +168,7 @@ class PermissionManager: ObservableObject {
     func getScreenRecordingPermissionDescription() -> (title: String, description: String) {
         return (
             title: L10n.text("屏幕录制权限"),
-            description: L10n.text("WindowsSwitcher 需要屏幕录制权限来生成窗口预览缩略图，显示实时窗口内容。此权限不会录制或保存任何内容。")
+            description: L10n.text("WindowsSwitcher 需要屏幕录制权限来生成窗口预览。缩略图会保存在本地缓存中，不会通过更新请求上传；应用不录制屏幕视频。")
         )
     }
 

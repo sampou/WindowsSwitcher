@@ -60,6 +60,12 @@ struct BackgroundPreviewContainer: View {
 
 /// 切换面板高度的纯计算器，供 SwiftUI 根视图和宿主 NSPanel 共用。
 enum SwitchPanelLayout {
+    /// 使用全局屏幕坐标，支持位于主屏左侧或上下方的显示器。
+    static func centeredOrigin(panelSize: CGSize, screenFrame: CGRect) -> CGPoint {
+        CGPoint(x: screenFrame.midX - panelSize.width / 2,
+                y: screenFrame.midY - panelSize.height / 2)
+    }
+
     static let itemVerticalSpacing: CGFloat = 8
     static let bottomBarHeight: CGFloat = 20
     static let panelPadding: CGFloat = 8
@@ -237,12 +243,7 @@ struct SwitchPanelView: View {
                 viewModel.selectPrevious()
             },
             onConfirm: {
-                // 使用 selectedWindowID 直接激活（与鼠标点击逻辑一致）
-                if let windowID = viewModel.selectedWindowID {
-                    viewModel.activateWindowByID(windowID)
-                } else {
-                    viewModel.activateSelected()
-                }
+                viewModel.activateSelected()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
             },
             onDismiss: onDismiss,

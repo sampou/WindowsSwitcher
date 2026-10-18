@@ -310,9 +310,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         setupMenuBar()
         Logger.info("3. MenuBar setup complete")
 
-        // 禁用系统 Command+Tab 快捷键（需要辅助功能权限）
-        disableSystemHotKeysIfNeeded()
-
         // 注册信号处理器，捕获异常退出并恢复系统快捷键
         setupSignalHandlers()
 
@@ -392,7 +389,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     /// 面板可见时跳过（面板有自己的实时加载逻辑），避免重复截图
     private func startPreviewPrefetcher() {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        timer.schedule(deadline: .now() + 3, repeating: 6)  // 首次3秒后，之后每6秒
+        timer.schedule(deadline: .now() + 3, repeating: BackgroundPreviewPolicy.refreshInterval,
+                       leeway: .seconds(2))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             Task { @MainActor [weak self] in
@@ -408,7 +406,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     @MainActor
     private func startPreviewPrefetchTask() {
         guard !isPanelVisible, !DockPreviewManager.shared.isPreviewVisible else { return }
-        previewPrefetchTask?.cancel()
+        guard PermissionManager.shared.screenRecordingStatus.isAuthorized else { return }
+        // 上轮尚未结束时复用任务，避免慢截图被定时器不断取消并重新排队。
+        guard previewPrefetchTask == nil else { return }
         previewPrefetchGeneration &+= 1
         let generation = previewPrefetchGeneration
         let windows = windowManager.getAllWindows(forceRefresh: false)
@@ -416,13 +416,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
         let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
         let candidates = backgroundPreviewCandidates(from: windows)
+        let thumbnails = BackgroundPreviewPolicy.thumbnails(from: candidates)
+        let fullResolution = BackgroundPreviewPolicy.fullResolution(
+            from: candidates, enabled: configManager.config.behavior.showBackgroundPreview
+        )
 
         previewPrefetchTask = Task(priority: .background) { [weak self, previewGenerator] in
-            guard let self else { return }
-            await previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+            await previewGenerator.prefetchPreviews(for: thumbnails, size: previewSize)
             guard !Task.isCancelled else { return }
-            await previewGenerator.prefetchFullResolutionPreviews(for: candidates)
+            await previewGenerator.prefetchFullResolutionPreviews(for: fullResolution)
             await MainActor.run {
+                guard let self else { return }
                 guard self.previewPrefetchGeneration == generation else { return }
                 self.previewPrefetchTask = nil
             }
@@ -634,21 +638,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     /// 启动时自动显示设置界面
     private func showSettingsOnLaunch() {
+        let defaults = UserDefaults.standard
+        let firstLaunch = !defaults.bool(forKey: "hasShownInitialSettings")
+        guard firstLaunch || !PermissionManager.shared.hasAllRequiredPermissions else { return }
+        defaults.set(true, forKey: "hasShownInitialSettings")
         // 显示设置窗口
         DispatchQueue.main.async {
             self.openSettings()
         }
     }
 
-    // 检查权限并禁用系统快捷键
+    private var suppressedSystemHotKeys = Set<CGSSymbolicHotKey>()
+
+    // 按当前配置和注册结果更新接管范围，保留未被使用的原生快捷键。
     private func disableSystemHotKeysIfNeeded() {
-        let hasTrusted = AXIsProcessTrusted()
-        if hasTrusted {
-            Logger.info("Accessibility permission granted, disabling system Command+Tab")
-            disableAllSystemHotKeys()
-        } else {
-            Logger.warning("Accessibility permission not granted, cannot disable system Command+Tab")
+        let identifiers = Set(["switch", "reverseSwitch", "appSwitch", "appSwitchReverse"]
+            .filter { hotKeyManager.isRegistered($0) })
+        let required = NativeHotKeyPolicy.suppressedKeys(
+            config: configManager.config.hotKeys,
+            registeredIdentifiers: identifiers,
+            accessibilityAuthorized: AXIsProcessTrusted()
+        )
+        for key in suppressedSystemHotKeys.subtracting(required) {
+            CGSSymbolicHotKeyEnabled(key.rawValue, true)
         }
+        for key in required.subtracting(suppressedSystemHotKeys) {
+            CGSSymbolicHotKeyEnabled(key.rawValue, false)
+        }
+        suppressedSystemHotKeys = required
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -1028,6 +1045,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // 监听切换器快捷键的修饰键释放 - 根据配置动态检测
     private func setupOptionKeyMonitor() {
         Logger.info("==> setupOptionKeyMonitor called")
+        // 授权恢复可重复调用，先移除旧监听，防止一次松键触发多次激活。
+        if let monitor = globalKeyMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = localKeyMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = globalMouseMonitor { NSEvent.removeMonitor(monitor) }
+        globalKeyMonitor = nil
+        localKeyMonitor = nil
+        globalMouseMonitor = nil
 
         // 使用全局监听器捕获修饰键变化事件（即使面板显示时也能捕获）
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
@@ -1311,39 +1335,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     @MainActor
     private func activateSelectedAndHide() {
         Logger.info("=== activateSelectedAndHide called ===")
-
-        // 先立即隐藏面板（无动画，用户感知更快）
-        hideSwitchPanelImmediately()
-
         guard let vm = switchPanelViewModel else {
             Logger.error("switchPanelViewModel is nil! Cannot activate window.")
             return
         }
-
-        // 1. 优先使用 selectedWindowID 激活
-        if let windowID = vm.selectedWindowID {
-            Logger.modifierState("释放")
-            if let window = vm.filteredWindows.first(where: { $0.id == windowID }) {
-                Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过 selectedWindowID")
-            }
-            vm.activateWindowByID(windowID)
-            return
-        }
-
-        // 2. 降级：使用 selectedWindow
-        guard let selectedWindow = vm.selectedWindow else {
-            Logger.warning("No selected window to activate (selectedWindow is nil)")
-            return
-        }
-
+        let target = vm.prepareSelectedWindowForActivation()
+        // 会话协调完成后立即隐藏；后续目标核验使用稳定 ID。
+        hideSwitchPanelImmediately()
+        guard let target else { return }
         Logger.modifierState("释放")
-        Logger.windowActivate("\(selectedWindow.appName) - \(selectedWindow.windowTitle)", result: "通过 selectedWindow")
-        windowManager.activateWindow(selectedWindow)
+        vm.activateWindowByID(target.id)
     }
 
     /// 立即隐藏切换面板（无动画，用于释放修饰键时）
     @MainActor
     private func hideSwitchPanelImmediately() {
+        switchPanelViewModel?.stopPreviewLoading()
         Logger.panelState("隐藏", detail: "immediately, wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
         switchPanelViewModel?.endSameAppSwitchSession()
 
@@ -1495,6 +1502,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         }
 
         registerWindowLayoutHotKeys(using: hotKeyConfig.windowLayout)
+        disableSystemHotKeysIfNeeded()
     }
 
     /// 注销全部窗口布局全局快捷键。
@@ -1869,6 +1877,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         permissionManager.checkAllPermissions()
 
         Logger.info("Permission check - Accessibility: \(permissionManager.accessibilityStatus.rawValue), Screen Recording: \(permissionManager.screenRecordingStatus.rawValue)")
+        Logger.operation("权限状态", detail: "Accessibility=\(permissionManager.accessibilityStatus.rawValue), ScreenRecording=\(permissionManager.screenRecordingStatus.rawValue)")
 
         // 先调用 macOS 原生 API。旧版只打开设置页面，从未触发系统授权提示。
         let screenPermissionKey = "hasRequestedScreenPermission"
@@ -1930,12 +1939,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            MainActor.assumeIsolated {
             let pm = PermissionManager.shared
             let hasPermissions = pm.hasAllRequiredPermissions
             self?.updateMenuBarIcon(hasPermissions: hasPermissions)
+            self?.disableSystemHotKeysIfNeeded()
+
+            // 初次启动未授权时，系统监听器可能创建失败；授权后重建即可恢复使用。
+            if pm.accessibilityStatus.isAuthorized {
+                self?.setupOptionKeyMonitor()
+                if self?.isPanelVisible == true { self?.setupEscKeyMonitor() }
+                if ConfigManager.shared.config.dockPreview.enabled {
+                    self?.stopDockPreview()
+                    self?.startDockPreview()
+                }
+            } else {
+                self?.stopDockPreview()
+                self?.hideSwitchPanel()
+            }
+            if !pm.screenRecordingStatus.isAuthorized {
+                self?.cancelPreviewPrefetch()
+            }
 
             if hasPermissions {
                 Logger.info("All permissions granted - UI updated")
+            }
             }
         }
     }
@@ -2289,6 +2317,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         )
         panel.isFloatingPanel = true
         panel.level = .popUpMenu  // 使用 popUpMenu 层级，比 floating 更高
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -2363,20 +2392,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         // 手动计算居中位置
         if let screen = NSScreen.main {
-            // 使用屏幕完整 frame（不包括 Dock 和菜单栏）
-            let screenFrame = screen.frame
-            // 计算居中位置（macOS Y 坐标从底部开始）
-            let x = (screenFrame.width - panelWidth) / 2
-            let y = (screenFrame.height - panelHeight) / 2
-            Logger.info("==> Panel position: x=\(x), y=\(y), screenFrame=\(screenFrame), panelSize=\(newSize)")
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
+            let screenFrame = screen.visibleFrame
+            let origin = SwitchPanelLayout.centeredOrigin(panelSize: newSize, screenFrame: screenFrame)
+            Logger.info("==> Panel position: x=\(origin.x), y=\(origin.y), screenFrame=\(screenFrame), panelSize=\(newSize)")
+            panel.setFrameOrigin(origin)
         }
 
         // 先用后台缓存的预览图填充，避免后面窗口空白（命中缓存时瞬时显示）
         prefillCachedPreviews(for: sortedWindows, viewModel: vm)
 
         // 先加载第一个窗口的预览图，减少空白闪烁
-        preloadFirstPreview(for: sortedWindows, viewModel: vm)
+        vm.refreshSelectedWindowPreview()
 
         // 显示背景预览窗口（在切换器面板之前）
         Logger.info("==> Initial selectedWindow: \(vm.selectedWindow?.appName ?? "nil"), selectedIndex: \(vm.selectedIndex)")
@@ -2391,6 +2417,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         let totalTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         Logger.info("==> showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
+        // 记录无窗口标题的性能证据，供只读采样工具统计；不包含热键等待或动画。
+        Logger.operation("面板性能", detail: "showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
 
         // 继续异步加载其余窗口缩略图
         preloadRemainingPreviews(windows: sortedWindows, viewModel: vm)
@@ -2845,6 +2873,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     @MainActor
     func hideSwitchPanel() {
+        switchPanelViewModel?.stopPreviewLoading()
         // 操作日志：面板隐藏
         Logger.panelState("隐藏", detail: "wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
         switchPanelViewModel?.endSameAppSwitchSession()

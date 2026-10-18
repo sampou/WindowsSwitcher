@@ -23,6 +23,21 @@ struct PreviewCacheConfig {
     static let maxConcurrentGeneration = 4
 }
 
+/// 后台只预热近期窗口；面板打开后仍加载全部窗口，不截断用户可见列表。
+enum BackgroundPreviewPolicy {
+    static let refreshInterval: TimeInterval = 15
+    static let thumbnailLimit = 12
+    static let fullResolutionLimit = 2
+
+    static func thumbnails(from recentWindows: [WindowModel]) -> [WindowModel] {
+        Array(recentWindows.filter { $0.isOnScreen }.prefix(thumbnailLimit))
+    }
+
+    static func fullResolution(from recentWindows: [WindowModel], enabled: Bool) -> [WindowModel] {
+        enabled ? Array(recentWindows.filter { $0.isOnScreen }.prefix(fullResolutionLimit)) : []
+    }
+}
+
 /// 背景预览的大图仅保留在内存中，避免将缩略图放大后显示模糊画面。
 private enum FullResolutionPreviewCacheConfig {
     static let maxMemorySize = 12
@@ -191,6 +206,66 @@ actor PreviewCache {
 }
 
 // MARK: - 预览生成器
+/// 将 Task 取消传递给截图队列；排队请求立即结束，运行中的系统截图只丢弃结果。
+/// 锁保护 continuation 的唯一恢复，避免取消与截图完成同时发生时重复恢复。
+final class PreviewCaptureRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<NSImage?, Never>?
+    private var operation: BlockOperation?
+    private var cancelled = false
+
+    static func capture(on queue: OperationQueue, priority: Operation.QueuePriority = .normal,
+                        using capture: @escaping @Sendable () -> NSImage?) async -> NSImage? {
+        let request = PreviewCaptureRequest()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                request.start(on: queue, priority: priority, capture: capture, continuation: continuation)
+            }
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    private func start(on queue: OperationQueue, priority: Operation.QueuePriority,
+                       capture: @escaping @Sendable () -> NSImage?,
+                       continuation: CheckedContinuation<NSImage?, Never>) {
+        lock.lock()
+        guard !cancelled else {
+            lock.unlock()
+            continuation.resume(returning: nil)
+            return
+        }
+        self.continuation = continuation
+        let operation = BlockOperation { [self] in finish(capture()) }
+        operation.queuePriority = priority
+        self.operation = operation
+        lock.unlock()
+        queue.addOperation(operation)
+    }
+
+    private func finish(_ image: NSImage?) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        operation = nil
+        let result = cancelled ? nil : image
+        lock.unlock()
+        pending?.resume(returning: result)
+    }
+
+    private func cancel() {
+        lock.lock()
+        cancelled = true
+        let pending = continuation
+        let queuedOperation = operation
+        continuation = nil
+        operation = nil
+        lock.unlock()
+        queuedOperation?.cancel()
+        pending?.resume(returning: nil)
+    }
+}
+
 final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
     private let cache = PreviewCache()
     /// 所有生成器共享同一限并发队列，避免多个面板各自创建并发配额。
@@ -238,6 +313,7 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
 
     /// 生成单个窗口预览（带缓存）
     func generatePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
         // 检查缓存
         if let cached = await cache.get(for: window.id) {
             return cached
@@ -245,44 +321,26 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
 
         // 生成新预览
         let windowID = window.id
-        let cacheRef = self.cache
-
-        return await withCheckedContinuation { continuation in
-            Self.interactiveGenerationQueue.addOperation {
-                let image = Self.captureWindowSync(windowID, size: size)
-                continuation.resume(returning: image)
-
-                if let image = image {
-                    Task {
-                        await cacheRef.set(image, for: windowID)
-                    }
-                    // 同步更新内存缓存镜像（供主线程同步快速读取）
-                    self.updateSyncCache(windowID: windowID, image: image)
-                }
-            }
+        let image = await PreviewCaptureRequest.capture(on: Self.interactiveGenerationQueue) {
+            Self.captureWindowSync(windowID, size: size)
         }
+        guard !Task.isCancelled, let image else { return nil }
+        updateSyncCache(windowID: windowID, image: image)
+        Task { [cache] in await cache.set(image, for: windowID) }
+        return image
     }
 
     /// 生成实时预览（强制刷新缓存）
     func generateRealtimePreview(for window: WindowModel, size: CGSize) async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
         let windowID = window.id
-        let cacheRef = self.cache
-
-        return await withCheckedContinuation { continuation in
-            Self.interactiveGenerationQueue.addOperation {
-                let image = Self.captureWindowSync(windowID, size: size)
-                continuation.resume(returning: image)
-
-                // 更新缓存，确保下次使用最新内容
-                if let image = image {
-                    Task {
-                        await cacheRef.set(image, for: windowID)
-                    }
-                    // 同步更新内存缓存镜像
-                    self.updateSyncCache(windowID: windowID, image: image)
-                }
-            }
+        let image = await PreviewCaptureRequest.capture(on: Self.interactiveGenerationQueue) {
+            Self.captureWindowSync(windowID, size: size)
         }
+        guard !Task.isCancelled, let image else { return nil }
+        updateSyncCache(windowID: windowID, image: image)
+        Task { [cache] in await cache.set(image, for: windowID) }
+        return image
     }
 
     /// 仅从缓存获取预览图（不触发生成），用于面板唤起时快速填充
@@ -378,10 +436,17 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
     func prefetchPreviews(for windows: [WindowModel], size: CGSize) async {
         await withTaskGroup(of: Void.self) { group in
             for window in windows {
+                guard !Task.isCancelled else { break }
                 // 只对陈旧的缓存重新截图，新鲜的跳过
                 guard await cache.isStale(for: window.id) else { continue }
                 group.addTask { [self] in
-                    _ = await self.generatePreview(for: window, size: size)
+                    // 陈旧缓存必须重新截图；后台使用低优先级队列，不占交互队列。
+                    let image = await PreviewCaptureRequest.capture(on: Self.generationQueue, priority: .veryLow) {
+                        Self.captureWindowSync(window.id, size: size)
+                    }
+                    guard !Task.isCancelled, let image else { return }
+                    updateSyncCache(windowID: window.id, image: image)
+                    await cache.set(image, for: window.id)
                 }
             }
         }
@@ -406,23 +471,19 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         priority: Operation.QueuePriority = .normal,
         forceRefresh: Bool = false
     ) async -> NSImage? {
+        guard !Task.isCancelled else { return nil }
         let windowID = window.id
         if !forceRefresh, let cached = getCachedFullResolutionPreviewSync(for: window) {
             return cached
         }
         let windowFrame = window.frame
 
-        return await withCheckedContinuation { continuation in
-            let operation = BlockOperation {
-                let image = Self.captureWindowFullResolution(windowID, windowFrame: windowFrame)
-                if let image {
-                    self.updateFullResolutionSyncCache(for: window, image: image)
-                }
-                continuation.resume(returning: image)
-            }
-            operation.queuePriority = priority
-            Self.generationQueue.addOperation(operation)
-        }
+        let image = await Self.captureFullResolutionPreview(
+            windowID: windowID, windowFrame: windowFrame, priority: priority
+        )
+        guard !Task.isCancelled, let image else { return nil }
+        updateFullResolutionSyncCache(for: window, image: image)
+        return image
     }
 
     /// 面板隐藏期间预热近期窗口的大图。面板唤起时只读取缓存，绝不等待截图。
@@ -430,13 +491,14 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         let candidates = Array(windows.prefix(FullResolutionPreviewCacheConfig.maxMemorySize))
         await withTaskGroup(of: Void.self) { group in
             for window in candidates where isFullResolutionCacheStale(for: window) {
+                guard !Task.isCancelled else { break }
                 group.addTask { [self] in
                     let image = await Self.captureFullResolutionPreview(
                         windowID: window.id,
                         windowFrame: window.frame,
                         priority: .veryLow
                     )
-                    if let image {
+                    if !Task.isCancelled, let image {
                         updateFullResolutionSyncCache(for: window, image: image)
                     }
                 }
@@ -456,12 +518,8 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
         windowFrame: CGRect,
         priority: Operation.QueuePriority
     ) async -> NSImage? {
-        await withCheckedContinuation { continuation in
-            let operation = BlockOperation {
-                continuation.resume(returning: captureWindowFullResolution(windowID, windowFrame: windowFrame))
-            }
-            operation.queuePriority = priority
-            generationQueue.addOperation(operation)
+        await PreviewCaptureRequest.capture(on: generationQueue, priority: priority) {
+            captureWindowFullResolution(windowID, windowFrame: windowFrame)
         }
     }
 
@@ -486,7 +544,7 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
             .null,
             .optionIncludingWindow,
             windowID,
-            [.boundsIgnoreFraming, .bestResolution]
+            [.boundsIgnoreFraming, .nominalResolution]
         ) else { return nil }
 
         let targetSize = NSSize(width: size.width, height: size.height)

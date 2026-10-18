@@ -15,7 +15,7 @@
   English · <a href="README_CN.md">简体中文</a>
 </p>
 
-Windows Switcher is a native macOS window switcher inspired by the Windows Alt+Tab experience. It combines complete window thumbnails, fuzzy search, configurable ordering, same-app switching, Dock previews, and keyboard-driven window layouts.
+Windows Switcher is a native macOS window switcher inspired by the Windows Alt+Tab experience. It combines window thumbnails, configurable ordering, same-app switching, Dock previews, and keyboard-driven window layouts.
 
 ## Features
 
@@ -26,6 +26,8 @@ Windows Switcher is a native macOS window switcher inspired by the Windows Alt+T
 - Sort by most recently used, application name, window title, or application group.
 - Configure preview size and grid columns, and optionally include minimized or hidden windows.
 - Navigate with the keyboard or mouse while keeping the selected item visible.
+
+The switcher currently has no search input. Use keyboard navigation, sorting, or same-app switching to find a window.
 
 ### Same-app switching
 
@@ -52,7 +54,7 @@ Windows Switcher is a native macOS window switcher inspired by the Windows Alt+T
 
 - Light, dark, and system appearance modes.
 - Simplified Chinese and English localization, with a Settings option to follow macOS or choose either language for the app.
-- SwiftUI interfaces integrated with AppKit panels, Carbon global hotkeys, Accessibility APIs, and ScreenCaptureKit.
+- SwiftUI interfaces integrated with AppKit panels, Carbon global hotkeys, Accessibility APIs, and CoreGraphics window capture.
 - Persistent settings, window activity ordering, launch-at-login support, and update checking.
 
 ## Requirements
@@ -84,6 +86,8 @@ A ZIP artifact is also published for environments where DMG mounting is unavaila
 ## Default shortcuts
 
 All shortcuts can be changed in **Settings → Shortcuts**.
+
+The table below describes a fresh installation. Upgrades retain your saved shortcuts; check Settings for the combinations active on your Mac.
 
 | Action | Default |
 | --- | --- |

@@ -132,6 +132,38 @@ final class SameAppSwitchSessionTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedWindowID, 3)
     }
 
+    func testGlobalActivationRejectsWindowClosedAfterSelection() {
+        let window = makeWindow(id: 1, app: "Editor", bundleID: "com.example.editor")
+        let manager = SessionWindowManager(windows: [window], sequence: [1: 1])
+        let viewModel = makeViewModel(windows: [window], manager: manager)
+        manager.windows = []
+        viewModel.activateWindowByID(window.id)
+        XCTAssertTrue(manager.activatedWindowIDs.isEmpty)
+    }
+
+    func testActivationRejectsReusedWindowIDFromDifferentOwner() {
+        let window = makeWindow(id: 1, app: "Editor", bundleID: "com.example.editor")
+        let manager = SessionWindowManager(windows: [window], sequence: [1: 1])
+        let viewModel = makeViewModel(windows: [window], manager: manager)
+        manager.windows = [makeWindow(id: 1, app: "Other", bundleID: "com.example.other")]
+        viewModel.activateWindowByID(window.id)
+        XCTAssertTrue(manager.activatedWindowIDs.isEmpty)
+    }
+
+    func testReleasePreparationReconcilesSessionBeforeEndingIt() {
+        let windows = (1...3).map { makeWindow(id: CGWindowID($0), app: "Editor", bundleID: "com.example.editor") }
+        let manager = SessionWindowManager(windows: windows, sequence: [1: 3, 2: 2, 3: 1])
+        let viewModel = makeViewModel(windows: windows, manager: manager)
+        viewModel.beginSameAppSwitchSession(bundleIdentifier: "com.example.editor", initialIndex: 1)
+        manager.windows = [windows[0], windows[2]]
+        let target = viewModel.prepareSelectedWindowForActivation()
+        viewModel.stopPreviewLoading()
+        viewModel.endSameAppSwitchSession()
+        XCTAssertEqual(target?.id, 3)
+        if let target { viewModel.activateWindowByID(target.id) }
+        XCTAssertEqual(manager.activatedWindowIDs, [3])
+    }
+
     private func makeViewModel(windows: [WindowModel], manager: SessionWindowManager) -> SwitchPanelViewModel {
         SwitchPanelViewModel(
             windows: windows,

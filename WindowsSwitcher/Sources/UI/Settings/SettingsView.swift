@@ -227,6 +227,8 @@ struct GeneralSettingsView: View {
     @ObservedObject private var config = ConfigManager.shared
     @ObservedObject private var launchAtLogin = LaunchAtLoginManager.shared
     @ObservedObject private var updateService = UpdateService.shared
+    @ObservedObject private var permissions = PermissionManager.shared
+    @State private var didCheckForUpdates = false
     @State private var updateNotificationController: UpdateNotificationWindowController?
 
     var body: some View {
@@ -238,6 +240,21 @@ struct GeneralSettingsView: View {
                     description: "登录后自动在后台运行",
                     isOn: $launchAtLogin.isEnabled
                 )
+            }
+
+            SettingsSection(title: "系统权限", icon: "lock.shield") {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+                    permissionRow(title: "辅助功能权限", status: permissions.accessibilityStatus,
+                                  openSettings: permissions.openAccessibilitySettings)
+                    permissionRow(title: "屏幕录制权限", status: permissions.screenRecordingStatus,
+                                  openSettings: permissions.openScreenRecordingSettings)
+                    Text(L10n.text("辅助功能用于切换和布局；屏幕录制用于预览。授权后点击重新检查，仍无预览时退出并重新打开应用。"))
+                        .font(FontSystem.captionMedium)
+                        .foregroundStyle(DesignTokens.Colors.secondaryLabel)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(L10n.text("重新检查权限")) { permissions.checkAllPermissions() }
+                        .buttonStyle(.bordered)
+                }
             }
 
             // 更新设置
@@ -259,11 +276,12 @@ struct GeneralSettingsView: View {
 
                         Spacer()
 
-                        // 手动检查按钮（仅当自动检查关闭时显示）
-                        if !config.config.update.autoCheckEnabled {
+                        // 自动检查开启时也允许手动重试，进行中禁用以避免重复请求。
                             Button {
                                 Task {
-                                    await updateService.checkForUpdate()
+                                    didCheckForUpdates = false
+                                    await updateService.forceCheckForUpdate()
+                                    didCheckForUpdates = true
                                     if updateService.updateAvailable {
                                         await MainActor.run {
                                             showUpdateNotification()
@@ -281,9 +299,9 @@ struct GeneralSettingsView: View {
                                 }
                             }
                             .buttonStyle(.plain)
-                            .focusable(false)
+                            .disabled(updateService.isChecking)
+                            .accessibilityLabel(L10n.text("检查更新"))
                             .help(L10n.text("检查更新"))
-                        }
                     }
 
                     // 自动下载选项（仅当自动检查打开时显示）
@@ -314,6 +332,11 @@ struct GeneralSettingsView: View {
                     }
 
                     // 当前版本信息
+                    if didCheckForUpdates, !updateService.isChecking,
+                       updateService.errorMessage == nil, !updateService.updateAvailable {
+                        Label(L10n.text("已是最新版本"), systemImage: "checkmark.circle")
+                            .font(FontSystem.captionMedium)
+                    }
                     HStack {
                         Text(L10n.format("当前版本: v%@ (%@)", updateService.currentVersion, String(updateService.currentBuildNumber)))
                             .font(FontSystem.captionMedium)
@@ -345,6 +368,21 @@ struct GeneralSettingsView: View {
             }
 
             Spacer()
+        }
+    }
+
+    private func permissionRow(title: String, status: PermissionStatus,
+                               openSettings: @escaping () -> Void) -> some View {
+        HStack(spacing: DesignTokens.Spacing.sm) {
+            Text(L10n.text(title)).font(FontSystem.bodyMedium)
+            Spacer(minLength: DesignTokens.Spacing.sm)
+            Label(L10n.text(status.isAuthorized ? "已授权" : "未授权"),
+                  systemImage: status.isAuthorized ? "checkmark.circle" : "exclamationmark.circle")
+                .font(FontSystem.captionMedium)
+            if !status.isAuthorized {
+                Button(L10n.text("打开系统设置"), action: openSettings)
+                    .buttonStyle(.bordered)
+            }
         }
     }
 
