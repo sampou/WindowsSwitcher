@@ -28,6 +28,8 @@ class DockEventMonitor: ObservableObject {
     private var runLoopSource: CFRunLoopSource?
     private var hoverTimer: Timer?
     private var hideTimer: Timer?  // 延迟隐藏计时器
+    /// 隐藏计时器令牌，用于识别回调是否属于当前计时器
+    private var hideTimerToken: UUID?
 
     // MARK: - 性能优化：节流与缓存
     private var lastMouseMovedTime: CFTimeInterval = 0
@@ -41,7 +43,6 @@ class DockEventMonitor: ObservableObject {
     private let iconLayoutCacheExpiry: TimeInterval = 0.5  // 500ms 内复用图标布局
     private var lastHoveredBundleID: String?  // 上次悬停的图标，用于快速判断是否变化
     private var hoverTimerBundleID: String?
-    private var hoverTimerFrame: CGRect?
     private var hoverGeneration: UInt64 = 0
 
     // MARK: - 缓存
@@ -115,6 +116,8 @@ class DockEventMonitor: ObservableObject {
             // 刚进入 Dock 区域，预先构建缓存
             _ = getDockAppOrderWithBundleID()
             _ = getRunningAppsLookup()
+            // 用户可能在运行期间调整 Dock 位置，重新读取以免面板定位到错误的一侧
+            updateDockPosition()
             Logger.debug("[Dock] 进入 Dock 区域，缓存已构建")
         } else if !isInDockArea && wasInDockArea {
             // 刚离开 Dock 区域，清除缓存
@@ -137,11 +140,13 @@ class DockEventMonitor: ObservableObject {
             // 取消隐藏计时器
             hideTimer?.invalidate()
             hideTimer = nil
+            hideTimerToken = nil
         } else if isMouseInPreviewWindow {
             // 在预览窗口内，保持显示
             hoverTimer?.invalidate()
             hideTimer?.invalidate()
             hideTimer = nil
+            hideTimerToken = nil
         } else {
             // 既不在 Dock 也不在预览窗口，启动隐藏计时器
             cancelHoverTimer()
@@ -172,6 +177,7 @@ class DockEventMonitor: ObservableObject {
             // 鼠标进入预览窗口，取消隐藏计时器
             hideTimer?.invalidate()
             hideTimer = nil
+            hideTimerToken = nil
         } else {
             // 鼠标离开预览窗口，检查是否也在 Dock 区域
             let dockFrame = getCachedDockFrame(for: mouseLocation)
@@ -188,10 +194,18 @@ class DockEventMonitor: ObservableObject {
         guard hideTimer == nil else { return }
         hoverGeneration &+= 1
         let generation = hoverGeneration
+        // 独立令牌：回调必须能识别"自己是不是当前计时器"，
+        // 否则旧回调会清掉新计时器，或代号失配后计时器永久占位导致后续隐藏全部失效。
+        let token = UUID()
+        hideTimerToken = token
 
         hideTimer = Timer.scheduledTimer(withTimeInterval: hideDelay, repeats: false) { [weak self] _ in
-            guard let self, self.hoverGeneration == generation else { return }
-            self.hideTimer = nil
+            guard let self else { return }
+            if self.hideTimerToken == token {
+                self.hideTimerToken = nil
+                self.hideTimer = nil
+            }
+            guard self.hoverGeneration == generation else { return }
             // 已重新进入 Dock/预览窗口时不清理新一轮悬停状态。
             let location = NSEvent.mouseLocation
             let inDock = self.getCachedDockFrame(for: location).insetBy(dx: -30, dy: -30).contains(location)
@@ -210,6 +224,7 @@ class DockEventMonitor: ObservableObject {
         hoverTimer = nil
         hideTimer?.invalidate()
         hideTimer = nil
+        hideTimerToken = nil
         isMouseInPreviewWindow = false
         // 重置所有悬停状态
         hoveredAppBundleID = nil
@@ -231,6 +246,38 @@ class DockEventMonitor: ObservableObject {
         cachedDockFrame = nil
         dockFrameCacheTime = nil
     }
+
+    // MARK: - 测试访问器（仅用于单元测试断言 R3 关闭项：重复 start/stop 不累积监听器、不残留悬停状态）
+
+    /// 当前持有的全局/本地鼠标监听器数量（0 表示 stop 已彻底清理）。
+    var activeMonitorCount: Int {
+        let mirror = Mirror(reflecting: self)
+        guard let value = mirror.children.first(where: { $0.label == "globalMouseMonitor" })?.value else { return 0 }
+        return Self.isNonNilMonitor(value) ? 1 : 0
+    }
+
+    var activeLocalMonitorCount: Int {
+        let mirror = Mirror(reflecting: self)
+        guard let value = mirror.children.first(where: { $0.label == "localMouseMonitor" })?.value else { return 0 }
+        return Self.isNonNilMonitor(value) ? 1 : 0
+    }
+
+    /// Mirror 反射出来的 optional 值有 `Optional<Any>.none` / `Optional<Any>.some(NSObject?)` 两种形态，
+    /// 这里统一用 Optional 自身判空，避免 `_OptionalNilComparison` 比较 NSObject 失败。
+    private static func isNonNilMonitor(_ reflected: Any) -> Bool {
+        let mirror = Mirror(reflecting: reflected)
+        guard mirror.displayStyle == .optional else { return false }
+        return !mirror.children.isEmpty
+    }
+
+    /// 模拟悬停状态（仅用于单元测试绕开真实鼠标事件）。
+    func simulateHoverForTesting(bundleID: String, iconCenter: CGPoint) {
+        hoveredAppBundleID = bundleID
+        hoveredIconInfo = DockIconInfo(bundleID: bundleID, frame: .zero, center: iconCenter)
+    }
+
+    var hoveredAppBundleIDForTesting: String? { hoveredAppBundleID }
+    var hoveredIconInfoForTesting: DockIconInfo? { hoveredIconInfo }
 
     // 当前鼠标所在屏幕；多屏和远程虚拟屏不能固定使用 NSScreen.main。
     private func screenContaining(_ location: CGPoint) -> NSScreen? {
@@ -283,6 +330,8 @@ class DockEventMonitor: ObservableObject {
 
         // 本次遍历得到的图标布局，用于更新缓存
         var layoutSnapshot: [(bundleID: String, frame: CGRect)] = []
+        // 命中的图标；遍历结束后返回，保证布局缓存是完整的
+        var hitInfo: DockIconInfo?
 
         for child in children {
             var roleRef: CFTypeRef?
@@ -311,15 +360,18 @@ class DockEventMonitor: ObservableObject {
                         let iconRect = CGRect(origin: position, size: size)
 
                         // 收集图标布局用于缓存（无论是否命中都记录）
+                        // 解析顺序很重要：图标 AX 名称与运行中应用的本地化名称一致，
+                        // 比按下标猜测可靠；下标兜底只有在 AX 容器与 plist 列表一一对应时才成立，
+                        // 放在最后避免把图标解析到另一个应用。
                         var cachedBundleID: String?
                         if cachedBundleID == nil {
                             cachedBundleID = getBundleIDFromDockIcon(listChild)
                         }
                         if cachedBundleID == nil {
-                            cachedBundleID = getBundleIDByDockIndex(childIdx)
+                            cachedBundleID = getBundleIDFromRunningApps(listChild)
                         }
                         if cachedBundleID == nil {
-                            cachedBundleID = getBundleIDFromRunningApps(listChild)
+                            cachedBundleID = getBundleIDByDockIndex(childIdx)
                         }
                         if let bid = cachedBundleID {
                             layoutSnapshot.append((bid, iconRect))
@@ -339,9 +391,12 @@ class DockEventMonitor: ObservableObject {
                                 )
                                 let center = CGPoint(x: macFrame.midX, y: macFrame.midY)
 
-                                // 不在命中时提前写入缓存；完整遍历结束后统一缓存布局。
-                                lastHoveredBundleID = bundleID
-                                return DockIconInfo(bundleID: bundleID, frame: macFrame, center: center)
+                                // 命中后继续遍历，把完整布局写入缓存：
+                                // 否则缓存只在"未命中"时更新，悬停图标超过 500ms 后
+                                // 每次鼠标移动都要全量遍历 Dock 的 AX 树（主线程）。
+                                if hitInfo == nil {
+                                    hitInfo = DockIconInfo(bundleID: bundleID, frame: macFrame, center: center)
+                                }
                             }
                         }
                     }
@@ -349,8 +404,12 @@ class DockEventMonitor: ObservableObject {
             }
         }
 
-        // 遍历完未命中，仍更新布局缓存（供下次快速命中）
+        // 遍历结束后统一缓存完整布局并返回命中的图标
         updateDockIconLayoutCache(layoutSnapshot)
+        if let hitInfo {
+            lastHoveredBundleID = hitInfo.bundleID
+            return hitInfo
+        }
         return nil
     }
 
@@ -1211,6 +1270,7 @@ class DockEventMonitor: ObservableObject {
         hoverTimer = nil
         hideTimer?.invalidate()
         hideTimer = nil
+        hideTimerToken = nil
         wasInDockArea = false
         hoveredAppBundleID = nil
         hoveredIconInfo = nil
@@ -1265,9 +1325,11 @@ class DockEventMonitor: ObservableObject {
     private func startHoverTimer(for iconInfo: DockIconInfo) {
         // 同一图标持续收到 mouseMoved 时不重置计时器，否则 30ms 节流会持续推迟
         // 默认 50ms 的 hover 回调，导致悬停预览永远无法触发。
+        //
+        // 只比较 bundleID：Dock 开启放大效果时图标 frame 会随动画持续变化，
+        // 若把 frame 纳入比较，计时器会被反复重置，预览永远打不开。
         if hoverTimer != nil,
-           hoverTimerBundleID == iconInfo.bundleID,
-           hoverTimerFrame == iconInfo.frame {
+           hoverTimerBundleID == iconInfo.bundleID {
             return
         }
 
@@ -1275,13 +1337,11 @@ class DockEventMonitor: ObservableObject {
         hoverGeneration &+= 1
         let generation = hoverGeneration
         hoverTimerBundleID = iconInfo.bundleID
-        hoverTimerFrame = iconInfo.frame
 
         hoverTimer = Timer.scheduledTimer(withTimeInterval: hoverDelay, repeats: false) { [weak self] _ in
             guard let self, self.hoverGeneration == generation else { return }
             self.hoverTimer = nil
             self.hoverTimerBundleID = nil
-            self.hoverTimerFrame = nil
             // 在同一个主线程闭包内先更新图标信息，再更新 bundle，避免 Manager 读取旧坐标。
             self.hoveredIconInfo = iconInfo
             self.hoveredAppBundleID = iconInfo.bundleID
@@ -1315,7 +1375,6 @@ class DockEventMonitor: ObservableObject {
         hoverTimer = nil
         hoverGeneration &+= 1
         hoverTimerBundleID = nil
-        hoverTimerFrame = nil
 
         if hoveredAppBundleID != nil {
             hoveredAppBundleID = nil
@@ -1323,14 +1382,23 @@ class DockEventMonitor: ObservableObject {
         }
     }
 
-    private func getDockFrame() -> CGRect {
-        guard let screen = screenContaining(mouseLocation) else {
-            return CGRect(x: 0, y: 0, width: 800, height: 80)
+    /// 指定位置是否位于程序坞区域内（按该位置所在屏幕判断）。
+    ///
+    /// Dock 区域判定必须与悬停检测使用同一套屏幕感知实现：
+    /// 若这里固定用主屏，副屏上的 Dock 悬停会被判定为"离开 Dock"，预览立即收起。
+    func isLocationInDockArea(_ location: CGPoint) -> Bool {
+        let frame: CGRect
+        if let screen = screenContaining(location) {
+            frame = dockFrame(on: screen)
+        } else {
+            frame = getDockFrame()
         }
+        return frame.insetBy(dx: -30, dy: -30).contains(location)
+    }
 
+    /// 指定屏幕上的 Dock 区域
+    private func dockFrame(on screen: NSScreen) -> CGRect {
         let screenFrame = screen.frame
-
-        // 从系统获取 Dock 尺寸
         let dockSize = getDockSize()
 
         switch dockPosition {
@@ -1363,6 +1431,14 @@ class DockEventMonitor: ObservableObject {
                 height: screenFrame.height
             )
         }
+    }
+
+    /// 鼠标所在屏幕上的 Dock 区域
+    private func getDockFrame() -> CGRect {
+        guard let screen = screenContaining(mouseLocation) else {
+            return CGRect(x: 0, y: 0, width: 800, height: 80)
+        }
+        return dockFrame(on: screen)
     }
 
     private func getDockSize() -> CGFloat {

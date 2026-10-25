@@ -109,10 +109,11 @@ final class UIIntegrationTests: XCTestCase {
     }
 
     func testShowOffScreenToggle() {
-        ConfigManager.shared.config.behavior.showOffScreenWindows = false
+        // 已最小化的窗口由独立开关控制：关闭后不出现在切换器列表中
+        ConfigManager.shared.config.behavior.showMinimizedWindows = false
         viewModel.applyFilter()
         XCTAssertFalse(viewModel.filteredWindows.contains { $0.isMinimized })
-        ConfigManager.shared.config.behavior.showOffScreenWindows = true
+        ConfigManager.shared.config.behavior.showMinimizedWindows = true
     }
 
     // MARK: - DesignTokens 集成验证

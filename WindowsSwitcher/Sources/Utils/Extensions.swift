@@ -43,6 +43,8 @@ extension Notification.Name {
     static let appSwitchReverseHotKeyPressed = Notification.Name("com.windowsswitcher.appSwitchReverseHotKey")
     static let windowListDidChange = Notification.Name("com.windowsswitcher.windowListDidChange")
     static let dockPreviewWindowSelected = Notification.Name("com.windowsswitcher.dockPreviewWindowSelected")
+    /// 用户在程序坞图标上悬停进入预览流程；AppDelegate 据此取消后台预取并让出截图队列。
+    static let dockPreviewHoverStarted = Notification.Name("com.windowsswitcher.dockPreviewHoverStarted")
     static let permissionStatusChanged = Notification.Name("com.windowsswitcher.permissionStatusChanged")
     // 安装相关通知
     static let showInstallProgress = Notification.Name("com.windowsswitcher.showInstallProgress")

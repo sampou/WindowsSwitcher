@@ -14,16 +14,19 @@ final class WindowOrderingTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), [10, 20])
     }
 
-    func testRecentFallsBackToTimestampThenDescendingWindowID() {
+    func testRecentFallsBackToTimestampThenAscendingWindowID() {
+        // 稳定兜底使用 ID ASC；详见《窗口布局、应用搜索、排序与窗口画布详细设计.md》§4
         let lowerID = makeWindow(id: 10, app: "A", title: "One", time: fixedDate)
         let higherID = makeWindow(id: 20, app: "A", title: "Two", time: fixedDate)
 
         let result = ordering.sort([lowerID, higherID], by: .recent)
 
-        XCTAssertEqual(result.map(\.id), [20, 10])
+        XCTAssertEqual(result.map(\.id), [10, 20])
     }
 
     func testAllSortOrdersAreDeterministic() {
+        // 输入 [1, 3, 2] 全部时间相同且无活动序号，应按稳定兜底 ID ASC 排列为 [1, 3, 2]
+        // 详见《窗口布局、应用搜索、排序与窗口画布详细设计.md》§4 排序键定义
         let windows = [
             makeWindow(id: 1, app: "Safari", title: "Beta", time: fixedDate),
             makeWindow(id: 3, app: "Safari", title: "Alpha", time: fixedDate),
@@ -33,10 +36,10 @@ final class WindowOrderingTests: XCTestCase {
         for order in SortOrder.allCases {
             let expected: [CGWindowID]
             switch order {
-            case .recent: expected = [3, 2, 1]
+            case .recent: expected = [1, 2, 3]
             case .appName: expected = [2, 3, 1]
             case .windowTitle: expected = [2, 3, 1]
-            case .appGroup: expected = [3, 1, 2]
+            case .appGroup: expected = [1, 3, 2]
             }
             for _ in 0..<100 {
                 XCTAssertEqual(ordering.sort(windows, by: order).map(\.id), expected)

@@ -53,7 +53,7 @@ struct WindowOrdering {
             let appComparison = lhsFirst.appName.localizedCompare(rhsFirst.appName)
             if appComparison != .orderedSame { return appComparison == .orderedAscending }
             if lhs != rhs { return lhs < rhs }
-            return lhsFirst.id > rhsFirst.id
+            return lhsFirst.id < rhsFirst.id
         }
 
         return sortedBundleIDs.flatMap { bundleID in
@@ -77,7 +77,7 @@ struct WindowOrdering {
         if lhs.lastActiveTime != rhs.lastActiveTime { return lhs.lastActiveTime > rhs.lastActiveTime }
         if lhsSequence != nil, rhsSequence == nil { return true }
         if lhsSequence == nil, rhsSequence != nil { return false }
-        return lhs.id > rhs.id
+        return lhs.id < rhs.id
     }
 
     private func appNameComesBefore(_ lhs: WindowModel, _ rhs: WindowModel) -> Bool {
@@ -89,7 +89,7 @@ struct WindowOrdering {
 
         let titleComparison = lhs.windowTitle.localizedCompare(rhs.windowTitle)
         if titleComparison != .orderedSame { return titleComparison == .orderedAscending }
-        return lhs.id > rhs.id
+        return lhs.id < rhs.id
     }
 
     private func windowTitleComesBefore(_ lhs: WindowModel, _ rhs: WindowModel) -> Bool {
@@ -101,6 +101,6 @@ struct WindowOrdering {
 
         let bundleComparison = lhs.bundleIdentifier.compare(rhs.bundleIdentifier)
         if bundleComparison != .orderedSame { return bundleComparison == .orderedAscending }
-        return lhs.id > rhs.id
+        return lhs.id < rhs.id
     }
 }

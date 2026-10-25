@@ -63,7 +63,9 @@ private func fuzzyMatch(_ normalizedQuery: String, in text: String) -> Bool {
 
 struct FilterCriteria {
     var searchText: String = ""
-    var showOffScreen: Bool = false  // 显示最小化/隐藏的窗口
+    var showOffScreen: Bool = false  // 显示隐藏的窗口
+    /// 显示已最小化的窗口（与隐藏窗口分开控制）
+    var showMinimized: Bool = true
     /// Exact app name filter (T-033)
     var appName: String? = nil
     /// Filter to current desktop space when true (T-035)
@@ -84,7 +86,10 @@ class FilterEngine {
         let normalizedQuery = normalizeSearchText(criteria.searchText)
 
         return windows.filter { window in
-            if !criteria.showOffScreen && (window.isMinimized || window.isHidden) { return false }
+            // 最小化与隐藏分别受独立开关控制：
+            // 最小化窗口可以还原并切过去，隐藏窗口属于应用级状态，单独控制。
+            if window.isMinimized, !criteria.showMinimized { return false }
+            if window.isHidden, !criteria.showOffScreen { return false }
 
             // T-033: exact app name filter
             if let appName = criteria.appName, window.appName != appName { return false }

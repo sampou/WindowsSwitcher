@@ -34,15 +34,26 @@ final class WindowManagerTests: XCTestCase {
     func testFilterExcludesOffScreenWhenDisabled() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "", showOffScreen: false)
+        // 最小化窗口由 showMinimized 控制，隐藏窗口由 showOffScreen 控制
+        let criteria = FilterCriteria(searchText: "", showOffScreen: false, showMinimized: false)
         let result = engine.filter(windows, by: criteria)
         XCTAssertFalse(result.contains { $0.isMinimized || $0.isHidden })
+    }
+
+    func testFilterIncludesMinimizedWindowsByDefault() {
+        let engine = FilterEngine()
+        let windows = makeMockWindows()
+        let result = engine.filter(windows, by: FilterCriteria())
+        XCTAssertTrue(
+            result.contains { $0.isMinimized },
+            "默认应显示已最小化的窗口"
+        )
     }
 
     func testFilterIncludesOffScreenWhenEnabled() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "", showOffScreen: true)
+        let criteria = FilterCriteria(searchText: "", showOffScreen: true, showMinimized: true)
         let result = engine.filter(windows, by: criteria)
         XCTAssertTrue(result.contains { $0.isMinimized || $0.isHidden })
     }

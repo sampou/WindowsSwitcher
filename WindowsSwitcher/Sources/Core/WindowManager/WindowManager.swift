@@ -55,6 +55,286 @@ struct AXWindowFilteringPolicy {
     }
 }
 
+/// 最小化窗口提供器：在后台维护"已最小化"的窗口列表。
+///
+/// CG 层无法区分"已最小化"与"在其它 Space"（两者的 kCGWindowIsOnscreen 都是 false），
+/// 只能通过 AX 的 kAXMinimized 判定。而逐进程查询 AX 是跨进程调用（本机实测 40+ 进程
+/// 需要秒级），因此放在后台分批推进，主线程只读取已经完成的缓存。
+///
+/// 另有两个必要细节：
+/// - 无 AX 响应的进程（辅助进程、注入式程序）会被记入负缓存，避免每次扫描都白等超时；
+/// - 最小化窗口的标题与几何取自 CG 枚举（AX 在最小化时位置不可靠）。
+final class MinimizedWindowProvider: @unchecked Sendable {
+    /// 单个进程的判定结果
+    private struct Entry {
+        var models: [WindowModel]
+        var checkedAt: Date
+    }
+
+    private var cache: [pid_t: Entry] = [:]
+    /// 无 AX 响应的进程：短时间内不再查询
+    private var unresponsive: [pid_t: Date] = [:]
+    private let lock = NSLock()
+    /// 扫描游标：让候选进程轮流被刷新
+    private var scanCursor = 0
+    private var lastScanStartedAt: Date?
+    /// 上一次已知的最小化窗口数量（用于变化时打日志）
+    private var lastKnownMinimizedCount = 0
+    /// 已执行的扫描轮数
+    private var scanRounds = 0
+
+    /// 缓存有效期（秒）
+    private static let entryTTL: TimeInterval = 5.0
+    /// 无响应进程的跳过时长（秒）
+    private static let unresponsiveTTL: TimeInterval = 60.0
+    /// 两次后台扫描的最小间隔（秒）
+    private static let scanInterval: TimeInterval = 2.0
+    /// 单个 AX 元素的超时（秒）
+    private static let perElementTimeout: TimeInterval = 0.05
+    /// 批量扫描时查询进程 AX 窗口列表的超时（秒）
+    private static let perApplicationTimeout: TimeInterval = 0.25
+    /// 按需即时查询的超时（秒）：面向用户正在悬停的应用，宁可慢也要准
+    private static let immediateQueryTimeout: TimeInterval = 0.6
+    /// 单轮扫描处理的进程数上限
+    private static let maxPIDsPerScan = 16
+
+    /// 查询单个进程的最小化窗口（可注入，便于单元测试）
+    ///
+    /// - Parameters:
+    ///   - pid: 目标进程
+    ///   - timeout: 查询该进程 AX 窗口列表的超时（秒）
+    ///   - windowInfo: CG 窗口信息快照（窗口 ID -> 原始字典）
+    typealias Query = @Sendable (pid_t, TimeInterval, [CGWindowID: [String: Any]]) -> [WindowModel]?
+
+    private let query: Query
+
+    init(query: @escaping Query = { pid, timeout, info in
+        MinimizedWindowProvider.queryMinimizedWindows(pid: pid, timeout: timeout, windowInfo: info)
+    }) {
+        self.query = query
+    }
+
+    /// 读取缓存中的最小化窗口（主线程安全）。
+    func cachedWindows(excluding knownIDs: Set<CGWindowID>) -> [WindowModel] {
+        lock.lock()
+        defer { lock.unlock() }
+        var result: [WindowModel] = []
+        for entry in cache.values {
+            for model in entry.models where !knownIDs.contains(model.id) {
+                result.append(model)
+            }
+        }
+        return result
+    }
+
+    /// 指定进程的最小化窗口。
+    ///
+    /// 缓存有效时直接返回；允许即时查询时（程序坞预览针对悬停应用）会同步做一次单进程查询。
+    func windows(for pid: pid_t, allowImmediateQuery: Bool = true) -> [WindowModel] {
+        let now = Date()
+        lock.lock()
+        let entry = cache[pid]
+        let unresponsiveAt = unresponsive[pid]
+        lock.unlock()
+
+        if let entry, now.timeIntervalSince(entry.checkedAt) < Self.entryTTL {
+            return entry.models
+        }
+        guard allowImmediateQuery else { return [] }
+        if let unresponsiveAt, now.timeIntervalSince(unresponsiveAt) < Self.unresponsiveTTL {
+            return []
+        }
+
+        // 即时查询面向用户正在看的应用，给更长的 AX 超时以保证准确
+        guard let models = query(pid, Self.immediateQueryTimeout, [:]) else {
+            lock.lock()
+            unresponsive[pid] = now
+            lock.unlock()
+            return []
+        }
+
+        store(pid: pid, models: models)
+        return models.map { $0.isMinimized ? $0 : $0.withMinimizedState(true) }
+    }
+
+    /// 后台刷新一批进程的最小化窗口（每轮只处理有限个进程，轮流推进）。
+    ///
+    /// - Parameters:
+    ///   - pids: 候选进程
+    ///   - windowInfo: CG 窗口信息快照；最小化窗口不在 .optionOnScreenOnly 结果里，
+    ///                 必须用 .optionAll 的快照才能取到标题与几何
+    func refresh(pids: [pid_t], windowInfo: [CGWindowID: [String: Any]] = [:]) {
+        let now = Date()
+        lock.lock()
+        if let last = lastScanStartedAt, now.timeIntervalSince(last) < Self.scanInterval {
+            lock.unlock()
+            return
+        }
+        lastScanStartedAt = now
+        let unresponsiveSnapshot = unresponsive
+        let start = scanCursor
+        lock.unlock()
+
+        guard !pids.isEmpty else { return }
+        let batchSize = min(Self.maxPIDsPerScan, pids.count)
+        for offset in 0..<batchSize {
+            let pid = pids[(start + offset) % pids.count]
+            if let at = unresponsiveSnapshot[pid], now.timeIntervalSince(at) < Self.unresponsiveTTL { continue }
+            guard let models = query(pid, Self.perApplicationTimeout, windowInfo) else {
+                lock.lock()
+                unresponsive[pid] = now
+                lock.unlock()
+                continue
+            }
+            store(pid: pid, models: models)
+        }
+
+        lock.lock()
+        scanCursor = (start + batchSize) % max(pids.count, 1)
+        let round = scanRounds
+        scanRounds += 1
+        let total = cache.values.reduce(0) { $0 + $1.models.count }
+        lock.unlock()
+
+        if round < 3 {
+            Logger.operation(
+                "最小化扫描",
+                detail: "第 \(round + 1) 轮，处理 \(batchSize)/\(pids.count) 个进程",
+                result: "累计识别 \(total) 个"
+            )
+        }
+    }
+
+    private func store(pid: pid_t, models: [WindowModel]) {
+        let models = models.map { model in
+            model.isMinimized ? model : model.withMinimizedState(true)
+        }
+        lock.lock()
+        cache[pid] = Entry(models: models, checkedAt: Date())
+        unresponsive.removeValue(forKey: pid)
+        let total = cache.values.reduce(0) { $0 + $1.models.count }
+        let changed = total != lastKnownMinimizedCount
+        if changed { lastKnownMinimizedCount = total }
+        lock.unlock()
+
+        if changed, total > 0 {
+            Logger.operation("最小化窗口", detail: "已识别 \(total) 个（进程 \(pid)）", result: "已并入窗口列表")
+        }
+    }
+
+    /// 查询指定进程的最小化窗口。
+    ///
+    /// AX 判定最小化状态并给出窗口 ID，标题与几何取自 CG 枚举。
+    /// AX 完全不可用时返回 nil（调用方据此记入负缓存）。
+    private static func queryMinimizedWindows(
+        pid: pid_t,
+        timeout: TimeInterval,
+        windowInfo: [CGWindowID: [String: Any]]
+    ) -> [WindowModel]? {
+        let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(axApp, Float(timeout))
+
+        var windowList: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+              let axWindows = windowList as? [AXUIElement] else {
+            return nil
+        }
+
+        var minimizedIDs: Set<CGWindowID> = []
+        var standardFlags: [CGWindowID: Bool] = [:]
+
+        for axWindow in axWindows {
+            AXUIElementSetMessagingTimeout(axWindow, Float(perElementTimeout))
+
+            var cgWindowID: CGWindowID = 0
+            guard _AXUIElementGetWindow(axWindow, &cgWindowID) == .success, cgWindowID != 0 else { continue }
+
+            var minimizedRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(axWindow, kAXMinimizedAttribute as CFString, &minimizedRef) == .success,
+                  let flag = minimizedRef as? Bool, flag, flag else { continue }
+
+            minimizedIDs.insert(cgWindowID)
+            standardFlags[cgWindowID] = NonStandardWindowRules.isStandardAccessibilityWindow(
+                role: stringAttribute(kAXRoleAttribute as CFString, of: axWindow),
+                subrole: stringAttribute(kAXSubroleAttribute as CFString, of: axWindow)
+            )
+        }
+
+        guard !minimizedIDs.isEmpty else { return [] }
+
+        guard let app = NSRunningApplication(processIdentifier: pid) else { return [] }
+        let bundleID = app.bundleIdentifier ?? ""
+        let icon = app.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
+        let appName = app.localizedName ?? "Unknown"
+
+        var models: [WindowModel] = []
+        for windowID in minimizedIDs {
+            guard let info = cgWindowInfo(for: windowID, in: windowInfo) else { continue }
+            let title = (info[kCGWindowName as String] as? String) ?? ""
+            let bounds = info[kCGWindowBounds as String] as? [String: Any] ?? [:]
+            let frame = CGRect(
+                x: (bounds["X"] as? CGFloat) ?? 0,
+                y: (bounds["Y"] as? CGFloat) ?? 0,
+                width: (bounds["Width"] as? CGFloat) ?? 0,
+                height: (bounds["Height"] as? CGFloat) ?? 0
+            )
+            guard frame.width > 0, frame.height > 0 else { continue }
+
+            // 与主枚举保持同一套规则：非标准窗口不应出现在窗口列表里。
+            // 否则最小化时能看见、还原后却消失，两条路径的判定不一致。
+            guard !NonStandardWindowRules.isNonStandardWindow(
+                bundleIdentifier: bundleID,
+                appName: appName,
+                windowTitle: title,
+                frame: frame,
+                windowLayer: 0
+            ) else { continue }
+
+            models.append(WindowModel(
+                id: windowID,
+                appName: appName,
+                bundleIdentifier: bundleID,
+                windowTitle: title,
+                appIcon: icon,
+                frame: frame,
+                isMinimized: true,
+                isHidden: false,
+                isOnScreen: false,
+                lastActiveTime: Date(),
+                windowLayer: 0,
+                ownerPID: pid,
+                isStandardWindow: standardFlags[windowID] ?? true
+            ))
+        }
+
+        return models
+    }
+
+    /// 读取单个窗口的 CG 信息（包含离屏窗口）。
+    ///
+    /// 注意：`.optionIncludingWindow` 对离屏窗口返回空结果，
+    /// 最小化窗口必须从 `.optionAll` 快照里取。
+    private static func cgWindowInfo(
+        for windowID: CGWindowID,
+        in windowInfo: [CGWindowID: [String: Any]]
+    ) -> [String: Any]? {
+        if let info = windowInfo[windowID] { return info }
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return nil
+        }
+        return list.first { ($0[kCGWindowNumber as String] as? CGWindowID) == windowID }
+    }
+
+    private static func stringAttribute(_ attribute: CFString, of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success else { return nil }
+        return value as? String
+    }
+}
+
 /// 连续耗尽预算时临时关闭 AX 过滤，确保切换器优先保持可用。
 struct AXWindowFilteringCircuitBreaker {
     private var consecutiveBudgetExhaustions = 0
@@ -349,8 +629,30 @@ class WindowManager: WindowManagerProtocol {
     private var cacheTimestamp: Date?
     private let cacheTTL: TimeInterval = 0.1 // 100ms 缓存，支持快速切换
 
-    // 应用信息缓存（PID -> (bundleID, icon, isHidden)）
-    private var appInfoCache: [pid_t: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)] = [:]
+    // 应用信息缓存（PID -> bundleID / 图标 / 隐藏状态）
+    private var appInfoCache: [pid_t: AppInfo] = [:]
+
+    /// 最小化窗口提供器：后台用 AX 判定哪些窗口处于最小化状态
+    private let minimizedWindowProvider = MinimizedWindowProvider()
+
+    /// 最小化窗口扫描队列（后台执行，主线程不等待）
+    private let minimizedScanQueue = DispatchQueue(
+        label: "com.windowsswitcher.minimized-scan",
+        qos: .utility
+    )
+
+    /// 应用信息缓存有效期（秒）。
+    ///
+    /// 超过该时间重新读取 bundleID，避免 PID 被系统复用后仍沿用旧应用的归属。
+    private static let appInfoCacheTTL: TimeInterval = 2.0
+
+    /// 单个应用的信息快照。
+    private struct AppInfo {
+        let bundleIdentifier: String
+        let icon: NSImage
+        let isHidden: Bool
+        let refreshedAt: Date
+    }
 
     // 线程安全锁：保护窗口缓存、活动序号、焦点窗口与缓存版本
     // 后台预取线程和主线程并发读写这些 Dictionary 会触发 EXC_BAD_ACCESS
@@ -447,6 +749,9 @@ class WindowManager: WindowManagerProtocol {
         // 阻塞缓存读写和快捷键触发的同步刷新。
         stateLock.unlock()
 
+        // 基础枚举只取当前屏幕上的窗口：CG 层的 .optionAll 会带来大量其它 Space、
+        // 辅助进程与光标覆盖层等噪声窗口。
+        // 已最小化的窗口由 MinimizedWindowProvider 在后台用 AX 判定后并入。
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
             stateLock.lock()
@@ -471,6 +776,9 @@ class WindowManager: WindowManagerProtocol {
             ? collectNonStandardAccessibilityWindows(for: AXWindowFilteringPolicy.candidateOwnerPIDs(in: list))
             : .skipped
 
+        // 后台推进最小化窗口的 AX 判定（主线程不等待）
+        scheduleMinimizedWindowScan(for: list)
+
         stateLock.lock()
         if axCollection.attempted {
             let circuitOpened = axFilterCircuitBreaker.record(
@@ -484,9 +792,22 @@ class WindowManager: WindowManagerProtocol {
 
         // CGWindow 的 layer 不足以区分应用搜索浮层等 layer 0 面板。
         // 仅在 AX API 能按 CGWindowID 精确识别为非标准窗口时排除；不可访问的应用保持原有行为。
-        let windows = WindowIDDeduplicator.unique(list.compactMap {
+        let onScreenWindows = WindowIDDeduplicator.unique(list.compactMap {
             buildWindowModel(from: $0, nonStandardAccessibilityWindowIDs: axCollection.nonStandardWindowIDs)
         })
+
+        // 并入后台判定出的最小化窗口：它们不在当前屏幕上，但可以还原并切过去。
+        // 保留此前记录的最近使用时间，避免并入时打乱 MRU 顺序。
+        let onScreenIDs = Set(onScreenWindows.map(\.id))
+        let minimizedWindows = minimizedWindowProvider.cachedWindows(excluding: onScreenIDs).map { model in
+            let cachedTime = windowCache[model.id]?.lastActiveTime
+            let time = cachedTime ?? WindowActivityStore.shared.getLastActiveTime(
+                bundleIdentifier: model.bundleIdentifier,
+                windowTitle: model.windowTitle
+            ) ?? model.lastActiveTime
+            return model.withLastActiveTime(time)
+        }
+        let windows = onScreenWindows + minimizedWindows
         let windowEvents = WindowSnapshotReconciler.events(
             previous: windowCache,
             current: windows,
@@ -670,6 +991,153 @@ class WindowManager: WindowManagerProtocol {
         lastFocusedWindowID = model.id
         lastActivatedWindowID = model.id
         lastActivatedTime = time
+    }
+
+    /// 后台推进最小化窗口判定。
+    ///
+    /// AX 查询是跨进程调用（本机实测数十个进程需要秒级），必须放到后台，
+    /// 主线程只读取 MinimizedWindowProvider 已完成的缓存。
+    private func scheduleMinimizedWindowScan(for windowInfoList: [[String: Any]]) {
+        minimizedScanQueue.async { [weak self] in
+            guard let self else { return }
+            // 只有"拥有离屏窗口"的进程才可能拥有最小化窗口：
+            // 最小化窗口在 CG 列表里就是离屏的。
+            let snapshot = Self.offScreenWindowSnapshot()
+            guard !snapshot.pids.isEmpty else { return }
+            self.minimizedWindowProvider.refresh(pids: snapshot.pids, windowInfo: snapshot.info)
+        }
+    }
+
+    /// 离屏窗口快照：进程列表 + 窗口原始信息。
+    ///
+    /// 必须用 .optionAll：最小化窗口不在 .optionOnScreenOnly 的结果里，
+    /// 且 .optionIncludingWindow 对离屏窗口返回空结果。
+    /// 该枚举在后台线程执行，不占用主线程。
+    private static func offScreenWindowSnapshot() -> (pids: [pid_t], info: [CGWindowID: [String: Any]]) {
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return ([], [:])
+        }
+
+        var pids: [pid_t] = []
+        var seen = Set<pid_t>()
+        var info: [CGWindowID: [String: Any]] = [:]
+
+        for entry in list {
+            guard (entry[kCGWindowLayer as String] as? Int) == 0,
+                  let windowID = entry[kCGWindowNumber as String] as? CGWindowID,
+                  let pid = entry[kCGWindowOwnerPID as String] as? pid_t else { continue }
+            let onScreen = (entry[kCGWindowIsOnscreen as String] as? Bool) ?? false
+            guard !onScreen else { continue }
+            if !seen.contains(pid) {
+                seen.insert(pid)
+                pids.append(pid)
+            }
+            info[windowID] = entry
+        }
+
+        return (pids, info)
+    }
+
+    /// 指定应用的最小化窗口（程序坞预览用：按需单进程查询，代价可接受）。
+    func minimizedWindows(forBundleID bundleID: String) -> [WindowModel] {
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        var models: [WindowModel] = []
+        for app in apps {
+            models.append(contentsOf: minimizedWindowProvider.windows(for: app.processIdentifier))
+        }
+        return models.map { model in
+            model.withLastActiveTime(resolvedLastActive(for: model))
+        }
+    }
+
+    /// 程序坞预览用：某个应用的窗口列表（含刚查询到的最小化窗口），按最近使用排序。
+    ///
+    /// 后台扫描存在延迟，程序坞预览需要即时结果，因此这里按需查询一次并合并排序。
+    func dockPreviewWindows(forBundleID bundleID: String) -> [WindowModel] {
+        var windows = getAllWindows()
+        let existingIDs = Set(windows.map(\.id))
+        let minimized = minimizedWindows(forBundleID: bundleID).filter { !existingIDs.contains($0.id) }
+        guard !minimized.isEmpty else { return windows }
+
+        windows.append(contentsOf: minimized)
+        return WindowOrdering().sort(
+            windows,
+            by: .recent,
+            activitySequence: activitySequenceSnapshot()
+        )
+    }
+
+    /// 解析窗口的最近使用时间：优先内存缓存，其次持久化记录。
+    private func resolvedLastActive(for model: WindowModel) -> Date {
+        stateLock.lock()
+        let cached = windowCache[model.id]?.lastActiveTime
+        stateLock.unlock()
+        if let cached { return cached }
+        return WindowActivityStore.shared.getLastActiveTime(
+            bundleIdentifier: model.bundleIdentifier,
+            windowTitle: model.windowTitle
+        ) ?? model.lastActiveTime
+    }
+
+    /// 激活前按窗口 ID 重新解析实时窗口。
+    ///
+    /// 预览面板持有的是悬停时的快照：点击时窗口可能已经关闭，或 CGWindowID 已被系统
+    /// 回收给另一个窗口。直接激活旧快照会命中另一个窗口，因此这里重新枚举并校验归属；
+    /// 目标确实消失时返回 nil，宁可不激活，也不激活到别的窗口。
+    func resolveWindowForActivation(_ snapshot: WindowModel) -> WindowModel? {
+        let current = getAllWindows(forceRefresh: true)
+
+        // 首选：ID、归属进程与 bundle 均未变化，且标题或几何仍与快照一致。
+        // 只比 ID/进程不够：CGWindowID 会被窗口服务器回收给同应用的新建窗口，
+        // 那样会激活到另一个窗口（标题与几何都不一致即可判定为 ID 复用）。
+        if let live = current.first(where: {
+            $0.id == snapshot.id
+                && $0.ownerPID == snapshot.ownerPID
+                && $0.bundleIdentifier == snapshot.bundleIdentifier
+                && Self.isSameWindow($0, snapshot)
+        }) {
+            return live
+        }
+
+        // 兜底：应用重建窗口导致 ID 变化时，用“同进程 + 标题 + 几何”做一次受限匹配；
+        // 命中多个候选时放弃激活，避免猜错窗口。
+        let candidates = current.filter { candidate in
+            candidate.ownerPID == snapshot.ownerPID
+                && !candidate.windowTitle.isEmpty
+                && candidate.windowTitle == snapshot.windowTitle
+                && abs(candidate.frame.origin.x - snapshot.frame.origin.x) < 24
+                && abs(candidate.frame.origin.y - snapshot.frame.origin.y) < 24
+                && abs(candidate.frame.width - snapshot.frame.width) < 24
+                && abs(candidate.frame.height - snapshot.frame.height) < 24
+        }
+
+        if candidates.count == 1 {
+            Logger.operation(
+                "窗口重新解析",
+                detail: "\(snapshot.appName) - \(snapshot.windowTitle)",
+                result: "按标题与几何匹配"
+            )
+            return candidates[0]
+        }
+
+        return nil
+    }
+
+    /// 判断实时窗口与快照是否仍是同一个窗口：标题一致，或位置/尺寸仍然接近。
+    ///
+    /// 标题变化但窗口没换（文档改名、网页标题更新）时由几何兜底；
+    /// 标题与几何都变了则判定为 CGWindowID 被复用。
+    static func isSameWindow(_ live: WindowModel, _ snapshot: WindowModel) -> Bool {
+        if !snapshot.windowTitle.isEmpty, live.windowTitle == snapshot.windowTitle {
+            return true
+        }
+        return abs(live.frame.origin.x - snapshot.frame.origin.x) < 40
+            && abs(live.frame.origin.y - snapshot.frame.origin.y) < 40
+            && abs(live.frame.width - snapshot.frame.width) < 40
+            && abs(live.frame.height - snapshot.frame.height) < 40
     }
 
     func activateWindow(_ window: WindowModel) {
@@ -1260,23 +1728,39 @@ class WindowManager: WindowManagerProtocol {
             height: boundsDict["Height"] ?? 0
         )
 
-        // 使用应用信息缓存，避免重复调用 NSRunningApplication
+        // 使用应用信息缓存，避免重复加载图标
         // 线程安全：由 getAllWindows 的 stateLock 保护
-        let appInfo: (bundleIdentifier: String, icon: NSImage, isHidden: Bool)
-        if let cached = appInfoCache[ownerPID] {
+        //
+        // 缓存必须有有效期：进程退出后 PID 会被系统复用给另一个应用，
+        // 无限期缓存会把新应用的窗口挂到旧应用的 bundleID 下，
+        // 程序坞预览会因此显示并激活成另一个应用。
+        let now = Date()
+        let cached = appInfoCache[ownerPID]
+        let appInfo: AppInfo
+        if let cached, now.timeIntervalSince(cached.refreshedAt) < Self.appInfoCacheTTL {
             appInfo = cached
         } else {
             let app = NSRunningApplication(processIdentifier: ownerPID)
             let bundleID = app?.bundleIdentifier ?? ""
-            let icon = app?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
-            let isHidden = app?.isHidden ?? false
-            appInfo = (bundleID, icon, isHidden)
+            // bundleID 变化说明 PID 已被复用，图标必须一并刷新
+            let icon: NSImage
+            if let cached, cached.bundleIdentifier == bundleID {
+                icon = cached.icon
+            } else {
+                icon = app?.icon ?? NSImage(systemSymbolName: "app", accessibilityDescription: nil) ?? NSImage()
+            }
+            appInfo = AppInfo(
+                bundleIdentifier: bundleID,
+                icon: icon,
+                isHidden: app?.isHidden ?? false,
+                refreshedAt: now
+            )
             appInfoCache[ownerPID] = appInfo
         }
 
-        // BUG-001: 通过 AX API 读取最小化状态，降级方案：isOnScreen=false && layer==0
-        // 禁用 AX API 调用以提升性能，使用降级方案
-        let isMinimized = !isOnScreen && layer == 0
+        // 基础枚举只包含屏幕上的窗口，最小化窗口由 MinimizedWindowProvider 并入，
+        // 因此这里的最小化标记恒为 false。
+        let isMinimized = false
 
         // BUG-011: lastActiveTime 始终为 Date()，无法反映真实 LRU 顺序
         // 优先级：内存缓存 > 持久化存储 > 当前时间
@@ -1346,6 +1830,47 @@ class WindowManager: WindowManagerProtocol {
         return nil
     }
 
+    /// 读取 AX 窗口的位置与尺寸；读取失败时返回 nil。
+    private func axFrame(of window: AXUIElement) -> CGRect? {
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+
+        AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef)
+        AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
+
+        guard let positionValue = positionRef, let sizeValue = sizeRef else { return nil }
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
+        AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+
+        return CGRect(origin: position, size: size)
+    }
+
+    /// 在同标题的候选窗口中选出与目标几何最接近的一个。
+    ///
+    /// 同标题多窗口（两个同名文档、两个同站点标签页）必须按几何消歧，
+    /// 否则会激活到同应用的另一个窗口。返回候选下标；无法比较时返回 nil。
+    static func selectClosestCandidate(frames: [CGRect?], targetFrame: CGRect) -> Int? {
+        var bestIndex: Int?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+
+        for (index, frame) in frames.enumerated() {
+            guard let frame else { continue }
+            let distance = abs(frame.origin.x - targetFrame.origin.x)
+                + abs(frame.origin.y - targetFrame.origin.y)
+                + abs(frame.width - targetFrame.width)
+                + abs(frame.height - targetFrame.height)
+            if distance < bestDistance {
+                bestDistance = distance
+                bestIndex = index
+            }
+        }
+
+        return bestIndex
+    }
+
     /// 用 CGWindowID 匹配 AXUIElement，比标题匹配更可靠
     /// 如果精确匹配失败，返回 nil 而不是降级到第一个窗口（避免切换到错误窗口）
     private func axWindow(for model: WindowModel) -> AXUIElement? {
@@ -1371,13 +1896,26 @@ class WindowManager: WindowManagerProtocol {
             }
         }
 
-        // 次选：通过窗口标题精确匹配
-        for win in wins {
-            var titleRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
-            if let title = titleRef as? String, title == model.windowTitle {
-                Logger.debug("Matched window by title: \(title)")
-                return win
+        // 次选：通过窗口标题匹配。同标题存在多个窗口时（如两个同名文档、两个同站点标签页），
+        // 必须按位置/大小取最接近的一个，否则会激活到同应用的另一个窗口。
+        if !model.windowTitle.isEmpty {
+            let titleMatches = wins.filter { win in
+                var titleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(win, kAXTitleAttribute as CFString, &titleRef)
+                return (titleRef as? String) == model.windowTitle
+            }
+
+            if titleMatches.count == 1 {
+                Logger.debug("Matched window by title: \(model.windowTitle)")
+                return titleMatches[0]
+            }
+
+            if titleMatches.count > 1 {
+                let frames = titleMatches.map { axFrame(of: $0) }
+                if let index = WindowManager.selectClosestCandidate(frames: frames, targetFrame: model.frame) {
+                    Logger.warning("Multiple windows share title \"\(model.windowTitle)\"; matched by closest frame")
+                    return titleMatches[index]
+                }
             }
         }
 

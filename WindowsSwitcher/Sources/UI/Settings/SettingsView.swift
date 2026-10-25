@@ -408,8 +408,13 @@ struct SwitcherSettingsView: View {
             // 窗口显示
             SettingsSection(title: "窗口显示", icon: "rectangle.on.rectangle") {
                 SettingsToggle(
-                    title: "显示最小化/隐藏的窗口",
-                    description: "在切换器中显示已最小化或隐藏的窗口",
+                    title: "显示已最小化的窗口",
+                    description: "在切换器与程序坞预览中列出已最小化的窗口，点击可还原并切过去",
+                    isOn: $config.config.behavior.showMinimizedWindows
+                )
+                SettingsToggle(
+                    title: "显示隐藏的窗口",
+                    description: "在切换器中显示应用已隐藏（Command+H）的窗口",
                     isOn: $config.config.behavior.showOffScreenWindows
                 )
 

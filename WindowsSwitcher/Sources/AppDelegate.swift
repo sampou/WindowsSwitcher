@@ -267,6 +267,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var switchPanelViewModel: SwitchPanelViewModel?
     private var dockPreviewWindow: NSWindow?
     private var dockPreviewCancellable: AnyCancellable?
+    private var dockPreviewItemsCancellable: AnyCancellable?
+    private var dockPreviewHoverCancellable: AnyCancellable?
     private var largePreviewCancellable: AnyCancellable?
     private var selectedWindowCancellable: AnyCancellable?  // 监听选中窗口变化
 
@@ -448,7 +450,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         var filled = 0
         for window in windowsToPrefill {
             // 直接查内存缓存，同步填充，面板显示前完成
-            if let cached = previewGenerator.getCachedPreviewSync(for: window.id) {
+            if let cached = previewGenerator.getCachedPreviewSync(for: window) {
                 viewModel.previewImages[window.id] = cached
                 filled += 1
             }
@@ -735,6 +737,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         dockPreviewManager.start()
         Logger.info("DockPreviewManager.start() called")
 
+        // Dock 悬停进入预览时通知后台预取让出截图队列，避免与最新预览争抢。
+        dockPreviewHoverCancellable = NotificationCenter.default.publisher(for: .dockPreviewHoverStarted)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.cancelPreviewPrefetch()
+                }
+            }
+
         // 监听预览显示状态变化，创建/隐藏预览窗口
         dockPreviewCancellable = DockPreviewManager.shared.$isPreviewVisible
             .receive(on: DispatchQueue.main)
@@ -750,6 +761,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         self?.hideDockPreviewPanel()
                         self?.hideLargePreview()
                     }
+                }
+            }
+
+        // 悬停切换到另一个应用时，预览项内容会变化：
+        // 面板必须跟随新的 Dock 图标重新定位并调整尺寸，否则面板会停留在上一个图标上方。
+        dockPreviewItemsCancellable = DockPreviewManager.shared.$previewItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, DockPreviewManager.shared.isPreviewVisible else { return }
+                    self.showDockPreviewPanel()
                 }
             }
 
@@ -776,6 +798,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // 取消监听
         dockPreviewCancellable?.cancel()
         dockPreviewCancellable = nil
+        dockPreviewItemsCancellable?.cancel()
+        dockPreviewItemsCancellable = nil
+        dockPreviewHoverCancellable?.cancel()
+        dockPreviewHoverCancellable = nil
         largePreviewCancellable?.cancel()
         largePreviewCancellable = nil
 
@@ -791,47 +817,86 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // 显示程序坞预览面板 - 精确定位在图标上方
     @MainActor
     private func showDockPreviewPanel() {
-        guard dockPreviewWindow == nil else {
-            return
-        }
-
         // 检查预览项
         let items = DockPreviewManager.shared.previewItems
         guard !items.isEmpty else {
             return
         }
 
+        if dockPreviewWindow == nil {
+            createDockPreviewPanel()
+        } else {
+            // 面板已存在：悬停切换到另一个应用时必须重新定位与调整尺寸，
+            // 否则面板会停留在上一个图标上方，用户点到的预览项与应用对不上。
+            applyDockPreviewPanelLayout()
+        }
+    }
+
+    /// 创建预览面板窗口；尺寸与位置统一由 applyDockPreviewPanelLayout 设置。
+    @MainActor
+    private func createDockPreviewPanel() {
+        let dockPreviewView = DockPreviewPanelView(manager: DockPreviewManager.shared) { [weak self] in
+            self?.hideDockPreviewPanel()
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu  // 高显示层级
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.ignoresMouseEvents = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.acceptsMouseMovedEvents = true
+
+        // 设置 SwiftUI 内容
+        let hostingView = NSHostingView(rootView: dockPreviewView)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+        panel.contentView = hostingView
+
+        dockPreviewWindow = panel
+
+        // 先按当前内容确定尺寸与位置，再显示，避免出现一帧错位。
+        applyDockPreviewPanelLayout()
+
+        // 添加淡入动画（200-300ms 平滑过渡）
+        if ConfigManager.shared.config.dockPreview.showAnimation {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2  // 200ms 动画
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            panel.orderFrontRegardless()
+        }
+    }
+
+    /// 按当前预览内容更新面板尺寸与位置。
+    ///
+    /// 面板尺寸必须与 SwiftUI 内容使用同一套公式，否则内容会被裁切并与窗口错位。
+    @MainActor
+    private func applyDockPreviewPanelLayout() {
+        guard let panel = dockPreviewWindow else { return }
+
+        let items = DockPreviewManager.shared.previewItems
+        guard !items.isEmpty else { return }
+
         // 获取配置
         let config = ConfigManager.shared.config.dockPreview
         let previewSize = ConfigManager.shared.config.appearance.previewSize
         let itemWidth = previewSize.itemDimensions.width
         let itemHeight = previewSize.itemDimensions.height
-        let itemSpacing: CGFloat = 20
         let panelPadding: CGFloat = DesignTokens.Panel.padding
-
-        // 计算行数和列数
-        let maxItemsPerRow = config.maxPreviewCount
-        let totalItems = items.count
-        let rows = (totalItems + maxItemsPerRow - 1) / maxItemsPerRow
-        let displayRows = min(rows, 3)  // 最多显示3行，超过需滚动
-
-        // 自适应宽度计算：根据实际显示的列数计算宽度
-        // 使用实际第一行显示的数量，但最少显示1列
-        let actualColumns = min(totalItems, maxItemsPerRow)
-        let panelWidth = CGFloat(actualColumns) * itemWidth + CGFloat(actualColumns - 1) * itemSpacing + panelPadding * 2
-
-        // 滚动提示高度
-        let scrollIndicatorHeight: CGFloat = rows > 3 ? 24 : 0
-
-        // 自适应高度计算：根据实际显示的行数计算高度
-        let panelHeight: CGFloat
-        if rows <= 3 {
-            // 不需要滚动，高度 = 行数 * 项目高度 + (行数-1) * 间距 + 内边距 * 2 + 滚动指示器
-            panelHeight = CGFloat(displayRows) * itemHeight + CGFloat(displayRows - 1) * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
-        } else {
-            // 需要滚动，固定高度显示3行
-            panelHeight = 3 * itemHeight + 2 * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
-        }
 
         // 获取屏幕信息：以图标中心所在屏幕为定位上下文，不能固定使用主屏。
         let iconCenter = DockPreviewManager.shared.getCurrentIconCenter()
@@ -841,6 +906,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let screenFrame = targetScreen?.frame ?? .zero
         let dockPosition = DockPreviewManager.shared.currentDockPosition
         let dockFrame = DockGeometry.getDockFrame(on: targetScreen)
+
+        // 与 SwiftUI 面板共用同一套布局计算
+        let metrics = DockPreviewLayout.metrics(
+            itemCount: items.count,
+            itemWidth: itemWidth,
+            itemHeight: itemHeight,
+            panelPadding: panelPadding,
+            itemsPerRow: config.maxPreviewCount,
+            availableScreenHeight: (targetScreen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        )
+        let panelWidth = metrics.panelWidth
+        let panelHeight = metrics.totalHeight
 
         // 获取智能间距（如果用户设置了自定义值则使用自定义值，否则使用系统推荐的智能间距）
         let recommendedSpacing = DockGeometry.getRecommendedSpacing(on: targetScreen)
@@ -913,56 +990,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             panelY = max(screenFrame.minY + 5, min(panelY, screenFrame.maxY - panelHeight - 5))
         }
 
-        // 创建 SwiftUI 视图
-        let dockPreviewView = DockPreviewPanelView(manager: DockPreviewManager.shared) { [weak self] in
-            self?.hideDockPreviewPanel()
-        }
-
-        // 创建面板
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
-            styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
-            backing: .buffered,
-            defer: false
+        // 设置窗口位置与尺寸（与 SwiftUI 内容尺寸保持一致，避免裁切错位）
+        panel.setFrame(
+            NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight),
+            display: true
         )
-        panel.isFloatingPanel = true
-        panel.level = .popUpMenu  // 高显示层级
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = true
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.ignoresMouseEvents = false
-        panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.acceptsMouseMovedEvents = true
-
-        // 设置 SwiftUI 内容
-        let hostingView = NSHostingView(rootView: dockPreviewView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
-        panel.contentView = hostingView
-
-        // 设置窗口位置
-        panel.setFrameOrigin(NSPoint(x: panelX, y: panelY))
+        if let hostingView = panel.contentView {
+            hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
+        }
 
         // 更新预览窗口 frame 到 DockPreviewManager（用于鼠标位置检测）
         let panelFrame = CGRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
         DockPreviewManager.shared.updatePreviewWindowFrame(panelFrame)
-
-        // 添加淡入动画（200-300ms 平滑过渡）
-        if config.showAnimation {
-            panel.alphaValue = 0
-            panel.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.2  // 200ms 动画
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                panel.animator().alphaValue = 1
-            }
-        } else {
-            panel.orderFrontRegardless()
-        }
-
-        dockPreviewWindow = panel
     }
 
     // 隐藏程序坞预览面板

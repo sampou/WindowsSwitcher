@@ -398,13 +398,18 @@ final class F05FilterTests: XCTestCase {
         XCTAssertFalse(result.isEmpty)
     }
 
-    // AC-07: showOffScreen=false 过滤离屏窗口
+    // AC-07: 最小化与隐藏分别受独立开关控制
     func testAC07_ShowOffScreenFalseFilters() {
         let windows = [
             makeWindow(id: 1, app: "A", offset: -1, minimized: false),
             makeWindow(id: 2, app: "B", offset: -2, minimized: true),
         ]
-        let result = engine.filter(windows, by: FilterCriteria(showOffScreen: false))
+        // 默认显示已最小化的窗口
+        let byDefault = engine.filter(windows, by: FilterCriteria())
+        XCTAssertTrue(byDefault.contains { $0.isMinimized }, "默认应显示已最小化的窗口")
+
+        // 关闭后最小化窗口被过滤
+        let result = engine.filter(windows, by: FilterCriteria(showMinimized: false))
         XCTAssertFalse(result.contains { $0.isMinimized })
     }
 }

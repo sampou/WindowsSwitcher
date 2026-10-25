@@ -73,6 +73,17 @@ class DockPreviewManager: ObservableObject {
         return nil
     }
 
+    /// 预览面板当前所在的屏幕。
+    ///
+    /// 以悬停图标中心定位，多显示器下不能固定使用主屏；面板尺寸与位置都依赖该结果。
+    var currentScreen: NSScreen? {
+        if let center = iconCenter,
+           let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) {
+            return screen
+        }
+        return NSScreen.main
+    }
+
     private func setupBindings() {
         // 监听图标位置变化（先更新 iconCenter）
         eventMonitor.$hoveredIconInfo
@@ -167,8 +178,8 @@ class DockPreviewManager: ObservableObject {
             mouseCheckTimer?.invalidate()
         } else {
             // 鼠标离开预览窗口，检查是否在 Dock 区域
-            let dockFrame = DockGeometry.getDockFrame()
-            let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(location)
+            // 使用与悬停检测同一套屏幕感知实现：固定用主屏会误判副屏上的 Dock 悬停
+            let isInDockArea = eventMonitor.isLocationInDockArea(location)
 
             if !isInDockArea {
                 // 也不在 Dock 区域，隐藏预览
@@ -184,6 +195,8 @@ class DockPreviewManager: ObservableObject {
         previewTask?.cancel()
         previewGeneration &+= 1
         previewImages.removeAll()
+        // 通知 AppDelegate 让后台预取任务让出截图队列；同 bundle 重复进入可幂等。
+        NotificationCenter.default.post(name: .dockPreviewHoverStarted, object: bundleID)
         guard let bundleID = bundleID else {
             hidePreview()
             return
@@ -202,21 +215,26 @@ class DockPreviewManager: ObservableObject {
         }
 
         // 获取当前应用窗口；查询期间避免在主线程执行可阻塞的强制刷新。
-        // Dock 预览沿用 WindowManager 当前可见窗口语义：最小化/离屏窗口不显示。
-        let allWindows = WindowManager.shared.windows
+        // Dock 预览沿用 WindowManager 当前可见窗口语义，最小化窗口按设置决定是否显示。
+        let allWindows = WindowManager.shared.dockPreviewWindows(forBundleID: bundleID)
         let matchingWindows = allWindows.filter { $0.bundleIdentifier == bundleID }
 
-        // 放宽过滤条件
-        let windows = matchingWindows.filter { !$0.isMinimized }
+        // 最小化窗口是否显示由设置控制（默认显示，与原生 Dock 悬停网格一致）。
+        // 最小化窗口没有可截图内容：预览图沿用缓存中的上一次截图，没有缓存时回退到应用图标。
+        let showMinimized = ConfigManager.shared.config.behavior.showMinimizedWindows
+        let windows = matchingWindows.filter { showMinimized || !$0.isMinimized }
 
         guard !windows.isEmpty else {
             hidePreview()
             return
         }
 
-        // Dock 预览有意独立于切换面板，按窗口 ID 升序排列（最早窗口在前）。
-        // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
-        let sortedWindows = windows.sorted { $0.id < $1.id }
+        // 与切换面板、macOS 原生 Dock 悬停网格保持一致：最近使用的窗口排在最前。
+        //
+        // 此前按 CGWindowID 升序（最早创建在前）排列，但 CGWindowID 会被系统回收复用，
+        // 既不是稳定的创建序也不是使用序；与原生 Dock 网格顺序相反会让两个网格的
+        // 位置对应关系整体错位，用户按原生直觉点击就会点到相邻的另一个窗口。
+        let sortedWindows = windows
 
         // 创建预览项 - 显示所有窗口，不再限制数量
         previewItems = sortedWindows.map { windowModel in
@@ -227,7 +245,7 @@ class DockPreviewManager: ObservableObject {
 
         // 先同步填充已有缓存，面板显示时立即有图；随后强制异步刷新为最新截图。
         previewImages = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
-            guard let cached = previewGenerator.getCachedPreviewSync(for: window.id) else { return nil }
+            guard let cached = previewGenerator.getCachedPreviewSync(for: window) else { return nil }
             return (window.id, cached)
         })
         preloadFirstPreviewAndShow(for: sortedWindows)
@@ -247,6 +265,9 @@ class DockPreviewManager: ObservableObject {
             guard let self else { return }
             await withTaskGroup(of: Void.self) { group in
                 for window in windows {
+                    // 最小化窗口没有可截图内容：沿用缓存中的上一次截图，不做强制刷新，
+                    // 避免用空白图覆盖掉缓存里的最后一帧。
+                    guard !window.isMinimized else { return }
                     group.addTask {
                         guard !Task.isCancelled,
                               let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size)
@@ -289,10 +310,17 @@ class DockPreviewManager: ObservableObject {
     }
 
     func selectItem(_ item: DockPreviewItem) {
-        // 激活前先刷新窗口缓存
-        WindowManager.shared.refreshCache()
-        // 激活窗口
-        WindowManager.shared.activateWindow(item.windowModel)
+        // 预览项是悬停时的快照：点击前窗口可能已关闭，或 CGWindowID 已被系统回收给其他窗口。
+        // 直接激活旧快照会命中另一个窗口，因此先按窗口 ID 重新解析实时窗口再激活。
+        let target = WindowManager.shared.resolveWindowForActivation(item.windowModel)
+
+        if let target {
+            WindowManager.shared.activateWindow(target)
+        } else {
+            Logger.warning(
+                "[DockManager] 预览窗口已失效，跳过激活: \(item.appName) - \(item.windowTitle) (ID: \(item.windowModel.id))"
+            )
+        }
 
         // 延迟隐藏预览（给窗口激活留出时间）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -304,6 +332,86 @@ class DockPreviewManager: ObservableObject {
             name: .dockPreviewWindowSelected,
             object: nil,
             userInfo: ["windowModel": item.windowModel]
+        )
+    }
+}
+
+// MARK: - DockPreviewLayout
+/// 程序坞预览面板的布局计算。
+///
+/// 面板尺寸必须由视图和 AppDelegate 共用同一套公式：两者各算一份时，
+/// 窗口尺寸与 SwiftUI 内容尺寸不一致会被裁切，表现为内容偏移。
+enum DockPreviewLayout {
+    /// 行间距
+    static let itemSpacing: CGFloat = 8
+    /// 窗口项外部留白
+    static let itemPadding: CGFloat = 8
+    /// 最多显示的行数（超出后滚动）
+    static let absoluteMaxRows: Int = 5
+    /// 面板内容高度占屏幕高度的上限比例
+    static let maxPanelHeightRatio: CGFloat = 0.6
+    /// 滚动提示条高度
+    static let scrollIndicatorHeight: CGFloat = 28
+
+    struct Metrics: Equatable {
+        /// 第一行显示的窗口数
+        var columns: Int
+        /// 总行数
+        var rows: Int
+        /// 是否需要滚动
+        var needsScrolling: Bool
+        /// 所有行的内容高度（含行间距，不含面板内边距）
+        var rowsHeight: CGFloat
+        /// 内容区域高度（含面板内边距）
+        var actualContentHeight: CGFloat
+        /// 滚动区域可视高度
+        var contentHeight: CGFloat
+        /// 面板宽度
+        var panelWidth: CGFloat
+        /// 面板总高度（含内边距与滚动提示）
+        var totalHeight: CGFloat
+    }
+
+    static func metrics(
+        itemCount: Int,
+        itemWidth: CGFloat,
+        itemHeight: CGFloat,
+        panelPadding: CGFloat,
+        itemsPerRow: Int,
+        availableScreenHeight: CGFloat
+    ) -> Metrics {
+        let perRow = max(1, itemsPerRow)
+        let columns = min(itemCount, perRow)
+        let rows = itemCount > 0 ? (itemCount + perRow - 1) / perRow : 0
+
+        let actualRowHeight = itemHeight + itemPadding * 2
+        let contentRowsHeight: CGFloat = rows > 0
+            ? CGFloat(rows) * actualRowHeight + CGFloat(rows - 1) * itemSpacing
+            : 0
+        // 内容区域高度（含面板内边距）
+        let actualContentHeight = contentRowsHeight + panelPadding * 2
+
+        let maxByRows = CGFloat(absoluteMaxRows) * actualRowHeight
+            + CGFloat(absoluteMaxRows - 1) * itemSpacing
+            + panelPadding * 2
+        let maxByRatio = availableScreenHeight * maxPanelHeightRatio
+        let maxContentHeight = min(maxByRatio, maxByRows)
+
+        let needsScrolling = actualContentHeight > maxContentHeight
+        let contentHeight = needsScrolling ? maxContentHeight : actualContentHeight
+        let panelWidth = CGFloat(columns) * (itemWidth + itemPadding * 2) + panelPadding * 2
+        let totalHeight = contentHeight + panelPadding * 2
+            + (needsScrolling ? scrollIndicatorHeight : 0)
+
+        return Metrics(
+            columns: columns,
+            rows: rows,
+            needsScrolling: needsScrolling,
+            rowsHeight: contentRowsHeight,
+            actualContentHeight: actualContentHeight,
+            contentHeight: contentHeight,
+            panelWidth: panelWidth,
+            totalHeight: totalHeight
         )
     }
 }
@@ -348,64 +456,42 @@ struct DockPreviewPanelView: View {
 
     // MARK: - 滚动相关配置
 
-    /// 最大面板高度占屏幕高度的比例
-    private let maxPanelHeightRatio: CGFloat = 0.6
+    /// 面板布局参数（与 AppDelegate 创建/更新面板窗口时共用同一套计算）
+    private var metrics: DockPreviewLayout.Metrics {
+        DockPreviewLayout.metrics(
+            itemCount: manager.previewItems.count,
+            itemWidth: itemWidth,
+            itemHeight: itemHeight,
+            panelPadding: panelPadding,
+            itemsPerRow: itemsPerRow,
+            availableScreenHeight: availableScreenHeight
+        )
+    }
 
-    /// 最大显示行数（用于计算最大高度阈值）
-    private let absoluteMaxRows: Int = 5
-
-    /// 计算总行数
+    /// 总行数
     private var totalRows: Int {
-        let count = manager.previewItems.count
-        return (count + itemsPerRow - 1) / itemsPerRow
+        metrics.rows
     }
 
     /// 获取屏幕可用高度（考虑 Dock 和菜单栏）
     private var availableScreenHeight: CGFloat {
-        guard let screen = NSScreen.main else {
-            return 800  // 默认值
-        }
-        // visibleFrame 已经排除了 Dock 和菜单栏
-        return screen.visibleFrame.height
-    }
-
-    /// 计算每行的实际高度（包含 itemPadding）
-    private var actualRowHeight: CGFloat {
-        itemHeight + itemPadding * 2
-    }
-
-    /// 内容区域高度（所有行的总高度，包含行间距）
-    private var contentRowsHeight: CGFloat {
-        guard totalRows > 0 else { return 0 }
-        return CGFloat(totalRows) * actualRowHeight + CGFloat(totalRows - 1) * itemSpacing
-    }
-
-    /// 实际内容高度（包含 panelPadding）
-    private var actualContentHeight: CGFloat {
-        // 内容高度 + 上下 padding
-        return contentRowsHeight + panelPadding * 2
-    }
-
-    /// 最大内容高度限制（包含 panelPadding）
-    private var maxPanelContentHeight: CGFloat {
-        // 基于行数计算最大高度（包含 padding）
-        let maxByRows = CGFloat(absoluteMaxRows) * actualRowHeight + CGFloat(absoluteMaxRows - 1) * itemSpacing + panelPadding * 2
-        // 基于屏幕比例计算最大高度
-        let maxByRatio = availableScreenHeight * maxPanelHeightRatio
-        return min(maxByRatio, maxByRows)
+        // 面板可能位于副屏，按悬停图标所在屏幕计算，避免用主屏高度限制副屏面板
+        (manager.currentScreen ?? NSScreen.main)?.visibleFrame.height ?? 800
     }
 
     /// 是否需要滚动（内容超出最大高度阈值）
     private var needsScrolling: Bool {
-        actualContentHeight > maxPanelContentHeight
+        metrics.needsScrolling
     }
 
     /// 显示区域高度（用于 ScrollView）
     private var displayHeight: CGFloat {
-        // 实际内容高度或最大高度，取较小值
-        let height = needsScrolling ? maxPanelContentHeight : actualContentHeight
-        // 确保不超过可用的内容高度
-        return min(height, actualContentHeight)
+        metrics.contentHeight
+    }
+
+    /// 内容区域高度（用于滚动条计算总高度）
+    private var actualContentHeight: CGFloat {
+        metrics.actualContentHeight
     }
 
     /// 滚动指示器透明度（平滑过渡）
@@ -525,7 +611,13 @@ struct DockPreviewPanelView: View {
                         manager.selectItem(item)
                     },
                     onHover: { isHovered in
-                        manager.hoveredIndex = isHovered ? globalIndex : nil
+                        // 移出回调可能晚于移入回调到达，只有仍指向当前项时才清空，
+                        // 否则大预览窗口会在条目间切换时闪退
+                        if isHovered {
+                            manager.hoveredIndex = globalIndex
+                        } else if manager.hoveredIndex == globalIndex {
+                            manager.hoveredIndex = nil
+                        }
                     }
                 )
                 .padding(itemPadding)
@@ -535,20 +627,12 @@ struct DockPreviewPanelView: View {
 
     // 面板宽度（自适应，基于实际窗口数量）
     private var panelWidth: CGFloat {
-        // 窗口项实际宽度 = itemWidth + 左右 padding
-        let actualItemWidth = itemWidth + itemPadding * 2
-        // 第一行实际显示的窗口数（不超过 itemsPerRow）
-        let firstRowCount = min(manager.previewItems.count, itemsPerRow)
-        return CGFloat(firstRowCount) * actualItemWidth + panelPadding * 2
+        metrics.panelWidth
     }
 
     // 总面板高度
     private var totalPanelHeight: CGFloat {
-        var height = displayHeight + panelPadding * 2
-        if needsScrolling {
-            height += 28  // 滚动提示高度
-        }
-        return height
+        metrics.totalHeight
     }
 
     private var backgroundView: some View {
@@ -858,6 +942,24 @@ struct DockPreviewItemView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 28, height: 28)
                     .opacity(0.4)
+            }
+
+            // 最小化窗口标注：与切换器面板保持一致的角标样式
+            if item.windowModel.isMinimized {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Label(L10n.text("已最小化"), systemImage: "minus.circle.fill")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.5))
+                            .clipShape(Capsule())
+                            .padding(4)
+                        Spacer()
+                    }
+                }
             }
         }
         // 使用实际窗口比例
