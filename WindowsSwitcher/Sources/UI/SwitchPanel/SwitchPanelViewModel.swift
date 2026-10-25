@@ -42,6 +42,10 @@ class SwitchPanelViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var activitySequence: [CGWindowID: UInt64] = [:]
     private(set) var sameAppSwitchSession: SameAppSwitchSession?
+    private var visiblePreviewTask: Task<Void, Never>?
+    private var selectedPreviewTask: Task<Void, Never>?
+    private var previewGeneration: UInt64 = 0
+    private var previewsSuspended = false
 
     init(windows: [WindowModel],
          windowManager: WindowManagerProtocol,
@@ -163,6 +167,11 @@ class SwitchPanelViewModel: ObservableObject {
         }
 
         let clampedIndex = min(max(0, initialIndex), orderedWindows.count - 1)
+        Logger.operation(
+            "同应用切换",
+            detail: "会话冻结窗口顺序",
+            result: "\(orderedWindows.map(\.id))（选中下标 \(clampedIndex)）"
+        )
         sameAppSwitchSession = SameAppSwitchSession(
             bundleIdentifier: bundleIdentifier,
             windowIDs: orderedWindows.map(\.id),
@@ -224,7 +233,8 @@ class SwitchPanelViewModel: ObservableObject {
         // T-063: 合并 filter+sort 为单次调用，减少中间数组分配
         let criteria = FilterCriteria(
             searchText: searchText,
-            showOffScreen: config.config.behavior.showOffScreenWindows
+            showOffScreen: config.config.behavior.showOffScreenWindows,
+            showMinimized: config.config.behavior.showMinimizedWindows
         )
         let sortedWindows = filterEngine.filterAndSort(
             windows,
@@ -380,30 +390,39 @@ class SwitchPanelViewModel: ObservableObject {
 
     /// 刷新选中窗口的预览（使用实时预览，不使用缓存）
     func refreshSelectedWindowPreview() {
+        selectedPreviewTask?.cancel()
+        guard !previewsSuspended else { return }
         guard let windowID = selectedWindowID,
               let window = filteredWindows.first(where: { $0.id == windowID }) else { return }
 
-        Task(priority: .userInitiated) {
-            let size = config.config.appearance.previewSize.dimensions
-            let previewSize = CGSize(width: size.width, height: size.height)
-
+        let generation = previewGeneration
+        let size = config.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: size.width, height: size.height)
+        selectedPreviewTask = Task(priority: .userInitiated) { [weak self, previewGenerator] in
             // 使用实时预览，不使用缓存
             if let image = await previewGenerator.generateRealtimePreview(for: window, size: previewSize) {
-                await MainActor.run {
-                    self.previewImages[windowID] = image
-                }
+                guard !Task.isCancelled, let self,
+                      self.previewGeneration == generation,
+                      self.selectedWindowID == windowID,
+                      self.filteredWindows.contains(where: { $0.id == windowID }) else { return }
+                self.previewImages[windowID] = image
             }
         }
     }
 
-    func activateSelected() {
+    /// 在关闭面板和结束会话前协调同应用列表，保留用户看见的选择顺序。
+    func prepareSelectedWindowForActivation() -> WindowModel? {
         // 同应用会话在提交激活前做一次最终协调，跳过会话期间已关闭的窗口。
         if sameAppSwitchSession != nil {
             refreshWindows()
         }
+        return selectedWindow
+    }
+
+    func activateSelected() {
 
         // 优先使用 selectedWindowID 查找，更可靠
-        guard let window = selectedWindow else {
+        guard let window = prepareSelectedWindowForActivation() else {
             Logger.warning("activateSelected: selectedWindow is nil")
             Logger.windowActivate("未知窗口", result: "失败 - selectedWindow 为 nil")
             return
@@ -411,8 +430,7 @@ class SwitchPanelViewModel: ObservableObject {
         Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "开始激活")
         Logger.info("activateSelected: activating \(window.appName) (PID: \(window.ownerPID), Title: \(window.windowTitle))")
         // 激活前先刷新窗口缓存
-        windowManager.refreshCache()
-        windowManager.activateWindow(window)
+        activateWindowByID(window.id)
     }
 
     /// 通过窗口 ID 直接激活（避免索引问题）
@@ -422,8 +440,18 @@ class SwitchPanelViewModel: ObservableObject {
             Logger.warning("activateWindowByID: window not found, id: \(windowID)")
             return
         }
+        // 提交前重新枚举，拒绝已关闭或被其他进程复用的窗口 ID。
+        // 鼠标点击与松开修饰键共用此路径，避免激活旧列表中的错误目标。
+        let current = windowManager.getAllWindows(forceRefresh: true)
+        guard let target = current.first(where: {
+            $0.id == window.id && $0.ownerPID == window.ownerPID
+                && $0.bundleIdentifier == window.bundleIdentifier
+        }) else {
+            Logger.warning("activateWindowByID: target disappeared or changed owner, id: \(windowID)")
+            return
+        }
         Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过ID激活")
-        windowManager.activateWindow(window)
+        windowManager.activateWindow(target)
     }
 
     func closeWindow(_ window: WindowModel) {
@@ -465,32 +493,57 @@ class SwitchPanelViewModel: ObservableObject {
     }
 
     private func loadVisiblePreviews() {
+        visiblePreviewTask?.cancel()
+        selectedPreviewTask?.cancel()
+        previewGeneration &+= 1
+        guard !previewsSuspended else { return }
+        let generation = previewGeneration
         // 全部可见窗口都必须进入加载队列；并发压力由 PreviewGenerator 内部控制。
         let windowsToLoad = SwitchPanelPreviewLoadPolicy.windowsToLoad(from: filteredWindows)
         let sizeConfig = config.config.appearance.previewSize.dimensions
         let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
         let previewGenerator = previewGenerator
 
-        Task(priority: .userInitiated) { [weak self] in
+        visiblePreviewTask = Task(priority: .userInitiated) { [weak self] in
             await withTaskGroup(of: Void.self) { group in
                 for window in windowsToLoad {
+                    guard !Task.isCancelled else { break }
                     group.addTask {
                         // 1. 立即显示缓存图（无论新旧，避免空白）
                         if let cached = await previewGenerator.getCachedPreview(for: window.id) {
                             await MainActor.run {
-                                self?.previewImages[window.id] = cached
+                                guard !Task.isCancelled, let self,
+                                      self.previewGeneration == generation,
+                                      self.filteredWindows.contains(where: { $0.id == window.id }) else { return }
+                                self.previewImages[window.id] = cached
                             }
                         }
+                        guard !Task.isCancelled else { return }
                         // 2. 异步强制生成最新截图，确保内容实时
                         if let image = await previewGenerator.generateRealtimePreview(for: window, size: previewSize) {
                             await MainActor.run {
-                                self?.previewImages[window.id] = image
+                                guard !Task.isCancelled, let self,
+                                      self.previewGeneration == generation,
+                                      self.filteredWindows.contains(where: { $0.id == window.id }) else { return }
+                                self.previewImages[window.id] = image
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    /// 面板关闭后停止截图与回填；重新打开时创建新的 ViewModel。
+    func stopPreviewLoading() {
+        previewsSuspended = true
+        previewGeneration &+= 1
+        visiblePreviewTask?.cancel()
+        visiblePreviewTask = nil
+        selectedPreviewTask?.cancel()
+        selectedPreviewTask = nil
+        previewLoadTasks.values.forEach { $0.cancel() }
+        previewLoadTasks.removeAll()
     }
 
     // 异步加载单个预览（非阻塞）

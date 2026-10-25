@@ -114,12 +114,33 @@ struct AppearanceConfig: Codable, Equatable {
 
 struct BehaviorConfig: Codable, Equatable {
     var sortOrder: SortOrder = .recent
-    var showOffScreenWindows: Bool = false  // 显示最小化/隐藏的窗口
+    var showOffScreenWindows: Bool = false  // 显示隐藏的窗口
+    /// 显示已最小化的窗口（切换器与程序坞预览）
+    var showMinimizedWindows: Bool = true
     var previewUpdateInterval: Double = 0.1
     var panelDisplayDelay: Double = 0.0
     var defaultSelectSecond: Bool = false  // 打开切换面板时默认选中第二个窗口
     var showBackgroundPreview: Bool = true  // 是否显示背景预览
     var launchAtLogin: Bool = false  // 开机自动启动
+
+    init() {}
+
+    /// 自定义解码：缺失字段回落到默认值。
+    ///
+    /// Swift 合成的 Decodable 对非可选字段要求键必须存在，
+    /// 旧版本保存的配置文件会因此整体解码失败，
+    /// ConfigManager 只能回退到默认配置，导致用户设置被重置。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sortOrder = try container.decodeIfPresent(SortOrder.self, forKey: .sortOrder) ?? .recent
+        showOffScreenWindows = try container.decodeIfPresent(Bool.self, forKey: .showOffScreenWindows) ?? false
+        showMinimizedWindows = try container.decodeIfPresent(Bool.self, forKey: .showMinimizedWindows) ?? true
+        previewUpdateInterval = try container.decodeIfPresent(Double.self, forKey: .previewUpdateInterval) ?? 0.1
+        panelDisplayDelay = try container.decodeIfPresent(Double.self, forKey: .panelDisplayDelay) ?? 0
+        defaultSelectSecond = try container.decodeIfPresent(Bool.self, forKey: .defaultSelectSecond) ?? false
+        showBackgroundPreview = try container.decodeIfPresent(Bool.self, forKey: .showBackgroundPreview) ?? true
+        launchAtLogin = try container.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? false
+    }
 }
 
 struct DockPreviewConfig: Codable, Equatable {

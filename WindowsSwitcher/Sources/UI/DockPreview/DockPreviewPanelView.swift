@@ -18,7 +18,8 @@ class DockPreviewManager: ObservableObject {
     @Published var largePreviewFrame: CGRect = .zero    // 大预览窗口的 frame
     @Published var isLargePreviewVisible: Bool = false // 大预览窗口是否可见
 
-    let previewGenerator = PreviewGenerator()
+    /// 默认实例只用于应用尚未完成依赖装配前；启动后由 AppDelegate 注入切换器的实例。
+    private(set) var previewGenerator = PreviewGenerator()
 
     // 大预览窗口尺寸
     var largePreviewWidth: CGFloat = 600
@@ -32,6 +33,12 @@ class DockPreviewManager: ObservableObject {
         setupBindings()
     }
 
+    /// 程序坞预览与窗口切换器必须使用同一个预览生成器，才能共享全分辨率截图缓存和失效策略。
+    func configure(previewGenerator: PreviewGenerator) {
+        guard self.previewGenerator !== previewGenerator else { return }
+        self.previewGenerator = previewGenerator
+    }
+
     func start() {
         eventMonitor.startMonitoring()
     }
@@ -39,6 +46,13 @@ class DockPreviewManager: ObservableObject {
     func stop() {
         eventMonitor.stopMonitoring()
         mouseCheckTimer?.invalidate()
+        mouseCheckTimer = nil
+        previewTask?.cancel()
+        previewTask = nil
+        previewGeneration &+= 1
+        previewImages.removeAll()
+        previewItems.removeAll()
+        hoveredIndex = nil
         isPreviewVisible = false
     }
 
@@ -57,6 +71,17 @@ class DockPreviewManager: ObservableObject {
         }
         Logger.warning("[DockManager] 无法获取图标位置")
         return nil
+    }
+
+    /// 预览面板当前所在的屏幕。
+    ///
+    /// 以悬停图标中心定位，多显示器下不能固定使用主屏；面板尺寸与位置都依赖该结果。
+    var currentScreen: NSScreen? {
+        if let center = iconCenter,
+           let screen = NSScreen.screens.first(where: { $0.frame.contains(center) }) {
+            return screen
+        }
+        return NSScreen.main
     }
 
     private func setupBindings() {
@@ -153,8 +178,8 @@ class DockPreviewManager: ObservableObject {
             mouseCheckTimer?.invalidate()
         } else {
             // 鼠标离开预览窗口，检查是否在 Dock 区域
-            let dockFrame = DockGeometry.getDockFrame()
-            let isInDockArea = dockFrame.insetBy(dx: -30, dy: -30).contains(location)
+            // 使用与悬停检测同一套屏幕感知实现：固定用主屏会误判副屏上的 Dock 悬停
+            let isInDockArea = eventMonitor.isLocationInDockArea(location)
 
             if !isInDockArea {
                 // 也不在 Dock 区域，隐藏预览
@@ -163,7 +188,15 @@ class DockPreviewManager: ObservableObject {
         }
     }
 
+    private var previewGeneration: UInt64 = 0
+    private var previewTask: Task<Void, Never>?
+
     private func handleHoverChange(bundleID: String?) {
+        previewTask?.cancel()
+        previewGeneration &+= 1
+        previewImages.removeAll()
+        // 通知 AppDelegate 让后台预取任务让出截图队列；同 bundle 重复进入可幂等。
+        NotificationCenter.default.post(name: .dockPreviewHoverStarted, object: bundleID)
         guard let bundleID = bundleID else {
             hidePreview()
             return
@@ -181,24 +214,28 @@ class DockPreviewManager: ObservableObject {
             }
         }
 
-        // 强制刷新窗口缓存，确保获取最新的窗口列表
-        WindowManager.shared.refreshCache()
-
-        // 获取该应用的所有窗口
-        let allWindows = WindowManager.shared.windows
+        // 获取当前应用窗口；查询期间避免在主线程执行可阻塞的强制刷新。
+        // Dock 预览沿用 WindowManager 当前可见窗口语义，最小化窗口按设置决定是否显示。
+        let allWindows = WindowManager.shared.dockPreviewWindows(forBundleID: bundleID)
         let matchingWindows = allWindows.filter { $0.bundleIdentifier == bundleID }
 
-        // 放宽过滤条件
-        let windows = matchingWindows.filter { !$0.isMinimized }
+        // 最小化窗口是否显示由设置控制（默认显示，与原生 Dock 悬停网格一致）。
+        // 最小化窗口没有可截图内容：预览图沿用缓存中的上一次截图，没有缓存时回退到应用图标。
+        let showMinimized = ConfigManager.shared.config.behavior.showMinimizedWindows
+        let windows = matchingWindows.filter { showMinimized || !$0.isMinimized }
 
         guard !windows.isEmpty else {
             hidePreview()
             return
         }
 
-        // Dock 预览有意独立于切换面板，按窗口 ID 升序排列（最早窗口在前）。
-        // CGWindowID 是系统按创建顺序分配的，ID 越小表示创建越早
-        let sortedWindows = windows.sorted { $0.id < $1.id }
+        // 程序坞预览只按创建时间排序（CGWindowID 升序，即最早创建的窗口在前），
+        // 与切换面板的"最近使用优先"是两套独立规则。
+        //
+        // 不能跟随 MRU：用户点击某个窗口后该窗口的最近使用时间会被推到最前，
+        // 下次悬停同一图标时顺序就变了，同一个缩略图会"跳位置"，
+        // 让人无法建立"第一个就是刚才那个"的稳定直觉。
+        let sortedWindows = DockPreviewManager.sortForDockPreview(windows)
 
         // 创建预览项 - 显示所有窗口，不再限制数量
         previewItems = sortedWindows.map { windowModel in
@@ -207,7 +244,11 @@ class DockPreviewManager: ObservableObject {
             return item
         }
 
-        // 先加载第一个预览图，减少空白闪烁
+        // 先同步填充已有缓存，面板显示时立即有图；随后强制异步刷新为最新截图。
+        previewImages = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
+            guard let cached = previewGenerator.getCachedPreviewSync(for: window) else { return nil }
+            return (window.id, cached)
+        })
         preloadFirstPreviewAndShow(for: sortedWindows)
     }
 
@@ -215,32 +256,28 @@ class DockPreviewManager: ObservableObject {
     private func preloadFirstPreviewAndShow(for windows: [WindowModel]) {
         let previewSize = ConfigManager.shared.config.appearance.previewSize.dimensions
         let size = CGSize(width: previewSize.width, height: previewSize.height)
+        let generation = previewGeneration
+        let bundleID = windows.first?.bundleIdentifier
 
-        Task(priority: .userInitiated) {
-            // 先加载第一个窗口的预览图
-            if let firstWindow = windows.first {
-                if let image = await self.previewGenerator.generateRealtimePreview(for: firstWindow, size: size) {
-                    await MainActor.run {
-                        self.previewImages[firstWindow.id] = image
-                    }
-                }
-            }
-
-            // 显示面板
-            await MainActor.run {
-                showPreview()
-            }
-
-            // 继续加载其余预览图
-            if windows.count > 1 {
-                await withTaskGroup(of: Void.self) { group in
-                    for window in windows.dropFirst() {
-                        group.addTask {
-                            if let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size) {
-                                await MainActor.run {
-                                    self.previewImages[window.id] = image
-                                }
-                            }
+        // 面板显示不再等待截图；先显示窗口卡片/占位图，截图异步补齐。
+        showPreview()
+        previewTask?.cancel()
+        previewTask = Task(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                for window in windows {
+                    // 最小化窗口没有可截图内容：沿用缓存中的上一次截图，不做强制刷新，
+                    // 避免用空白图覆盖掉缓存里的最后一帧。
+                    guard !window.isMinimized else { return }
+                    group.addTask {
+                        guard !Task.isCancelled,
+                              let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size)
+                        else { return }
+                        await MainActor.run {
+                            guard self.previewGeneration == generation,
+                                  self.previewItems.contains(where: { $0.id == window.id }),
+                                  bundleID == self.previewItems.first?.windowModel.bundleIdentifier else { return }
+                            self.previewImages[window.id] = image
                         }
                     }
                 }
@@ -273,11 +310,26 @@ class DockPreviewManager: ObservableObject {
         hidePreview()
     }
 
+    /// 程序坞预览的窗口排序规则：只按创建时间（CGWindowID 升序）。
+    ///
+    /// 与切换面板的"最近使用优先"是两套独立规则。切换面板按最近使用排序，
+    /// 程序坞预览按创建顺序排列——点击某个窗口不会改变它下次出现的位置。
+    static func sortForDockPreview(_ windows: [WindowModel]) -> [WindowModel] {
+        windows.sorted { $0.id < $1.id }
+    }
+
     func selectItem(_ item: DockPreviewItem) {
-        // 激活前先刷新窗口缓存
-        WindowManager.shared.refreshCache()
-        // 激活窗口
-        WindowManager.shared.activateWindow(item.windowModel)
+        // 预览项是悬停时的快照：点击前窗口可能已关闭，或 CGWindowID 已被系统回收给其他窗口。
+        // 直接激活旧快照会命中另一个窗口，因此先按窗口 ID 重新解析实时窗口再激活。
+        let target = WindowManager.shared.resolveWindowForActivation(item.windowModel)
+
+        if let target {
+            WindowManager.shared.activateWindow(target)
+        } else {
+            Logger.warning(
+                "[DockManager] 预览窗口已失效，跳过激活: \(item.appName) - \(item.windowTitle) (ID: \(item.windowModel.id))"
+            )
+        }
 
         // 延迟隐藏预览（给窗口激活留出时间）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
@@ -289,6 +341,86 @@ class DockPreviewManager: ObservableObject {
             name: .dockPreviewWindowSelected,
             object: nil,
             userInfo: ["windowModel": item.windowModel]
+        )
+    }
+}
+
+// MARK: - DockPreviewLayout
+/// 程序坞预览面板的布局计算。
+///
+/// 面板尺寸必须由视图和 AppDelegate 共用同一套公式：两者各算一份时，
+/// 窗口尺寸与 SwiftUI 内容尺寸不一致会被裁切，表现为内容偏移。
+enum DockPreviewLayout {
+    /// 行间距
+    static let itemSpacing: CGFloat = 8
+    /// 窗口项外部留白
+    static let itemPadding: CGFloat = 8
+    /// 最多显示的行数（超出后滚动）
+    static let absoluteMaxRows: Int = 5
+    /// 面板内容高度占屏幕高度的上限比例
+    static let maxPanelHeightRatio: CGFloat = 0.6
+    /// 滚动提示条高度
+    static let scrollIndicatorHeight: CGFloat = 28
+
+    struct Metrics: Equatable {
+        /// 第一行显示的窗口数
+        var columns: Int
+        /// 总行数
+        var rows: Int
+        /// 是否需要滚动
+        var needsScrolling: Bool
+        /// 所有行的内容高度（含行间距，不含面板内边距）
+        var rowsHeight: CGFloat
+        /// 内容区域高度（含面板内边距）
+        var actualContentHeight: CGFloat
+        /// 滚动区域可视高度
+        var contentHeight: CGFloat
+        /// 面板宽度
+        var panelWidth: CGFloat
+        /// 面板总高度（含内边距与滚动提示）
+        var totalHeight: CGFloat
+    }
+
+    static func metrics(
+        itemCount: Int,
+        itemWidth: CGFloat,
+        itemHeight: CGFloat,
+        panelPadding: CGFloat,
+        itemsPerRow: Int,
+        availableScreenHeight: CGFloat
+    ) -> Metrics {
+        let perRow = max(1, itemsPerRow)
+        let columns = min(itemCount, perRow)
+        let rows = itemCount > 0 ? (itemCount + perRow - 1) / perRow : 0
+
+        let actualRowHeight = itemHeight + itemPadding * 2
+        let contentRowsHeight: CGFloat = rows > 0
+            ? CGFloat(rows) * actualRowHeight + CGFloat(rows - 1) * itemSpacing
+            : 0
+        // 内容区域高度（含面板内边距）
+        let actualContentHeight = contentRowsHeight + panelPadding * 2
+
+        let maxByRows = CGFloat(absoluteMaxRows) * actualRowHeight
+            + CGFloat(absoluteMaxRows - 1) * itemSpacing
+            + panelPadding * 2
+        let maxByRatio = availableScreenHeight * maxPanelHeightRatio
+        let maxContentHeight = min(maxByRatio, maxByRows)
+
+        let needsScrolling = actualContentHeight > maxContentHeight
+        let contentHeight = needsScrolling ? maxContentHeight : actualContentHeight
+        let panelWidth = CGFloat(columns) * (itemWidth + itemPadding * 2) + panelPadding * 2
+        let totalHeight = contentHeight + panelPadding * 2
+            + (needsScrolling ? scrollIndicatorHeight : 0)
+
+        return Metrics(
+            columns: columns,
+            rows: rows,
+            needsScrolling: needsScrolling,
+            rowsHeight: contentRowsHeight,
+            actualContentHeight: actualContentHeight,
+            contentHeight: contentHeight,
+            panelWidth: panelWidth,
+            totalHeight: totalHeight
         )
     }
 }
@@ -333,64 +465,42 @@ struct DockPreviewPanelView: View {
 
     // MARK: - 滚动相关配置
 
-    /// 最大面板高度占屏幕高度的比例
-    private let maxPanelHeightRatio: CGFloat = 0.6
+    /// 面板布局参数（与 AppDelegate 创建/更新面板窗口时共用同一套计算）
+    private var metrics: DockPreviewLayout.Metrics {
+        DockPreviewLayout.metrics(
+            itemCount: manager.previewItems.count,
+            itemWidth: itemWidth,
+            itemHeight: itemHeight,
+            panelPadding: panelPadding,
+            itemsPerRow: itemsPerRow,
+            availableScreenHeight: availableScreenHeight
+        )
+    }
 
-    /// 最大显示行数（用于计算最大高度阈值）
-    private let absoluteMaxRows: Int = 5
-
-    /// 计算总行数
+    /// 总行数
     private var totalRows: Int {
-        let count = manager.previewItems.count
-        return (count + itemsPerRow - 1) / itemsPerRow
+        metrics.rows
     }
 
     /// 获取屏幕可用高度（考虑 Dock 和菜单栏）
     private var availableScreenHeight: CGFloat {
-        guard let screen = NSScreen.main else {
-            return 800  // 默认值
-        }
-        // visibleFrame 已经排除了 Dock 和菜单栏
-        return screen.visibleFrame.height
-    }
-
-    /// 计算每行的实际高度（包含 itemPadding）
-    private var actualRowHeight: CGFloat {
-        itemHeight + itemPadding * 2
-    }
-
-    /// 内容区域高度（所有行的总高度，包含行间距）
-    private var contentRowsHeight: CGFloat {
-        guard totalRows > 0 else { return 0 }
-        return CGFloat(totalRows) * actualRowHeight + CGFloat(totalRows - 1) * itemSpacing
-    }
-
-    /// 实际内容高度（包含 panelPadding）
-    private var actualContentHeight: CGFloat {
-        // 内容高度 + 上下 padding
-        return contentRowsHeight + panelPadding * 2
-    }
-
-    /// 最大内容高度限制（包含 panelPadding）
-    private var maxPanelContentHeight: CGFloat {
-        // 基于行数计算最大高度（包含 padding）
-        let maxByRows = CGFloat(absoluteMaxRows) * actualRowHeight + CGFloat(absoluteMaxRows - 1) * itemSpacing + panelPadding * 2
-        // 基于屏幕比例计算最大高度
-        let maxByRatio = availableScreenHeight * maxPanelHeightRatio
-        return min(maxByRatio, maxByRows)
+        // 面板可能位于副屏，按悬停图标所在屏幕计算，避免用主屏高度限制副屏面板
+        (manager.currentScreen ?? NSScreen.main)?.visibleFrame.height ?? 800
     }
 
     /// 是否需要滚动（内容超出最大高度阈值）
     private var needsScrolling: Bool {
-        actualContentHeight > maxPanelContentHeight
+        metrics.needsScrolling
     }
 
     /// 显示区域高度（用于 ScrollView）
     private var displayHeight: CGFloat {
-        // 实际内容高度或最大高度，取较小值
-        let height = needsScrolling ? maxPanelContentHeight : actualContentHeight
-        // 确保不超过可用的内容高度
-        return min(height, actualContentHeight)
+        metrics.contentHeight
+    }
+
+    /// 内容区域高度（用于滚动条计算总高度）
+    private var actualContentHeight: CGFloat {
+        metrics.actualContentHeight
     }
 
     /// 滚动指示器透明度（平滑过渡）
@@ -510,7 +620,13 @@ struct DockPreviewPanelView: View {
                         manager.selectItem(item)
                     },
                     onHover: { isHovered in
-                        manager.hoveredIndex = isHovered ? globalIndex : nil
+                        // 移出回调可能晚于移入回调到达，只有仍指向当前项时才清空，
+                        // 否则大预览窗口会在条目间切换时闪退
+                        if isHovered {
+                            manager.hoveredIndex = globalIndex
+                        } else if manager.hoveredIndex == globalIndex {
+                            manager.hoveredIndex = nil
+                        }
                     }
                 )
                 .padding(itemPadding)
@@ -520,20 +636,12 @@ struct DockPreviewPanelView: View {
 
     // 面板宽度（自适应，基于实际窗口数量）
     private var panelWidth: CGFloat {
-        // 窗口项实际宽度 = itemWidth + 左右 padding
-        let actualItemWidth = itemWidth + itemPadding * 2
-        // 第一行实际显示的窗口数（不超过 itemsPerRow）
-        let firstRowCount = min(manager.previewItems.count, itemsPerRow)
-        return CGFloat(firstRowCount) * actualItemWidth + panelPadding * 2
+        metrics.panelWidth
     }
 
     // 总面板高度
     private var totalPanelHeight: CGFloat {
-        var height = displayHeight + panelPadding * 2
-        if needsScrolling {
-            height += 28  // 滚动提示高度
-        }
-        return height
+        metrics.totalHeight
     }
 
     private var backgroundView: some View {
@@ -767,8 +875,6 @@ struct DockPreviewItemView: View {
     let onTap: () -> Void
     let onHover: (Bool) -> Void
 
-    @State private var previewImage: NSImage?
-
     // 与切换器一致的图标尺寸
     private var iconSize: CGFloat { DesignTokens.WindowItem.iconSize }
     private var iconCornerRadius: CGFloat { DesignTokens.WindowItem.iconCornerRadius }
@@ -824,14 +930,6 @@ struct DockPreviewItemView: View {
         .animation(.easeInOut(duration: 0.1), value: isHovered)
         .onTapGesture(perform: onTap)
         .onHover(perform: onHover)
-        .onAppear {
-            // 优先使用缓存图片，没有缓存时才加载
-            if cachedImage != nil {
-                previewImage = cachedImage
-            } else {
-                loadPreview()
-            }
-        }
     }
 
     @ViewBuilder
@@ -841,8 +939,8 @@ struct DockPreviewItemView: View {
             RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius)
                 .fill(Color.clear)
 
-            // 优先显示预览图，其次显示缓存图片，最后显示占位图标
-            if let image = previewImage ?? cachedImage {
+            // 优先显示 manager 的最新图片，其次显示当前预加载缓存，最后显示占位图标
+            if let image = cachedImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -853,6 +951,24 @@ struct DockPreviewItemView: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: 28, height: 28)
                     .opacity(0.4)
+            }
+
+            // 最小化窗口标注：与切换器面板保持一致的角标样式
+            if item.windowModel.isMinimized {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Label(L10n.text("已最小化"), systemImage: "minus.circle.fill")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.5))
+                            .clipShape(Capsule())
+                            .padding(4)
+                        Spacer()
+                    }
+                }
             }
         }
         // 使用实际窗口比例
@@ -872,21 +988,6 @@ struct DockPreviewItemView: View {
             return DesignTokens.Colors.selectedBackground
         }
         return Color.clear
-    }
-
-    private func loadPreview() {
-        Task(priority: .userInitiated) {
-            let generator = item.previewGenerator ?? DockPreviewManager.shared.previewGenerator
-            // 使用实时预览方法，确保获取最新窗口内容
-            if let image = await generator.generateRealtimePreview(
-                for: item.windowModel,
-                size: CGSize(width: previewWidth, height: previewHeight)
-            ) {
-                await MainActor.run {
-                    self.previewImage = image
-                }
-            }
-        }
     }
 }
 
@@ -927,9 +1028,9 @@ enum DockPosition {
 
 // MARK: - DockGeometry
 struct DockGeometry {
-    /// 获取 Dock 的实际位置和尺寸
-    static func getDockFrame() -> CGRect {
-        guard let screen = NSScreen.main else {
+    /// 获取 Dock 的实际位置和尺寸；屏幕坐标包含 frame.origin。
+    static func getDockFrame(on screen: NSScreen? = NSScreen.main) -> CGRect {
+        guard let screen else {
             return CGRect(x: 0, y: 0, width: 800, height: 80)
         }
 
@@ -940,29 +1041,29 @@ struct DockGeometry {
         switch dockPosition {
         case .bottom:
             return CGRect(
-                x: 0,
-                y: 0,
+                x: screenFrame.minX,
+                y: screenFrame.minY,
                 width: screenFrame.width,
                 height: dockSize
             )
         case .top:
             return CGRect(
-                x: 0,
-                y: screenFrame.height - dockSize,
+                x: screenFrame.minX,
+                y: screenFrame.maxY - dockSize,
                 width: screenFrame.width,
                 height: dockSize
             )
         case .left:
             return CGRect(
-                x: 0,
-                y: 0,
+                x: screenFrame.minX,
+                y: screenFrame.minY,
                 width: dockSize,
                 height: screenFrame.height
             )
         case .right:
             return CGRect(
-                x: screenFrame.width - dockSize,
-                y: 0,
+                x: screenFrame.maxX - dockSize,
+                y: screenFrame.minY,
                 width: dockSize,
                 height: screenFrame.height
             )
@@ -1011,10 +1112,10 @@ struct DockGeometry {
         return max(70, min(140, totalHeight))
     }
 
-    /// 获取推荐间距（基于屏幕分辨率和 Dock 大小）
+    /// 获取推荐间距（基于目标屏幕分辨率和 Dock 大小）
     /// 返回预览窗口与 Dock 之间的安全间距，确保不遮挡程序坞
-    static func getRecommendedSpacing() -> (vertical: CGFloat, horizontal: CGFloat) {
-        guard let screen = NSScreen.main else {
+    static func getRecommendedSpacing(on screen: NSScreen? = NSScreen.main) -> (vertical: CGFloat, horizontal: CGFloat) {
+        guard let screen else {
             return (vertical: 36, horizontal: 28)
         }
 
@@ -1080,29 +1181,40 @@ struct LargeDockPreviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
-        .onAppear {
-            loadFullResolutionPreview()
+        .task(id: item.id, priority: .userInitiated) {
+            await refreshFullResolutionPreview(forceRefresh: false)
+
+            // 鼠标停留在大预览上时仍持续刷新，避免只命中旧的全分辨率缓存。
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                await refreshFullResolutionPreview(forceRefresh: true)
+            }
         }
     }
 
-    /// 使用全分辨率预览，类似于窗口切换器的背景预览
-    private func loadFullResolutionPreview() {
-        // 如果已有图片且是相同窗口，直接使用
-        if previewImage != nil && !isLoading {
+    /// 先同步显示共享的全分辨率缓存，再以同一缓存源刷新，避免悬停时长期停留在旧图。
+    private func refreshFullResolutionPreview(forceRefresh: Bool) async {
+        guard let previewGenerator else {
+            isLoading = false
             return
         }
 
-        Task(priority: .userInitiated) {
-            // 使用全分辨率预览生成器
-            if let image = await previewGenerator?.generateFullResolutionPreview(for: item.windowModel) {
-                await MainActor.run {
-                    self.previewImage = image
-                    self.isLoading = false
-                }
-            } else {
-                // 降级使用实时预览
-                await loadRealTimePreview()
-            }
+        if let cached = previewGenerator.getCachedFullResolutionPreviewSync(for: item.windowModel) {
+            previewImage = cached
+            isLoading = false
+        }
+
+        if let image = await previewGenerator.generateFullResolutionPreview(
+            for: item.windowModel,
+            priority: .veryHigh,
+            forceRefresh: forceRefresh || previewImage != nil
+        ) {
+            previewImage = image
+            isLoading = false
+        } else if previewImage == nil {
+            // 全分辨率截图不可用时才降级到实时缩略图。
+            await loadRealTimePreview()
         }
     }
 

@@ -146,7 +146,12 @@
 "辅助功能" = "Accessibility";
 "屏幕录制" = "Screen Recording";
 "WindowsSwitcher 需要辅助功能权限来捕获窗口信息和管理窗口，实现窗口切换功能。" = "WindowsSwitcher needs Accessibility permission to inspect and manage windows for window switching.";
-"WindowsSwitcher 需要屏幕录制权限来生成窗口预览缩略图，显示实时窗口内容。此权限不会录制或保存任何内容。" = "WindowsSwitcher needs Screen Recording permission to generate window previews. It does not record or save content.";
+"WindowsSwitcher 需要屏幕录制权限来生成窗口预览。缩略图会保存在本地缓存中，不会通过更新请求上传；应用不录制屏幕视频。" = "WindowsSwitcher needs Screen Recording permission for window previews. Thumbnails are cached locally and are not uploaded by update requests. The app does not record screen video.";
+"系统权限" = "System Permissions";
+"已授权" = "Authorized";
+"未授权" = "Not Authorized";
+"重新检查权限" = "Recheck Permissions";
+"辅助功能用于切换和布局；屏幕录制用于预览。授权后点击重新检查，仍无预览时退出并重新打开应用。" = "Accessibility enables switching and layouts; Screen Recording enables previews. Recheck after granting access. If previews are still unavailable, quit and reopen the app.";
 "搜索应用、窗口或 Bundle ID..." = "Search apps, windows, or Bundle IDs...";
 "搜索窗口" = "Search windows";
 "输入应用名称、窗口标题或 Bundle Identifier 搜索" = "Search by app name, window title, or bundle identifier";

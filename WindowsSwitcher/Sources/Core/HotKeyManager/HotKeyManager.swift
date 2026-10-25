@@ -12,6 +12,34 @@ enum CGSSymbolicHotKey: Int, CaseIterable {
     case commandKeyAboveTab = 6  // Command+` (同应用窗口切换)
 }
 
+/// 只有成功注册并确实占用系统组合键时，才接管对应的原生快捷键。
+enum NativeHotKeyPolicy {
+    static func suppressedKeys(config: HotKeyConfig, registeredIdentifiers: Set<String>,
+                               accessibilityAuthorized: Bool) -> Set<CGSSymbolicHotKey> {
+        guard accessibilityAuthorized else { return [] }
+        var chords: [(String, UInt32, UInt32)] = [
+            ("switch", config.switchKeyCode, config.switchModifiers),
+            ("reverseSwitch", config.switchKeyCode, config.switchModifiers | UInt32(shiftKey))
+        ]
+        if config.appSwitchEnabled {
+            chords += [
+                ("appSwitch", config.appSwitchKeyCode, config.appSwitchModifiers),
+                ("appSwitchReverse", config.appSwitchReverseKeyCode, config.appSwitchReverseModifiers)
+            ]
+        }
+        var keys = Set<CGSSymbolicHotKey>()
+        for (identifier, keyCode, modifiers) in chords where registeredIdentifiers.contains(identifier) {
+            if keyCode == 48, modifiers == UInt32(cmdKey) { keys.insert(.commandTab) }
+            if keyCode == 48, modifiers == UInt32(cmdKey | shiftKey) { keys.insert(.commandShiftTab) }
+            if keyCode == 50,
+               modifiers == UInt32(cmdKey) || modifiers == UInt32(cmdKey | shiftKey) {
+                keys.insert(.commandKeyAboveTab)
+            }
+        }
+        return keys
+    }
+}
+
 /// 私有 API：启用/禁用系统快捷键
 @_silgen_name("CGSSetSymbolicHotKeyEnabled")
 @discardableResult

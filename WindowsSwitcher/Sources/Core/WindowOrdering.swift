@@ -53,7 +53,7 @@ struct WindowOrdering {
             let appComparison = lhsFirst.appName.localizedCompare(rhsFirst.appName)
             if appComparison != .orderedSame { return appComparison == .orderedAscending }
             if lhs != rhs { return lhs < rhs }
-            return lhsFirst.id > rhsFirst.id
+            return lhsFirst.id < rhsFirst.id
         }
 
         return sortedBundleIDs.flatMap { bundleID in
@@ -66,11 +66,18 @@ struct WindowOrdering {
         _ rhs: WindowModel,
         activitySequence: [CGWindowID: UInt64]
     ) -> Bool {
-        let lhsSequence = activitySequence[lhs.id] ?? 0
-        let rhsSequence = activitySequence[rhs.id] ?? 0
-        if lhsSequence != rhsSequence { return lhsSequence > rhsSequence }
+        let lhsSequence = activitySequence[lhs.id]
+        let rhsSequence = activitySequence[rhs.id]
+
+        // 只有两者都有真实活动序号时才比较序号；未记录序号的新窗口
+        // 使用其 lastActiveTime 参与排序，避免因“序号缺失=0”被所有旧窗口压在后面。
+        if let lhsSequence, let rhsSequence, lhsSequence != rhsSequence {
+            return lhsSequence > rhsSequence
+        }
         if lhs.lastActiveTime != rhs.lastActiveTime { return lhs.lastActiveTime > rhs.lastActiveTime }
-        return lhs.id > rhs.id
+        if lhsSequence != nil, rhsSequence == nil { return true }
+        if lhsSequence == nil, rhsSequence != nil { return false }
+        return lhs.id < rhs.id
     }
 
     private func appNameComesBefore(_ lhs: WindowModel, _ rhs: WindowModel) -> Bool {
@@ -82,7 +89,7 @@ struct WindowOrdering {
 
         let titleComparison = lhs.windowTitle.localizedCompare(rhs.windowTitle)
         if titleComparison != .orderedSame { return titleComparison == .orderedAscending }
-        return lhs.id > rhs.id
+        return lhs.id < rhs.id
     }
 
     private func windowTitleComesBefore(_ lhs: WindowModel, _ rhs: WindowModel) -> Bool {
@@ -94,6 +101,6 @@ struct WindowOrdering {
 
         let bundleComparison = lhs.bundleIdentifier.compare(rhs.bundleIdentifier)
         if bundleComparison != .orderedSame { return bundleComparison == .orderedAscending }
-        return lhs.id > rhs.id
+        return lhs.id < rhs.id
     }
 }

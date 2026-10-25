@@ -184,6 +184,7 @@ class UpdateService: ObservableObject {
     // MARK: - 检查更新
 
     /// 检查是否有新版本
+    @MainActor
     func checkForUpdate() async {
         // 如果已经在检查中，直接返回
         if isChecking {
@@ -218,14 +219,14 @@ class UpdateService: ObservableObject {
             return
         }
 
-        await MainActor.run {
-            self.isChecking = true
-            self.errorMessage = nil
-        }
+        // 首次挂起前设置状态，让并发入口共用同一个检查。
+        isChecking = true
+        errorMessage = nil
 
         do {
             // 创建请求，添加 GitHub Token（如果有）
             var request = URLRequest(url: url)
+            request.timeoutInterval = 30
             if !githubToken.isEmpty {
                 request.setValue("token \(githubToken)", forHTTPHeaderField: "Authorization")
                 Logger.operation("版本检查", detail: "使用 GitHub Token")
@@ -357,7 +358,9 @@ class UpdateService: ObservableObject {
     }
 
     /// 强制检查（忽略频率限制）
+    @MainActor
     func forceCheckForUpdate() async {
+        guard !isChecking else { return }
         // 重置检查时间
         lastCheckTime = nil
         await checkForUpdate()

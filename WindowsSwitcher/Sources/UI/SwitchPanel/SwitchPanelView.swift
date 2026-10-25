@@ -2,14 +2,32 @@ import SwiftUI
 import AppKit
 
 // MARK: - 背景预览容器视图
+/// 背景预览优先使用预热好的全分辨率截图缓存；未命中时直接截取全分辨率图。
+enum BackgroundPreviewLoadPolicy {
+    static func initialImage(from cachedImage: NSImage?) -> NSImage? {
+        cachedImage
+    }
+}
+
 /// 按窗口实际大小和位置显示预览
 struct BackgroundPreviewContainer: View {
     let selectedWindow: WindowModel
+    let previewGenerator: PreviewGenerator
+    let needsFullResolutionCapture: Bool
     @State private var previewImage: NSImage?
-    @State private var currentWindowID: CGWindowID?
+
+    init(selectedWindow: WindowModel, cachedPreview: NSImage?, previewGenerator: PreviewGenerator) {
+        self.selectedWindow = selectedWindow
+        self.previewGenerator = previewGenerator
+        needsFullResolutionCapture = cachedPreview == nil
+        _previewImage = State(initialValue: BackgroundPreviewLoadPolicy.initialImage(from: cachedPreview))
+    }
 
     var body: some View {
         ZStack {
+            if previewImage == nil {
+                Color.black.opacity(0.55)
+            }
             if let image = previewImage {
                 let windowFrame = selectedWindow.frame
 
@@ -31,31 +49,23 @@ struct BackgroundPreviewContainer: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            loadPreview()
-        }
-        .onChange(of: selectedWindow.id) { _ in
-            loadPreview()
-        }
-    }
-
-    private func loadPreview() {
-        guard currentWindowID != selectedWindow.id else { return }
-        currentWindowID = selectedWindow.id
-
-        Task {
-            let generator = PreviewGenerator()
-            if let image = await generator.generateFullResolutionPreview(for: selectedWindow) {
-                await MainActor.run {
-                    self.previewImage = image
-                }
-            }
+        .task(id: selectedWindow.id, priority: .userInitiated) {
+            guard needsFullResolutionCapture,
+                  let image = await previewGenerator.generateFullResolutionPreview(for: selectedWindow),
+                  !Task.isCancelled else { return }
+            previewImage = image
         }
     }
 }
 
 /// 切换面板高度的纯计算器，供 SwiftUI 根视图和宿主 NSPanel 共用。
 enum SwitchPanelLayout {
+    /// 使用全局屏幕坐标，支持位于主屏左侧或上下方的显示器。
+    static func centeredOrigin(panelSize: CGSize, screenFrame: CGRect) -> CGPoint {
+        CGPoint(x: screenFrame.midX - panelSize.width / 2,
+                y: screenFrame.midY - panelSize.height / 2)
+    }
+
     static let itemVerticalSpacing: CGFloat = 8
     static let bottomBarHeight: CGFloat = 20
     static let panelPadding: CGFloat = 8
@@ -233,12 +243,7 @@ struct SwitchPanelView: View {
                 viewModel.selectPrevious()
             },
             onConfirm: {
-                // 使用 selectedWindowID 直接激活（与鼠标点击逻辑一致）
-                if let windowID = viewModel.selectedWindowID {
-                    viewModel.activateWindowByID(windowID)
-                } else {
-                    viewModel.activateSelected()
-                }
+                viewModel.activateSelected()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { onDismiss() }
             },
             onDismiss: onDismiss,

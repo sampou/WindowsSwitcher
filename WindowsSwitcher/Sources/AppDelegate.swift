@@ -267,6 +267,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var switchPanelViewModel: SwitchPanelViewModel?
     private var dockPreviewWindow: NSWindow?
     private var dockPreviewCancellable: AnyCancellable?
+    private var dockPreviewItemsCancellable: AnyCancellable?
+    private var dockPreviewHoverCancellable: AnyCancellable?
     private var largePreviewCancellable: AnyCancellable?
     private var selectedWindowCancellable: AnyCancellable?  // 监听选中窗口变化
 
@@ -309,9 +311,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // 设置菜单栏
         setupMenuBar()
         Logger.info("3. MenuBar setup complete")
-
-        // 禁用系统 Command+Tab 快捷键（需要辅助功能权限）
-        disableSystemHotKeysIfNeeded()
 
         // 注册信号处理器，捕获异常退出并恢复系统快捷键
         setupSignalHandlers()
@@ -383,26 +382,65 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         Logger.info("=== Deferred initialization completed ===")
     }
 
+    /// 后台预览预取任务；面板显示或新一轮交互开始时取消，避免占满截图队列。
+    private var previewPrefetchTask: Task<Void, Never>?
+    private var previewPrefetchGeneration: UInt64 = 0
+
     // MARK: - 后台预览预取
     /// 启动后台定时器，定期生成所有窗口预览并预热缓存
     /// 面板可见时跳过（面板有自己的实时加载逻辑），避免重复截图
     private func startPreviewPrefetcher() {
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        timer.schedule(deadline: .now() + 3, repeating: 6)  // 首次3秒后，之后每6秒（短于缓存TTL 10秒）
+        timer.schedule(deadline: .now() + 3, repeating: BackgroundPreviewPolicy.refreshInterval,
+                       leeway: .seconds(2))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            // 面板可见时不预取，避免与面板加载冲突
-            if self.isPanelVisible { return }
-            let windows = self.windowManager.getAllWindows(forceRefresh: false)
-            guard !windows.isEmpty else { return }
-            let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
-            let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
-            Task(priority: .background) {
-                await self.previewGenerator.prefetchPreviews(for: windows, size: previewSize)
+            Task { @MainActor [weak self] in
+                guard let self, !self.isPanelVisible else { return }
+                self.startPreviewPrefetchTask()
             }
         }
         timer.resume()
         previewPrefetchTimer = timer
+    }
+
+    /// 启动一次后台预览预取；所有状态决策在 MainActor 上完成。
+    @MainActor
+    private func startPreviewPrefetchTask() {
+        guard !isPanelVisible, !DockPreviewManager.shared.isPreviewVisible else { return }
+        guard PermissionManager.shared.screenRecordingStatus.isAuthorized else { return }
+        // 上轮尚未结束时复用任务，避免慢截图被定时器不断取消并重新排队。
+        guard previewPrefetchTask == nil else { return }
+        previewPrefetchGeneration &+= 1
+        let generation = previewPrefetchGeneration
+        let windows = windowManager.getAllWindows(forceRefresh: false)
+        guard !windows.isEmpty else { return }
+        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
+        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
+        let candidates = backgroundPreviewCandidates(from: windows)
+        let thumbnails = BackgroundPreviewPolicy.thumbnails(from: candidates)
+        let fullResolution = BackgroundPreviewPolicy.fullResolution(
+            from: candidates, enabled: configManager.config.behavior.showBackgroundPreview
+        )
+
+        previewPrefetchTask = Task(priority: .background) { [weak self, previewGenerator] in
+            await previewGenerator.prefetchPreviews(for: thumbnails, size: previewSize)
+            guard !Task.isCancelled else { return }
+            await previewGenerator.prefetchFullResolutionPreviews(for: fullResolution)
+            await MainActor.run {
+                guard let self else { return }
+                guard self.previewPrefetchGeneration == generation else { return }
+                self.previewPrefetchTask = nil
+            }
+        }
+    }
+
+    /// 取消后台预取，给切换器和 Dock 的交互截图让出队列。
+    @MainActor
+    private func cancelPreviewPrefetch() {
+        previewPrefetchGeneration &+= 1
+        previewPrefetchTask?.cancel()
+        previewPrefetchTask = nil
     }
 
     /// 唤起切换器时，同步用缓存的预览图填充 viewModel（命中内存缓存瞬时完成，避免后面窗口空白）
@@ -412,7 +450,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         var filled = 0
         for window in windowsToPrefill {
             // 直接查内存缓存，同步填充，面板显示前完成
-            if let cached = previewGenerator.getCachedPreviewSync(for: window.id) {
+            if let cached = previewGenerator.getCachedPreviewSync(for: window) {
                 viewModel.previewImages[window.id] = cached
                 filled += 1
             }
@@ -602,21 +640,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     /// 启动时自动显示设置界面
     private func showSettingsOnLaunch() {
+        let defaults = UserDefaults.standard
+        let firstLaunch = !defaults.bool(forKey: "hasShownInitialSettings")
+        guard firstLaunch || !PermissionManager.shared.hasAllRequiredPermissions else { return }
+        defaults.set(true, forKey: "hasShownInitialSettings")
         // 显示设置窗口
         DispatchQueue.main.async {
             self.openSettings()
         }
     }
 
-    // 检查权限并禁用系统快捷键
+    private var suppressedSystemHotKeys = Set<CGSSymbolicHotKey>()
+
+    // 按当前配置和注册结果更新接管范围，保留未被使用的原生快捷键。
     private func disableSystemHotKeysIfNeeded() {
-        let hasTrusted = AXIsProcessTrusted()
-        if hasTrusted {
-            Logger.info("Accessibility permission granted, disabling system Command+Tab")
-            disableAllSystemHotKeys()
-        } else {
-            Logger.warning("Accessibility permission not granted, cannot disable system Command+Tab")
+        let identifiers = Set(["switch", "reverseSwitch", "appSwitch", "appSwitchReverse"]
+            .filter { hotKeyManager.isRegistered($0) })
+        let required = NativeHotKeyPolicy.suppressedKeys(
+            config: configManager.config.hotKeys,
+            registeredIdentifiers: identifiers,
+            accessibilityAuthorized: AXIsProcessTrusted()
+        )
+        for key in suppressedSystemHotKeys.subtracting(required) {
+            CGSSymbolicHotKeyEnabled(key.rawValue, true)
         }
+        for key in required.subtracting(suppressedSystemHotKeys) {
+            CGSSymbolicHotKeyEnabled(key.rawValue, false)
+        }
+        suppressedSystemHotKeys = required
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -680,9 +731,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private func startDockPreview() {
         Logger.info(">>> Starting Dock Preview...")
 
-        // 启动 DockPreviewManager
-        DockPreviewManager.shared.start()
+        // 程序坞大预览与切换器背景预览共用同一个全分辨率缓存。
+        let dockPreviewManager = DockPreviewManager.shared
+        dockPreviewManager.configure(previewGenerator: previewGenerator)
+        dockPreviewManager.start()
         Logger.info("DockPreviewManager.start() called")
+
+        // Dock 悬停进入预览时通知后台预取让出截图队列，避免与最新预览争抢。
+        dockPreviewHoverCancellable = NotificationCenter.default.publisher(for: .dockPreviewHoverStarted)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.cancelPreviewPrefetch()
+                }
+            }
 
         // 监听预览显示状态变化，创建/隐藏预览窗口
         dockPreviewCancellable = DockPreviewManager.shared.$isPreviewVisible
@@ -690,13 +752,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             .sink { [weak self] isVisible in
                 if isVisible {
                     Task { @MainActor in
-                        self?.showDockPreviewPanel()
+                        guard let self else { return }
+                        self.cancelPreviewPrefetch()
+                        self.showDockPreviewPanel()
                     }
                 } else {
                     Task { @MainActor in
                         self?.hideDockPreviewPanel()
                         self?.hideLargePreview()
                     }
+                }
+            }
+
+        // 悬停切换到另一个应用时，预览项内容会变化：
+        // 面板必须跟随新的 Dock 图标重新定位并调整尺寸，否则面板会停留在上一个图标上方。
+        dockPreviewItemsCancellable = DockPreviewManager.shared.$previewItems
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, DockPreviewManager.shared.isPreviewVisible else { return }
+                    self.showDockPreviewPanel()
                 }
             }
 
@@ -723,6 +798,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // 取消监听
         dockPreviewCancellable?.cancel()
         dockPreviewCancellable = nil
+        dockPreviewItemsCancellable?.cancel()
+        dockPreviewItemsCancellable = nil
+        dockPreviewHoverCancellable?.cancel()
+        dockPreviewHoverCancellable = nil
         largePreviewCancellable?.cancel()
         largePreviewCancellable = nil
 
@@ -738,137 +817,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // 显示程序坞预览面板 - 精确定位在图标上方
     @MainActor
     private func showDockPreviewPanel() {
-        guard dockPreviewWindow == nil else {
-            return
-        }
-
         // 检查预览项
         let items = DockPreviewManager.shared.previewItems
         guard !items.isEmpty else {
             return
         }
 
-        // 获取配置
-        let config = ConfigManager.shared.config.dockPreview
-        let previewSize = ConfigManager.shared.config.appearance.previewSize
-        let itemWidth = previewSize.itemDimensions.width
-        let itemHeight = previewSize.itemDimensions.height
-        let itemSpacing: CGFloat = 20
-        let panelPadding: CGFloat = DesignTokens.Panel.padding
-
-        // 计算行数和列数
-        let maxItemsPerRow = config.maxPreviewCount
-        let totalItems = items.count
-        let rows = (totalItems + maxItemsPerRow - 1) / maxItemsPerRow
-        let displayRows = min(rows, 3)  // 最多显示3行，超过需滚动
-
-        // 自适应宽度计算：根据实际显示的列数计算宽度
-        // 使用实际第一行显示的数量，但最少显示1列
-        let actualColumns = min(totalItems, maxItemsPerRow)
-        let panelWidth = CGFloat(actualColumns) * itemWidth + CGFloat(actualColumns - 1) * itemSpacing + panelPadding * 2
-
-        // 滚动提示高度
-        let scrollIndicatorHeight: CGFloat = rows > 3 ? 24 : 0
-
-        // 自适应高度计算：根据实际显示的行数计算高度
-        let panelHeight: CGFloat
-        if rows <= 3 {
-            // 不需要滚动，高度 = 行数 * 项目高度 + (行数-1) * 间距 + 内边距 * 2 + 滚动指示器
-            panelHeight = CGFloat(displayRows) * itemHeight + CGFloat(displayRows - 1) * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
+        if dockPreviewWindow == nil {
+            createDockPreviewPanel()
         } else {
-            // 需要滚动，固定高度显示3行
-            panelHeight = 3 * itemHeight + 2 * itemSpacing + panelPadding * 2 + scrollIndicatorHeight
+            // 面板已存在：悬停切换到另一个应用时必须重新定位与调整尺寸，
+            // 否则面板会停留在上一个图标上方，用户点到的预览项与应用对不上。
+            applyDockPreviewPanelLayout()
         }
+    }
 
-        // 获取屏幕信息
-        let screenFrame = NSScreen.main?.frame ?? .zero
-        let dockPosition = DockPreviewManager.shared.currentDockPosition
-        let dockFrame = DockGeometry.getDockFrame()
-
-        // 获取智能间距（如果用户设置了自定义值则使用自定义值，否则使用系统推荐的智能间距）
-        let recommendedSpacing = DockGeometry.getRecommendedSpacing()
-        let verticalSpacing = config.verticalSpacing > 0 ? CGFloat(config.verticalSpacing) : recommendedSpacing.vertical
-        let horizontalSpacing = config.horizontalSpacing > 0 ? CGFloat(config.horizontalSpacing) : recommendedSpacing.horizontal
-
-        // 计算面板位置
-        var panelX: CGFloat
-        var panelY: CGFloat
-
-        // 同步获取图标中心位置（避免 Combine 发布延迟问题）
-        if let iconCenter = DockPreviewManager.shared.getCurrentIconCenter() {
-            // 精确模式：面板水平居中于图标
-            panelX = iconCenter.x - panelWidth / 2
-            Logger.debug("[Dock定位] 精确模式: iconCenter=\(iconCenter), panelWidth=\(panelWidth), panelX=\(panelX)")
-
-            switch dockPosition {
-            case .bottom:
-                // Dock 在底部：面板底部边缘与 Dock 顶部边缘保持间距
-                // iconCenter.y 是图标中心的 Y 坐标，图标在 Dock 内
-                // 面板底部应该在 Dock 顶部上方 verticalSpacing 像素
-                panelY = dockFrame.height + verticalSpacing
-            case .top:
-                // Dock 在顶部：面板顶部边缘与 Dock 底部边缘保持间距
-                panelY = screenFrame.height - dockFrame.height - panelHeight - verticalSpacing
-            case .left:
-                // Dock 在左侧：面板左边缘与 Dock 右边缘保持间距
-                panelX = dockFrame.width + horizontalSpacing
-                panelY = iconCenter.y - panelHeight / 2
-            case .right:
-                // Dock 在右侧：面板右边缘与 Dock 左边缘保持间距
-                panelX = screenFrame.width - dockFrame.width - panelWidth - horizontalSpacing
-                panelY = iconCenter.y - panelHeight / 2
-            }
-        } else {
-            // 降级模式：使用 Dock frame 计算位置
-            panelX = screenFrame.midX - panelWidth / 2
-
-            switch dockPosition {
-            case .bottom:
-                panelY = dockFrame.height + verticalSpacing
-            case .top:
-                panelY = screenFrame.height - dockFrame.height - panelHeight - verticalSpacing
-            case .left:
-                panelX = dockFrame.width + horizontalSpacing
-                panelY = screenFrame.midY - panelHeight / 2
-            case .right:
-                panelX = screenFrame.width - dockFrame.width - panelWidth - horizontalSpacing
-                panelY = screenFrame.midY - panelHeight / 2
-            }
-        }
-
-        // 确保面板不超出屏幕边界（跨分辨率适配）
-        // 注意：需要确保不会把面板拉回到覆盖 Dock 的位置
-        switch dockPosition {
-        case .bottom:
-            // Dock 在底部：确保面板底部不低于 Dock 顶部 + 计算的间距
-            let minY = dockFrame.height + verticalSpacing
-            panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
-            panelY = max(minY, min(panelY, screenFrame.height - panelHeight - 5))
-        case .top:
-            // Dock 在顶部：确保面板顶部不高于 Dock 底部 + 计算的间距
-            let maxY = screenFrame.height - dockFrame.height - verticalSpacing - panelHeight
-            panelX = max(5, min(panelX, screenFrame.width - panelWidth - 5))
-            panelY = max(5, min(panelY, maxY))
-        case .left:
-            // Dock 在左侧：确保面板左边缘不低于 Dock 右边缘 + 计算的间距
-            let minX = dockFrame.width + horizontalSpacing
-            panelX = max(minX, min(panelX, screenFrame.width - panelWidth - 5))
-            panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
-        case .right:
-            // Dock 在右侧：确保面板右边缘不高于 Dock 左边缘 + 计算的间距
-            let maxX = screenFrame.width - dockFrame.width - horizontalSpacing - panelWidth
-            panelX = max(5, min(panelX, maxX))
-            panelY = max(5, min(panelY, screenFrame.height - panelHeight - 5))
-        }
-
-        // 创建 SwiftUI 视图
+    /// 创建预览面板窗口；尺寸与位置统一由 applyDockPreviewPanelLayout 设置。
+    @MainActor
+    private func createDockPreviewPanel() {
         let dockPreviewView = DockPreviewPanelView(manager: DockPreviewManager.shared) { [weak self] in
             self?.hideDockPreviewPanel()
         }
 
-        // 创建面板
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
             styleMask: [.nonactivatingPanel, .fullSizeContentView, .borderless],
             backing: .buffered,
             defer: false
@@ -887,18 +859,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         // 设置 SwiftUI 内容
         let hostingView = NSHostingView(rootView: dockPreviewView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
+        hostingView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
         panel.contentView = hostingView
 
-        // 设置窗口位置
-        panel.setFrameOrigin(NSPoint(x: panelX, y: panelY))
+        dockPreviewWindow = panel
 
-        // 更新预览窗口 frame 到 DockPreviewManager（用于鼠标位置检测）
-        let panelFrame = CGRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
-        DockPreviewManager.shared.updatePreviewWindowFrame(panelFrame)
+        // 先按当前内容确定尺寸与位置，再显示，避免出现一帧错位。
+        applyDockPreviewPanelLayout()
 
         // 添加淡入动画（200-300ms 平滑过渡）
-        if config.showAnimation {
+        if ConfigManager.shared.config.dockPreview.showAnimation {
             panel.alphaValue = 0
             panel.orderFrontRegardless()
             NSAnimationContext.runAnimationGroup { context in
@@ -909,8 +879,129 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         } else {
             panel.orderFrontRegardless()
         }
+    }
 
-        dockPreviewWindow = panel
+    /// 按当前预览内容更新面板尺寸与位置。
+    ///
+    /// 面板尺寸必须与 SwiftUI 内容使用同一套公式，否则内容会被裁切并与窗口错位。
+    @MainActor
+    private func applyDockPreviewPanelLayout() {
+        guard let panel = dockPreviewWindow else { return }
+
+        let items = DockPreviewManager.shared.previewItems
+        guard !items.isEmpty else { return }
+
+        // 获取配置
+        let config = ConfigManager.shared.config.dockPreview
+        let previewSize = ConfigManager.shared.config.appearance.previewSize
+        let itemWidth = previewSize.itemDimensions.width
+        let itemHeight = previewSize.itemDimensions.height
+        let panelPadding: CGFloat = DesignTokens.Panel.padding
+
+        // 获取屏幕信息：以图标中心所在屏幕为定位上下文，不能固定使用主屏。
+        let iconCenter = DockPreviewManager.shared.getCurrentIconCenter()
+        let targetScreen = iconCenter.flatMap { point in
+            NSScreen.screens.first { $0.frame.contains(point) }
+        } ?? NSScreen.main
+        let screenFrame = targetScreen?.frame ?? .zero
+        let dockPosition = DockPreviewManager.shared.currentDockPosition
+        let dockFrame = DockGeometry.getDockFrame(on: targetScreen)
+
+        // 与 SwiftUI 面板共用同一套布局计算
+        let metrics = DockPreviewLayout.metrics(
+            itemCount: items.count,
+            itemWidth: itemWidth,
+            itemHeight: itemHeight,
+            panelPadding: panelPadding,
+            itemsPerRow: config.maxPreviewCount,
+            availableScreenHeight: (targetScreen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        )
+        let panelWidth = metrics.panelWidth
+        let panelHeight = metrics.totalHeight
+
+        // 获取智能间距（如果用户设置了自定义值则使用自定义值，否则使用系统推荐的智能间距）
+        let recommendedSpacing = DockGeometry.getRecommendedSpacing(on: targetScreen)
+
+        let verticalSpacing = config.verticalSpacing > 0 ? CGFloat(config.verticalSpacing) : recommendedSpacing.vertical
+        let horizontalSpacing = config.horizontalSpacing > 0 ? CGFloat(config.horizontalSpacing) : recommendedSpacing.horizontal
+
+        // 计算面板位置
+        var panelX: CGFloat
+        var panelY: CGFloat
+
+        // 同步获取图标中心位置（避免 Combine 发布延迟问题）
+        if let iconCenter = DockPreviewManager.shared.getCurrentIconCenter() {
+            // 精确模式：面板水平居中于图标
+            panelX = iconCenter.x - panelWidth / 2
+            Logger.debug("[Dock定位] 精确模式: iconCenter=\(iconCenter), panelWidth=\(panelWidth), panelX=\(panelX)")
+
+            switch dockPosition {
+            case .bottom:
+                panelY = dockFrame.maxY + verticalSpacing
+            case .top:
+                panelY = dockFrame.minY - panelHeight - verticalSpacing
+            case .left:
+                panelX = dockFrame.maxX + horizontalSpacing
+                panelY = iconCenter.y - panelHeight / 2
+            case .right:
+                panelX = dockFrame.minX - panelWidth - horizontalSpacing
+                panelY = iconCenter.y - panelHeight / 2
+            }
+        } else {
+            // 降级模式：使用 Dock frame 计算位置
+            panelX = screenFrame.midX - panelWidth / 2
+
+            switch dockPosition {
+            case .bottom:
+                panelY = dockFrame.maxY + verticalSpacing
+            case .top:
+                panelY = dockFrame.minY - panelHeight - verticalSpacing
+            case .left:
+                panelX = dockFrame.maxX + horizontalSpacing
+                panelY = screenFrame.midY - panelHeight / 2
+            case .right:
+                panelX = dockFrame.minX - panelWidth - horizontalSpacing
+                panelY = screenFrame.midY - panelHeight / 2
+            }
+        }
+
+        // 以目标屏幕的绝对 visibleFrame 做边界限制，保留副屏/负坐标 origin。
+        // 注意：需要确保不会把面板拉回到覆盖 Dock 的位置
+        switch dockPosition {
+        case .bottom:
+            // Dock 在底部，面板位于 Dock 上方
+            let minY = dockFrame.maxY + verticalSpacing
+            panelX = max(screenFrame.minX + 5, min(panelX, screenFrame.maxX - panelWidth - 5))
+            panelY = max(minY, min(panelY, screenFrame.maxY - panelHeight - 5))
+        case .top:
+            // Dock 在顶部，面板位于 Dock 下方
+            let maxY = dockFrame.minY - panelHeight - verticalSpacing
+            panelX = max(screenFrame.minX + 5, min(panelX, screenFrame.maxX - panelWidth - 5))
+            panelY = min(max(5 + screenFrame.minY, panelY), maxY)
+        case .left:
+            // Dock 在左侧，面板位于 Dock 右侧
+            let minX = dockFrame.maxX + horizontalSpacing
+            panelX = max(minX, min(panelX, screenFrame.maxX - panelWidth - 5))
+            panelY = max(screenFrame.minY + 5, min(panelY, screenFrame.maxY - panelHeight - 5))
+        case .right:
+            // Dock 在右侧，面板位于 Dock 左侧
+            let maxX = dockFrame.minX - panelWidth - horizontalSpacing
+            panelX = min(max(screenFrame.minX + 5, panelX), maxX)
+            panelY = max(screenFrame.minY + 5, min(panelY, screenFrame.maxY - panelHeight - 5))
+        }
+
+        // 设置窗口位置与尺寸（与 SwiftUI 内容尺寸保持一致，避免裁切错位）
+        panel.setFrame(
+            NSRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight),
+            display: true
+        )
+        if let hostingView = panel.contentView {
+            hostingView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
+        }
+
+        // 更新预览窗口 frame 到 DockPreviewManager（用于鼠标位置检测）
+        let panelFrame = CGRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight)
+        DockPreviewManager.shared.updatePreviewWindowFrame(panelFrame)
     }
 
     // 隐藏程序坞预览面板
@@ -993,6 +1084,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // 监听切换器快捷键的修饰键释放 - 根据配置动态检测
     private func setupOptionKeyMonitor() {
         Logger.info("==> setupOptionKeyMonitor called")
+        // 授权恢复可重复调用，先移除旧监听，防止一次松键触发多次激活。
+        if let monitor = globalKeyMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = localKeyMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = globalMouseMonitor { NSEvent.removeMonitor(monitor) }
+        globalKeyMonitor = nil
+        localKeyMonitor = nil
+        globalMouseMonitor = nil
 
         // 使用全局监听器捕获修饰键变化事件（即使面板显示时也能捕获）
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
@@ -1276,39 +1374,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     @MainActor
     private func activateSelectedAndHide() {
         Logger.info("=== activateSelectedAndHide called ===")
-
-        // 先立即隐藏面板（无动画，用户感知更快）
-        hideSwitchPanelImmediately()
-
         guard let vm = switchPanelViewModel else {
             Logger.error("switchPanelViewModel is nil! Cannot activate window.")
             return
         }
-
-        // 1. 优先使用 selectedWindowID 激活
-        if let windowID = vm.selectedWindowID {
-            Logger.modifierState("释放")
-            if let window = vm.filteredWindows.first(where: { $0.id == windowID }) {
-                Logger.windowActivate("\(window.appName) - \(window.windowTitle)", result: "通过 selectedWindowID")
-            }
-            vm.activateWindowByID(windowID)
-            return
-        }
-
-        // 2. 降级：使用 selectedWindow
-        guard let selectedWindow = vm.selectedWindow else {
-            Logger.warning("No selected window to activate (selectedWindow is nil)")
-            return
-        }
-
+        let target = vm.prepareSelectedWindowForActivation()
+        // 会话协调完成后立即隐藏；后续目标核验使用稳定 ID。
+        hideSwitchPanelImmediately()
+        guard let target else { return }
         Logger.modifierState("释放")
-        Logger.windowActivate("\(selectedWindow.appName) - \(selectedWindow.windowTitle)", result: "通过 selectedWindow")
-        windowManager.activateWindow(selectedWindow)
+        vm.activateWindowByID(target.id)
     }
 
     /// 立即隐藏切换面板（无动画，用于释放修饰键时）
     @MainActor
     private func hideSwitchPanelImmediately() {
+        switchPanelViewModel?.stopPreviewLoading()
         Logger.panelState("隐藏", detail: "immediately, wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
         switchPanelViewModel?.endSameAppSwitchSession()
 
@@ -1340,15 +1421,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         triggerPreviewPrefetch()
     }
 
-    /// 触发一次后台预览预取（面板关闭后调用，刷新缓存）
+    /// 旧接口保留为统一调度入口，避免调用方直接创建不可取消的后台任务。
+    @MainActor
     private func triggerPreviewPrefetch() {
-        let windows = windowManager.getAllWindows(forceRefresh: false)
-        guard !windows.isEmpty else { return }
-        let sizeConfig = ConfigManager.shared.config.appearance.previewSize.dimensions
-        let previewSize = CGSize(width: sizeConfig.width, height: sizeConfig.height)
-        Task(priority: .background) { [previewGenerator] in
-            await previewGenerator.prefetchPreviews(for: windows, size: previewSize)
-        }
+        guard !isPanelVisible else { return }
+        startPreviewPrefetchTask()
+    }
+
+    /// 背景大图优先预热最近使用的窗口，和切换器的初始选择顺序保持一致。
+    private func backgroundPreviewCandidates(from windows: [WindowModel]) -> [WindowModel] {
+        WindowOrdering().sort(
+            windows,
+            by: .recent,
+            activitySequence: windowManager.activitySequenceSnapshot()
+        )
     }
 
     // MARK: - 快捷键注册
@@ -1455,6 +1541,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         }
 
         registerWindowLayoutHotKeys(using: hotKeyConfig.windowLayout)
+        disableSystemHotKeysIfNeeded()
     }
 
     /// 注销全部窗口布局全局快捷键。
@@ -1829,6 +1916,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         permissionManager.checkAllPermissions()
 
         Logger.info("Permission check - Accessibility: \(permissionManager.accessibilityStatus.rawValue), Screen Recording: \(permissionManager.screenRecordingStatus.rawValue)")
+        Logger.operation("权限状态", detail: "Accessibility=\(permissionManager.accessibilityStatus.rawValue), ScreenRecording=\(permissionManager.screenRecordingStatus.rawValue)")
 
         // 先调用 macOS 原生 API。旧版只打开设置页面，从未触发系统授权提示。
         let screenPermissionKey = "hasRequestedScreenPermission"
@@ -1890,12 +1978,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            MainActor.assumeIsolated {
             let pm = PermissionManager.shared
             let hasPermissions = pm.hasAllRequiredPermissions
             self?.updateMenuBarIcon(hasPermissions: hasPermissions)
+            self?.disableSystemHotKeysIfNeeded()
+
+            // 初次启动未授权时，系统监听器可能创建失败；授权后重建即可恢复使用。
+            if pm.accessibilityStatus.isAuthorized {
+                self?.setupOptionKeyMonitor()
+                if self?.isPanelVisible == true { self?.setupEscKeyMonitor() }
+                if ConfigManager.shared.config.dockPreview.enabled {
+                    self?.stopDockPreview()
+                    self?.startDockPreview()
+                }
+            } else {
+                self?.stopDockPreview()
+                self?.hideSwitchPanel()
+            }
+            if !pm.screenRecordingStatus.isAuthorized {
+                self?.cancelPreviewPrefetch()
+            }
 
             if hasPermissions {
                 Logger.info("All permissions granted - UI updated")
+            }
             }
         }
     }
@@ -2098,6 +2205,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         reversed: Bool = false,
         appSwitchMode: Bool = false
     ) {
+        // 面板显示前取消后台预取，避免与交互截图争抢共享队列
+        cancelPreviewPrefetch()
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
@@ -2162,6 +2271,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let t0 = CFAbsoluteTimeGetCurrent()
         windowManager.refreshCache()  // 强制刷新缓存，确保新窗口被包含
         var windows = windowManager.getAllWindows(forceRefresh: true)
+
+        // getAllWindows 期间新应用的 AX 焦点可能尚未稳定；在窗口已入缓存后
+        // 立即再协调一次精确焦点，并用最终活动序号重新排序，避免首次打开落后。
+        if let previousPID {
+            _ = windowManager.reconcileFocusedWindow(pid: previousPID)
+            windows = windowManager.getAllWindows(forceRefresh: true)
+        }
         Logger.info("==> getAllWindows: \((CFAbsoluteTimeGetCurrent() - t0)*1000)ms, count: \(windows.count)")
 
         // 调试：打印 Chrome 窗口数量
@@ -2240,6 +2356,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         )
         panel.isFloatingPanel = true
         panel.level = .popUpMenu  // 使用 popUpMenu 层级，比 floating 更高
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -2314,20 +2431,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         // 手动计算居中位置
         if let screen = NSScreen.main {
-            // 使用屏幕完整 frame（不包括 Dock 和菜单栏）
-            let screenFrame = screen.frame
-            // 计算居中位置（macOS Y 坐标从底部开始）
-            let x = (screenFrame.width - panelWidth) / 2
-            let y = (screenFrame.height - panelHeight) / 2
-            Logger.info("==> Panel position: x=\(x), y=\(y), screenFrame=\(screenFrame), panelSize=\(newSize)")
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
+            let screenFrame = screen.visibleFrame
+            let origin = SwitchPanelLayout.centeredOrigin(panelSize: newSize, screenFrame: screenFrame)
+            Logger.info("==> Panel position: x=\(origin.x), y=\(origin.y), screenFrame=\(screenFrame), panelSize=\(newSize)")
+            panel.setFrameOrigin(origin)
         }
 
         // 先用后台缓存的预览图填充，避免后面窗口空白（命中缓存时瞬时显示）
         prefillCachedPreviews(for: sortedWindows, viewModel: vm)
 
         // 先加载第一个窗口的预览图，减少空白闪烁
-        preloadFirstPreview(for: sortedWindows, viewModel: vm)
+        vm.refreshSelectedWindowPreview()
 
         // 显示背景预览窗口（在切换器面板之前）
         Logger.info("==> Initial selectedWindow: \(vm.selectedWindow?.appName ?? "nil"), selectedIndex: \(vm.selectedIndex)")
@@ -2342,6 +2456,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
         let totalTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         Logger.info("==> showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
+        // 记录无窗口标题的性能证据，供只读采样工具统计；不包含热键等待或动画。
+        Logger.operation("面板性能", detail: "showSwitchPanel TOTAL: \(totalTime)ms, \(sortedWindows.count) windows")
 
         // 继续异步加载其余窗口缩略图
         preloadRemainingPreviews(windows: sortedWindows, viewModel: vm)
@@ -2453,11 +2569,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // MARK: - 背景预览窗口
     private var backgroundPreviewWindow: NSPanel?
 
+    @MainActor
     private func showBackgroundPreview(for window: WindowModel?, screenFrame: CGRect, panelFrame: CGRect) {
         // 检查是否启用背景预览
         guard ConfigManager.shared.config.behavior.showBackgroundPreview else { return }
 
         guard let window = window else { return }
+        let cachedPreview = previewGenerator.getCachedFullResolutionPreviewSync(for: window)
 
         // 背景预览窗口覆盖整个屏幕
         let previewFrame = screenFrame
@@ -2481,7 +2599,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         previewPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
         // 创建预览视图
-        let previewView = BackgroundPreviewContainer(selectedWindow: window)
+        let previewView = BackgroundPreviewContainer(
+            selectedWindow: window,
+            cachedPreview: cachedPreview,
+            previewGenerator: previewGenerator
+        )
         let hostingView = NSHostingView(rootView: previewView)
         hostingView.frame = NSRect(origin: .zero, size: previewFrame.size)
         previewPanel.contentView = hostingView
@@ -2493,22 +2615,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         Logger.info("==> Background preview shown for: \(window.appName), frame: \(window.frame)")
     }
 
+    @MainActor
     private func updateBackgroundPreview(for window: WindowModel?) {
         guard ConfigManager.shared.config.behavior.showBackgroundPreview else { return }
         guard let window = window else { return }
+        let cachedPreview = previewGenerator.getCachedFullResolutionPreviewSync(for: window)
 
         Logger.info("==> Updating background preview for: \(window.appName), windowID: \(window.id)")
 
         // 更新预览内容 - 重新创建整个视图确保更新
         if let panel = backgroundPreviewWindow {
             let previewFrame = panel.frame
-            let newView = BackgroundPreviewContainer(selectedWindow: window)
+            let newView = BackgroundPreviewContainer(
+                selectedWindow: window,
+                cachedPreview: cachedPreview,
+                previewGenerator: previewGenerator
+            )
             let newHostingView = NSHostingView(rootView: newView)
             newHostingView.frame = NSRect(origin: .zero, size: previewFrame.size)
             panel.contentView = newHostingView
         }
     }
 
+    @MainActor
     private func hideBackgroundPreview() {
         backgroundPreviewWindow?.orderOut(nil)
         backgroundPreviewWindow = nil
@@ -2783,6 +2912,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     @MainActor
     func hideSwitchPanel() {
+        switchPanelViewModel?.stopPreviewLoading()
         // 操作日志：面板隐藏
         Logger.panelState("隐藏", detail: "wasSwitchModifierPressed=\(wasSwitchModifierPressed)")
         switchPanelViewModel?.endSameAppSwitchSession()

@@ -34,15 +34,26 @@ final class WindowManagerTests: XCTestCase {
     func testFilterExcludesOffScreenWhenDisabled() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "", showOffScreen: false)
+        // 最小化窗口由 showMinimized 控制，隐藏窗口由 showOffScreen 控制
+        let criteria = FilterCriteria(searchText: "", showOffScreen: false, showMinimized: false)
         let result = engine.filter(windows, by: criteria)
         XCTAssertFalse(result.contains { $0.isMinimized || $0.isHidden })
+    }
+
+    func testFilterIncludesMinimizedWindowsByDefault() {
+        let engine = FilterEngine()
+        let windows = makeMockWindows()
+        let result = engine.filter(windows, by: FilterCriteria())
+        XCTAssertTrue(
+            result.contains { $0.isMinimized },
+            "默认应显示已最小化的窗口"
+        )
     }
 
     func testFilterIncludesOffScreenWhenEnabled() {
         let engine = FilterEngine()
         let windows = makeMockWindows()
-        let criteria = FilterCriteria(searchText: "", showOffScreen: true)
+        let criteria = FilterCriteria(searchText: "", showOffScreen: true, showMinimized: true)
         let result = engine.filter(windows, by: criteria)
         XCTAssertTrue(result.contains { $0.isMinimized || $0.isHidden })
     }
@@ -186,6 +197,56 @@ final class WindowManagerTests: XCTestCase {
     func testWindowModelIdentifiable() {
         let window = makeMockWindow(id: 42, appName: "Finder")
         XCTAssertEqual(window.id, 42)
+    }
+
+    func testAccessibilityRolesExcludeBrowserSearchPanelsButKeepStandardWindows() {
+        XCTAssertTrue(
+            NonStandardWindowRules.isStandardAccessibilityWindow(
+                role: "AXWindow",
+                subrole: "AXStandardWindow"
+            )
+        )
+        XCTAssertFalse(
+            NonStandardWindowRules.isStandardAccessibilityWindow(
+                role: "AXWindow",
+                subrole: "AXFloatingWindow"
+            )
+        )
+        XCTAssertFalse(
+            NonStandardWindowRules.isStandardAccessibilityWindow(
+                role: "AXDialog",
+                subrole: nil
+            )
+        )
+        XCTAssertTrue(
+            NonStandardWindowRules.isStandardAccessibilityWindow(role: nil, subrole: nil)
+        )
+    }
+
+    func testAXFilteringCandidatesOnlyIncludeLayerZeroWindowOwners() {
+        let candidatePIDs = AXWindowFilteringPolicy.candidateOwnerPIDs(in: [
+            [kCGWindowLayer as String: 0, kCGWindowOwnerPID as String: pid_t(101)],
+            [kCGWindowLayer as String: 3, kCGWindowOwnerPID as String: pid_t(102)],
+            [kCGWindowLayer as String: 0, kCGWindowOwnerPID as String: pid_t(103)]
+        ])
+
+        XCTAssertEqual(candidatePIDs, Set([pid_t(101), pid_t(103)]))
+    }
+
+    func testAXFilteringBudgetUsesRemainingTimeAndCircuitBreakerRecovers() {
+        XCTAssertEqual(AXWindowFilteringPolicy.timeout(remainingBudget: 1), 0.15)
+        XCTAssertEqual(AXWindowFilteringPolicy.timeout(remainingBudget: 0.05), 0.05)
+        XCTAssertNil(AXWindowFilteringPolicy.timeout(remainingBudget: 0))
+
+        let startedAt = Date(timeIntervalSinceReferenceDate: 0)
+        var circuitBreaker = AXWindowFilteringCircuitBreaker()
+        XCTAssertFalse(circuitBreaker.record(budgetExhausted: true, now: startedAt))
+        XCTAssertFalse(circuitBreaker.record(budgetExhausted: true, now: startedAt))
+        XCTAssertTrue(circuitBreaker.record(budgetExhausted: true, now: startedAt))
+        XCTAssertFalse(circuitBreaker.isEnabled(now: startedAt.addingTimeInterval(1)))
+        XCTAssertTrue(circuitBreaker.isEnabled(
+            now: startedAt.addingTimeInterval(AXWindowFilteringPolicy.circuitBreakerCooldown)
+        ))
     }
 
     // MARK: - Helpers

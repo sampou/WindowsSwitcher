@@ -66,10 +66,14 @@ struct NonStandardWindowRules {
             return true
         }
 
-        // 3. 应用名称检查（降级方案）
-        let lowerAppName = appName.lowercased()
+        // 3. 应用名称检查（Bundle ID 不可用时的降级方案）
+        //
+        // 必须整名匹配：子串匹配会把 "Docker Desktop"、"Dockyard" 这类
+        // 含 "dock" 的普通应用误判成系统程序坞，从而在窗口列表里凭空消失。
+        let normalizedName = appName.lowercased().replacingOccurrences(of: " ", with: "")
         for excludedName in excludedAppNames {
-            if lowerAppName.contains(excludedName.lowercased()) {
+            let normalizedExcluded = excludedName.lowercased().replacingOccurrences(of: " ", with: "")
+            if normalizedName == normalizedExcluded {
                 return true
             }
         }
@@ -100,6 +104,16 @@ struct NonStandardWindowRules {
 
         return false
     }
+
+    /// 辅助功能窗口的角色用于补充 CGWindow 的 layer 判断。
+    /// 浏览器的搜索框、弹出面板等可能同样位于 layer 0，只有通过 AXSubrole 才能与主窗口区分。
+    /// 角色缺失时保守放行，避免因应用未完整实现辅助功能接口而遗漏正常窗口。
+    static func isStandardAccessibilityWindow(role: String?, subrole: String?) -> Bool {
+        guard let role else { return true }
+        guard role == "AXWindow" else { return false }
+        guard let subrole, !subrole.isEmpty else { return true }
+        return subrole == "AXStandardWindow"
+    }
 }
 
 struct WindowModel: Identifiable, Equatable {
@@ -121,5 +135,48 @@ struct WindowModel: Identifiable, Equatable {
 
     static func == (lhs: WindowModel, rhs: WindowModel) -> Bool {
         lhs.id == rhs.id
+    }
+}
+
+extension WindowModel {
+    /// 复制一份并标记最小化状态。
+    func withMinimizedState(_ minimized: Bool) -> WindowModel {
+        WindowModel(
+            id: id,
+            appName: appName,
+            bundleIdentifier: bundleIdentifier,
+            windowTitle: windowTitle,
+            appIcon: appIcon,
+            frame: frame,
+            isMinimized: minimized,
+            isHidden: isHidden,
+            isOnScreen: isOnScreen,
+            lastActiveTime: lastActiveTime,
+            windowLayer: windowLayer,
+            ownerPID: ownerPID,
+            isStandardWindow: isStandardWindow
+        )
+    }
+
+    /// 复制一份并替换最近使用时间。
+    ///
+    /// 最小化窗口由后台提供，初始时间没有意义，
+    /// 需要按内存缓存或持久化记录解析后再参与 MRU 排序。
+    func withLastActiveTime(_ time: Date) -> WindowModel {
+        WindowModel(
+            id: id,
+            appName: appName,
+            bundleIdentifier: bundleIdentifier,
+            windowTitle: windowTitle,
+            appIcon: appIcon,
+            frame: frame,
+            isMinimized: isMinimized,
+            isHidden: isHidden,
+            isOnScreen: isOnScreen,
+            lastActiveTime: time,
+            windowLayer: windowLayer,
+            ownerPID: ownerPID,
+            isStandardWindow: isStandardWindow
+        )
     }
 }
