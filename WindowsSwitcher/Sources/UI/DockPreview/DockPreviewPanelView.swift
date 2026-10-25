@@ -229,12 +229,13 @@ class DockPreviewManager: ObservableObject {
             return
         }
 
-        // 与切换面板、macOS 原生 Dock 悬停网格保持一致：最近使用的窗口排在最前。
+        // 程序坞预览只按创建时间排序（CGWindowID 升序，即最早创建的窗口在前），
+        // 与切换面板的"最近使用优先"是两套独立规则。
         //
-        // 此前按 CGWindowID 升序（最早创建在前）排列，但 CGWindowID 会被系统回收复用，
-        // 既不是稳定的创建序也不是使用序；与原生 Dock 网格顺序相反会让两个网格的
-        // 位置对应关系整体错位，用户按原生直觉点击就会点到相邻的另一个窗口。
-        let sortedWindows = windows
+        // 不能跟随 MRU：用户点击某个窗口后该窗口的最近使用时间会被推到最前，
+        // 下次悬停同一图标时顺序就变了，同一个缩略图会"跳位置"，
+        // 让人无法建立"第一个就是刚才那个"的稳定直觉。
+        let sortedWindows = DockPreviewManager.sortForDockPreview(windows)
 
         // 创建预览项 - 显示所有窗口，不再限制数量
         previewItems = sortedWindows.map { windowModel in
@@ -307,6 +308,14 @@ class DockPreviewManager: ObservableObject {
     // 公开方法，供外部调用隐藏预览
     public func hidePreviewPanel() {
         hidePreview()
+    }
+
+    /// 程序坞预览的窗口排序规则：只按创建时间（CGWindowID 升序）。
+    ///
+    /// 与切换面板的"最近使用优先"是两套独立规则。切换面板按最近使用排序，
+    /// 程序坞预览按创建顺序排列——点击某个窗口不会改变它下次出现的位置。
+    static func sortForDockPreview(_ windows: [WindowModel]) -> [WindowModel] {
+        windows.sorted { $0.id < $1.id }
     }
 
     func selectItem(_ item: DockPreviewItem) {

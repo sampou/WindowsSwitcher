@@ -577,6 +577,42 @@ final class DockPreviewDesignTokensTests: XCTestCase {
         )
     }
 
+    // MARK: - 程序坞预览排序规则测试
+
+    /// 程序坞预览只按创建时间排序，不受最近使用时间影响。
+    ///
+    /// 此前被改成跟随切换面板的 MRU：点击某个窗口后它下次就排到最前，
+    /// 同一个缩略图在两次悬停之间"跳位置"。
+    func testDockPreviewSortsByCreationOrderNotByRecency() {
+        let older = makeWindow(id: 100, title: "先创建的窗口")
+        let newer = makeWindow(id: 200, title: "后创建的窗口")
+        // 让"后创建"的窗口带上更新的最近使用时间
+        let newerRecent = newer.withLastActiveTime(Date().addingTimeInterval(60))
+
+        let sorted = DockPreviewManager.sortForDockPreview([newerRecent, older])
+
+        XCTAssertEqual(
+            sorted.map(\.id),
+            [100, 200],
+            "程序坞预览应按创建顺序排列，与最近使用时间无关"
+        )
+    }
+
+    /// 输入顺序不影响结果，保证同一批窗口每次悬停顺序一致。
+    func testDockPreviewSortIsStableRegardlessOfInputOrder() {
+        let windows = [
+            makeWindow(id: 300, title: "C"),
+            makeWindow(id: 100, title: "A"),
+            makeWindow(id: 200, title: "B")
+        ]
+
+        let first = DockPreviewManager.sortForDockPreview(windows).map(\.id)
+        let second = DockPreviewManager.sortForDockPreview(windows.reversed()).map(\.id)
+
+        XCTAssertEqual(first, [100, 200, 300])
+        XCTAssertEqual(first, second, "排序结果不应受输入顺序影响")
+    }
+
     // MARK: - 非标准窗口判定测试
 
     /// 应用名含 "dock" 的普通应用不应被当成系统程序坞。

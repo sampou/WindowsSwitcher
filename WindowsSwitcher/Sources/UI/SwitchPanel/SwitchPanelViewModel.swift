@@ -167,6 +167,11 @@ class SwitchPanelViewModel: ObservableObject {
         }
 
         let clampedIndex = min(max(0, initialIndex), orderedWindows.count - 1)
+        Logger.operation(
+            "同应用切换",
+            detail: "会话冻结窗口顺序",
+            result: "\(orderedWindows.map(\.id))（选中下标 \(clampedIndex)）"
+        )
         sameAppSwitchSession = SameAppSwitchSession(
             bundleIdentifier: bundleIdentifier,
             windowIDs: orderedWindows.map(\.id),

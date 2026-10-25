@@ -1053,9 +1053,11 @@ class WindowManager: WindowManagerProtocol {
         }
     }
 
-    /// 程序坞预览用：某个应用的窗口列表（含刚查询到的最小化窗口），按最近使用排序。
+    /// 程序坞预览用：某个应用的窗口列表（含刚查询到的最小化窗口）。
     ///
-    /// 后台扫描存在延迟，程序坞预览需要即时结果，因此这里按需查询一次并合并排序。
+    /// 排序按创建时间（CGWindowID 升序），与切换面板的"最近使用优先"是两套独立规则：
+    /// 程序坞预览需要稳定的位置对应关系，点击过某个窗口不应让它下次就跳到最前。
+    /// 列表本身不排序，由调用方按需要排列。
     func dockPreviewWindows(forBundleID bundleID: String) -> [WindowModel] {
         var windows = getAllWindows()
         let existingIDs = Set(windows.map(\.id))
@@ -1063,11 +1065,7 @@ class WindowManager: WindowManagerProtocol {
         guard !minimized.isEmpty else { return windows }
 
         windows.append(contentsOf: minimized)
-        return WindowOrdering().sort(
-            windows,
-            by: .recent,
-            activitySequence: activitySequenceSnapshot()
-        )
+        return windows
     }
 
     /// 解析窗口的最近使用时间：优先内存缓存，其次持久化记录。
