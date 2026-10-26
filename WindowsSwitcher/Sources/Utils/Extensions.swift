@@ -257,3 +257,86 @@ class WindowActivityStore {
             .count
     }
 }
+
+// MARK: - 窗口顺序持久化管理器
+/// 保存窗口的"最近使用名次"，使应用重启后切换器的窗口顺序与上次一致。
+///
+/// 只保存"最后激活时间"是不够的：从未被激活过的窗口没有时间记录，
+/// 重启后会被当成刚创建而排到最前，顺序整体错乱。这里保存的是名次，
+/// 覆盖当前全部窗口（包括从未激活过的），因此重启后顺序可以原样恢复。
+///
+/// 记录以窗口身份为键（bundleID + 标题），值的名次越大表示越靠前：
+/// - 窗口已关闭：记录保留在存储里，重新打开该应用时仍能恢复到原位置；
+/// - 超过保留期（30 天）未出现的记录会被清理，避免无限增长；
+/// - 每次保存按当前顺序重新编号，顺序变化会被如实记录下来。
+///
+/// 名次计数器与记录写在同一个 JSON 快照里，保证"名次 + 记录"整体原子替换：
+/// 保存时新名次总是高于历史上所有名次，因此本次会话记录的活动一定排在
+/// 上次会话恢复出来的窗口之前，不会出现"新窗口排到旧窗口后面"的倒序。
+class WindowOrderStore {
+    struct Entry: Codable, Equatable {
+        /// 名次：数值越大越靠前
+        var rank: UInt64
+        /// 最后一次出现该窗口的时间
+        var lastSeen: Date
+    }
+
+    /// 存储快照：记录 + 名次计数器
+    struct Snapshot: Codable {
+        var entries: [String: Entry]
+        /// 历史最高名次。下次保存的新名次必须高于它。
+        var counter: UInt64
+
+        static let empty = Snapshot(entries: [:], counter: 0)
+    }
+
+    static let shared = WindowOrderStore()
+
+    /// 记录保留期（秒）
+    static let retentionInterval: TimeInterval = 30 * 24 * 60 * 60
+
+    private let userDefaults = UserDefaults.standard
+    private let storageKey = "window_order_v2"
+    private let lock = NSLock()
+    private var cached: Snapshot?
+
+    private init() {}
+
+    /// 读取当前快照
+    func load() -> Snapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        guard let data = userDefaults.data(forKey: storageKey),
+              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data) else {
+            cached = .empty
+            return cached!
+        }
+        cached = snapshot
+        return snapshot
+    }
+
+    /// 原子写入快照（单键写入，UserDefaults 保证整体替换）
+    func save(_ snapshot: Snapshot) {
+        lock.lock()
+        cached = snapshot
+        lock.unlock()
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        userDefaults.set(data, forKey: storageKey)
+    }
+
+    /// 清理超过保留期的记录，返回清理数量
+    @discardableResult
+    func prune(olderThan cutoff: Date) -> Int {
+        let snapshot = load()
+        let kept = snapshot.entries.filter { $0.value.lastSeen >= cutoff }
+        guard kept.count != snapshot.entries.count else { return 0 }
+        save(Snapshot(entries: kept, counter: snapshot.counter))
+        return snapshot.entries.count - kept.count
+    }
+
+    /// 清空全部记录（测试与"重置设置"使用）
+    func reset() {
+        save(.empty)
+    }
+}

@@ -329,6 +329,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // === 第三阶段：延迟初始化（非必要组件，后台执行）===
         // 清理过期的窗口活动记录
         WindowActivityStore.shared.cleanupOldRecords()
+        // 清理过期的窗口顺序记录（超过保留期未出现的窗口）
+        WindowOrderStore.shared.prune(olderThan: Date().addingTimeInterval(-WindowOrderStore.retentionInterval))
+
+        // 恢复上次保存的窗口顺序：程序重启/重装后切换器顺序保持不变
+        WindowManager.shared.restorePersistedOrder()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.performDeferredInitialization()
@@ -674,6 +679,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         Logger.info("=== Application terminating, restoring system hot keys ===")
         if let monitor = layoutFallbackLocalMonitor { NSEvent.removeMonitor(monitor) }
         if let monitor = layoutFallbackGlobalMonitor { NSEvent.removeMonitor(monitor) }
+        // 退出前保存窗口顺序，保证下次启动能恢复
+        WindowManager.shared.flushWindowOrder()
         // 恢复系统快捷键
         restoreAllSystemHotKeys()
     }
