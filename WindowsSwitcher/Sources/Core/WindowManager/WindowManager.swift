@@ -335,6 +335,137 @@ final class MinimizedWindowProvider: @unchecked Sendable {
     }
 }
 
+/// 窗口身份：跨启动识别同一个窗口的稳定键。
+///
+/// CGWindowID 每次启动都会变，不能作为身份；这里使用 bundleID + 标题。
+///
+/// 标题来源必须稳定：CG 标题只有应用处于前台时才有值（后台应用为空），
+/// 若一会儿用 CG 标题、一会儿用 AX 标题，同一个窗口会得到两个不同的键，
+/// 持久化记录互相覆盖，顺序依旧会错乱。因此统一优先使用 AX 标题，
+/// AX 不可用时才退回 CG 标题。
+enum WindowIdentity {
+    /// 生成窗口身份键
+    static func key(for window: WindowModel, axTitle: String? = nil) -> String {
+        let title: String
+        if let axTitle, !axTitle.isEmpty {
+            title = axTitle
+        } else {
+            title = window.windowTitle
+        }
+        return "\(window.bundleIdentifier)|\(title)"
+    }
+
+    /// 批量读取 AX 标题：每个进程一次查询，返回 窗口ID -> 标题。
+    ///
+    /// AX 是跨进程同步调用，只能放在后台线程执行。
+    static func axTitles(for windows: [WindowModel]) -> [CGWindowID: String] {
+        guard !windows.isEmpty else { return [:] }
+
+        var result: [CGWindowID: String] = [:]
+        for pid in Set(windows.map(\.ownerPID)) {
+            let axApp = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(axApp, 0.05)
+
+            var windowList: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+                  let axWindows = windowList as? [AXUIElement] else { continue }
+
+            let candidateIDs = Set(windows.filter { $0.ownerPID == pid }.map(\.id))
+            for axWindow in axWindows {
+                AXUIElementSetMessagingTimeout(axWindow, 0.05)
+
+                var cgWindowID: CGWindowID = 0
+                guard _AXUIElementGetWindow(axWindow, &cgWindowID) == .success,
+                      candidateIDs.contains(cgWindowID) else { continue }
+
+                var titleRef: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
+                      let title = titleRef as? String, !title.isEmpty else { continue }
+
+                result[cgWindowID] = title
+            }
+        }
+        return result
+    }
+
+    /// 为一组窗口生成互不相同的身份键（窗口ID -> 键）。
+    ///
+    /// 标题相同的窗口（例如同一应用的两个无标题窗口）必须区分，
+    /// 否则它们共用一个键，持久化记录互相覆盖，顺序仍然会错乱。
+    /// 这里按窗口创建顺序（CGWindowID 升序）加序号后缀，
+    /// 保存与恢复使用同一套规则，因此同一组窗口得到的键是一致的。
+    static func keys(
+        for windows: [WindowModel],
+        axTitles: [CGWindowID: String]? = nil
+    ) -> [CGWindowID: String] {
+        var result: [CGWindowID: String] = [:]
+        var occurrences: [String: Int] = [:]
+
+        for window in windows.sorted(by: { $0.id < $1.id }) {
+            let baseKey = key(for: window, axTitle: axTitles?[window.id])
+            let occurrence = occurrences[baseKey, default: 0]
+            occurrences[baseKey] = occurrence + 1
+            result[window.id] = occurrence == 0 ? baseKey : "\(baseKey)#\(occurrence)"
+        }
+        return result
+    }
+}
+
+/// 窗口顺序持久化的纯计算逻辑（便于单元测试，不触碰存储与 AX）。
+enum WindowOrderPersistence {
+    /// 计算恢复后的名次。
+    ///
+    /// 命中持久化记录的窗口沿用旧名次；没有记录的窗口名次为 0，
+    /// 表示排在所有已恢复窗口之后——它们必须也有名次，
+    /// 否则会因为 lastActiveTime 是当前时间而整体跳到最前面。
+    static func restoreRanks(
+        for windows: [WindowModel],
+        keys: [CGWindowID: String],
+        entries: [String: WindowOrderStore.Entry]
+    ) -> [CGWindowID: UInt64] {
+        var ranks: [CGWindowID: UInt64] = [:]
+        for window in windows {
+            guard let key = keys[window.id], let entry = entries[key] else {
+                ranks[window.id] = 0
+                continue
+            }
+            ranks[window.id] = entry.rank
+        }
+        return ranks
+    }
+
+    /// 名次基准：必须高于历史上所有名次，
+    /// 否则本次会话记录的窗口会排到上次会话留下的窗口之前。
+    static func nextRankBase(counter: UInt64, windowCount: Int) -> UInt64 {
+        counter &+ UInt64(max(windowCount, 0)) &+ 1
+    }
+
+    /// 计算保存后的记录。
+    ///
+    /// 当前窗口按面板顺序从前往后递减编号；已关闭窗口的旧记录继续保留
+    /// （超过保留期的会被清理），重新打开时可以回到原来的位置。
+    static func mergedEntries(
+        orderedWindows: [WindowModel],
+        keys: [CGWindowID: String],
+        previous: [String: WindowOrderStore.Entry],
+        base: UInt64,
+        now: Date,
+        cutoff: Date
+    ) -> [String: WindowOrderStore.Entry] {
+        var entries: [String: WindowOrderStore.Entry] = [:]
+        var rank = base
+        for window in orderedWindows {
+            guard let key = keys[window.id] else { continue }
+            entries[key] = WindowOrderStore.Entry(rank: rank, lastSeen: now)
+            rank &-= 1
+        }
+        for (key, entry) in previous where entries[key] == nil && entry.lastSeen >= cutoff {
+            entries[key] = entry
+        }
+        return entries
+    }
+}
+
 /// 连续耗尽预算时临时关闭 AX 过滤，确保切换器优先保持可用。
 struct AXWindowFilteringCircuitBreaker {
     private var consecutiveBudgetExhaustions = 0
@@ -476,6 +607,33 @@ final class WindowActivitySequence: @unchecked Sendable {
         guard sequenceByWindowID.count != previousCount else { return false }
         revisionValue &+= 1
         return true
+    }
+
+    /// 用持久化记录恢复窗口名次。
+    ///
+    /// 恢复后全局计数器必须高于已恢复的名次，
+    /// 否则后续记录活动时新序号会小于旧名次，顺序会颠倒。
+    func seed(rank: UInt64, for windowID: CGWindowID) {
+        lock.lock()
+        defer { lock.unlock() }
+        sequenceByWindowID[windowID] = rank
+        if rank > globalSequence {
+            globalSequence = rank
+        }
+        revisionValue &+= 1
+    }
+
+    /// 提高全局序号下限。
+    ///
+    /// 恢复持久化名次后必须调用：本次会话记录的活动名次要高于所有恢复出来的名次，
+    /// 否则新激活的窗口会排到上次会话留下的窗口之前，MRU 顺序会颠倒。
+    func raiseGlobalSequence(to rank: UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        if rank > globalSequence {
+            globalSequence = rank
+        }
+        revisionValue &+= 1
     }
 
     func bumpRevision() {
@@ -661,6 +819,32 @@ class WindowManager: WindowManagerProtocol {
     // 进程内窗口活动序号（不跨启动持久化）
     private let activitySequence = WindowActivitySequence()
 
+    // MARK: - 窗口顺序持久化
+
+    /// 顺序持久化锁：保护恢复标记、脏标记与待保存快照
+    private let orderPersistenceLock = NSLock()
+
+    /// 是否已完成启动时的顺序恢复
+    private var hasRestoredPersistedOrder = false
+
+    /// 当前顺序是否发生变化（需要落盘）
+    private var orderPersistDirty = false
+
+    /// 是否已经安排了一次落盘任务（防抖）
+    private var orderPersistScheduled = false
+
+    /// 最近一次按 MRU 排好序的窗口列表，落盘时使用
+    private var latestOrderedWindows: [WindowModel] = []
+
+    /// 已经检查过持久化名次的窗口 ID（会话中途出现的窗口只检查一次）
+    private var checkedLateSeedWindowIDs: Set<CGWindowID> = []
+
+    /// 顺序持久化队列：AX 查询与写盘都在这里执行，不阻塞主线程
+    private let orderPersistenceQueue = DispatchQueue(
+        label: "com.windowsswitcher.window-order",
+        qos: .utility
+    )
+
     // 串行化 CGWindow/AX 快照，避免远程桌面或虚拟显示变化时旧快照覆盖新快照。
     private let enumerationLock = NSLock()
 
@@ -696,6 +880,8 @@ class WindowManager: WindowManagerProtocol {
     private func recordActivityLocked(windowID: CGWindowID) {
         activitySequence.record(windowID: windowID)
         cacheTimestamp = nil
+        // 活动顺序变化会影响切换器顺序，需要落盘
+        markOrderPersistenceDirty()
     }
 
     /// 调用方必须已持有 stateLock。
@@ -850,6 +1036,18 @@ class WindowManager: WindowManagerProtocol {
         stateLock.unlock()
         enumerationLock.unlock()
 
+        // 记录当前 MRU 顺序，供持久化使用。
+        orderPersistenceLock.lock()
+        latestOrderedWindows = sortedWindows
+        orderPersistenceLock.unlock()
+
+        // 窗口集合变化（新建/销毁）同样会改变顺序
+        if !windowEvents.isEmpty {
+            markOrderPersistenceDirty()
+        }
+        // 会话中途出现的窗口按旧名次补种
+        scheduleLateWindowOrderSeeding(for: sortedWindows)
+
         // 事件回调可能触发面板刷新；必须在 WindowManager 锁外执行，避免重入死锁。
         emitWindowEvents(windowEvents)
         return sortedWindows
@@ -867,6 +1065,173 @@ class WindowManager: WindowManagerProtocol {
         let snapshot = activitySequence.snapshot()
         stateLock.unlock()
         return snapshot
+    }
+
+    // MARK: - 窗口顺序持久化
+
+    /// 启动时恢复上次保存的窗口顺序。
+    ///
+    /// AX 查询是跨进程同步调用，必须放到后台线程，否则会拖慢启动与面板响应。
+    func restorePersistedOrder() {
+        orderPersistenceQueue.async { [weak self] in
+            self?.performPersistedOrderRestore()
+        }
+    }
+
+    /// 用持久化记录恢复窗口名次。
+    private func performPersistedOrderRestore() {
+        let windows = getAllWindows(forceRefresh: true)
+        defer { markPersistedOrderRestored() }
+        guard !windows.isEmpty else { return }
+
+        let snapshot = WindowOrderStore.shared.load()
+        guard !snapshot.entries.isEmpty else { return }
+
+        let axTitles = WindowIdentity.axTitles(for: windows)
+        let keys = WindowIdentity.keys(for: windows, axTitles: axTitles)
+        let ranks = WindowOrderPersistence.restoreRanks(
+            for: windows,
+            keys: keys,
+            entries: snapshot.entries
+        )
+
+        var matchedCount = 0
+        for window in windows {
+            guard let rank = ranks[window.id] else { continue }
+            if rank > 0 { matchedCount += 1 }
+            activitySequence.seed(rank: rank, for: window.id)
+        }
+
+        // 本次会话记录的活动名次必须高于所有恢复出来的名次
+        activitySequence.raiseGlobalSequence(to: snapshot.entries.values.map(\.rank).max() ?? 0)
+        refreshCache()
+
+        // 用恢复后的名次重新排序并更新快照，避免随后的落盘写回旧顺序
+        let restoredOrder = WindowOrdering().sort(
+            windows,
+            by: .recent,
+            activitySequence: activitySequence.snapshot()
+        )
+        orderPersistenceLock.lock()
+        latestOrderedWindows = restoredOrder
+        orderPersistenceLock.unlock()
+
+        Logger.info("窗口顺序恢复完成：匹配 \(matchedCount)/\(windows.count) 个窗口")
+    }
+
+    private func markPersistedOrderRestored() {
+        orderPersistenceLock.lock()
+        hasRestoredPersistedOrder = true
+        orderPersistenceLock.unlock()
+    }
+
+    /// 标记窗口顺序发生变化，需要落盘（防抖后写入）
+    private func markOrderPersistenceDirty() {
+        orderPersistenceLock.lock()
+        orderPersistDirty = true
+        let shouldSchedule = !orderPersistScheduled
+        orderPersistScheduled = true
+        orderPersistenceLock.unlock()
+
+        guard shouldSchedule else { return }
+        orderPersistenceQueue.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.persistWindowOrderIfNeeded()
+        }
+    }
+
+    /// 落盘当前窗口顺序
+    ///
+    /// - Parameter force: 为 true 时无视脏标记强制写入（退出前调用）
+    func persistWindowOrderIfNeeded(force: Bool = false) {
+        orderPersistenceLock.lock()
+        let shouldPersist = force || orderPersistDirty
+        orderPersistDirty = false
+        orderPersistScheduled = false
+        let windows = latestOrderedWindows
+        orderPersistenceLock.unlock()
+
+        guard shouldPersist, !windows.isEmpty else { return }
+        persistWindowOrder(windows)
+    }
+
+    /// 退出前同步落盘，避免最后一段顺序变化丢失
+    func flushWindowOrder() {
+        persistWindowOrderIfNeeded(force: true)
+    }
+
+    /// 按当前顺序重新编号并写入存储。
+    ///
+    /// 新名次高于历史上所有名次，因此本次会话的顺序整体覆盖上次会话的结果；
+    /// 已关闭窗口的旧记录继续保留（超出保留期的会被清理），
+    /// 重新打开该窗口时可以回到原来的位置。
+    private func persistWindowOrder(_ orderedWindows: [WindowModel]) {
+        let store = WindowOrderStore.shared
+        let snapshot = store.load()
+        // 用当前活动序号重新排序：快照可能是恢复名次之前捕获的，
+        // 直接落盘会把尚未恢复的顺序写回去。
+        let currentSequence = activitySequence.snapshot()
+        let ordered = WindowOrdering().sort(orderedWindows, by: .recent, activitySequence: currentSequence)
+        let axTitles = WindowIdentity.axTitles(for: ordered)
+        let keys = WindowIdentity.keys(for: ordered, axTitles: axTitles)
+
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-WindowOrderStore.retentionInterval)
+        let base = WindowOrderPersistence.nextRankBase(
+            counter: snapshot.counter,
+            windowCount: ordered.count
+        )
+        let entries = WindowOrderPersistence.mergedEntries(
+            orderedWindows: ordered,
+            keys: keys,
+            previous: snapshot.entries,
+            base: base,
+            now: now,
+            cutoff: cutoff
+        )
+
+        store.save(WindowOrderStore.Snapshot(entries: entries, counter: base))
+    }
+
+    /// 会话中途出现的窗口若在存储里有旧名次，按旧名次补种。
+    ///
+    /// 否则它会因为 lastActiveTime 是"当前时间"而直接跳到切换器最前面。
+    private func scheduleLateWindowOrderSeeding(for windows: [WindowModel]) {
+        orderPersistenceLock.lock()
+        guard hasRestoredPersistedOrder else {
+            orderPersistenceLock.unlock()
+            return
+        }
+        let sequence = activitySequence.snapshot()
+        let candidates = windows.filter {
+            sequence[$0.id] == nil && !checkedLateSeedWindowIDs.contains($0.id)
+        }
+        guard !candidates.isEmpty else {
+            orderPersistenceLock.unlock()
+            return
+        }
+        candidates.forEach { checkedLateSeedWindowIDs.insert($0.id) }
+        orderPersistenceLock.unlock()
+
+        orderPersistenceQueue.async { [weak self] in
+            self?.seedLateWindowOrder(candidates)
+        }
+    }
+
+    private func seedLateWindowOrder(_ candidates: [WindowModel]) {
+        let snapshot = WindowOrderStore.shared.load()
+        guard !snapshot.entries.isEmpty else { return }
+
+        let axTitles = WindowIdentity.axTitles(for: candidates)
+        let keys = WindowIdentity.keys(for: candidates, axTitles: axTitles)
+        var seeded = false
+        for window in candidates {
+            guard let key = keys[window.id], let entry = snapshot.entries[key] else { continue }
+            activitySequence.seed(rank: entry.rank, for: window.id)
+            seeded = true
+        }
+        guard seeded else { return }
+        activitySequence.raiseGlobalSequence(to: snapshot.entries.values.map(\.rank).max() ?? 0)
+        refreshCache()
     }
 
     @discardableResult
