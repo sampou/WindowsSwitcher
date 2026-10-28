@@ -15,6 +15,12 @@ targets:
           - Info.plist
       - path: WindowsSwitcher/Resources/Assets.xcassets
         buildPhase: resources
+      # 本地化资源必须显式声明：否则 xcodegen 重新生成工程时会丢掉
+      # en.lproj / zh-Hans.lproj，导致安装包缺少 Localizable.strings。
+      - path: WindowsSwitcher/Resources/en.lproj
+        buildPhase: resources
+      - path: WindowsSwitcher/Resources/zh-Hans.lproj
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.moeasy.windowsswitcher

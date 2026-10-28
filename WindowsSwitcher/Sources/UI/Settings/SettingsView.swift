@@ -178,6 +178,8 @@ struct SettingsView: View {
                 DockSettingsView()
             case .hotkey:
                 HotKeySettingsView()
+            case .smartPaste:
+                SmartPasteSettingsView()
             case .about:
                 AboutSettingsView()
             }

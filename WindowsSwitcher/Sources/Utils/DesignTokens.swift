@@ -230,6 +230,7 @@ enum SettingsGroup: String, CaseIterable {
     case preview = "预览"
     case dock = "程序坞"
     case hotkey = "快捷键"
+    case smartPaste = "智能目录"
     case about = "关于"
 
     var icon: String {
@@ -239,6 +240,7 @@ enum SettingsGroup: String, CaseIterable {
         case .preview: return "eye"
         case .dock: return "dock.rectangle"
         case .hotkey: return "keyboard"
+        case .smartPaste: return "folder.badge.gearshape"
         case .about: return "info.circle"
         }
     }
@@ -254,6 +256,7 @@ enum SettingsGroup: String, CaseIterable {
         case .preview: return L10n.text("预览窗口显示设置")
         case .dock: return L10n.text("程序坞悬停预览设置")
         case .hotkey: return L10n.text("快捷键自定义配置")
+        case .smartPaste: return L10n.text("复制目录路径后用 ⌘V 快速跳转")
         case .about: return L10n.text("版本信息与帮助")
         }
     }

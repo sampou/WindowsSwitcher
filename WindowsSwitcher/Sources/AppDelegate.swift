@@ -276,6 +276,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var deferredInitCompleted = false
     private var dockPreviewConfigCancellable: AnyCancellable?
 
+    // 智能目录粘贴（阶段三）：业务逻辑位于 Core/SmartPaste，此处只做装配
+    private var smartPasteCoordinator: SmartPasteCoordinator?
+    private var smartPasteConfigCancellable: AnyCancellable?
+
     // 后台预取定时器：定期生成所有窗口预览并缓存，唤起切换器时直接命中
     private var previewPrefetchTimer: DispatchSourceTimer?
 
@@ -383,6 +387,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // 启动后台预览预取（定期缓存所有窗口预览，唤起切换器时直接命中）
         startPreviewPrefetcher()
         Logger.info("11. Preview prefetcher started")
+
+        // 启动智能目录粘贴功能
+        setupSmartPaste()
+        Logger.info("12. Smart paste setup complete")
 
         Logger.info("=== Deferred initialization completed ===")
     }
@@ -681,6 +689,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         if let monitor = layoutFallbackGlobalMonitor { NSEvent.removeMonitor(monitor) }
         // 退出前保存窗口顺序，保证下次启动能恢复
         WindowManager.shared.flushWindowOrder()
+        // 停止智能目录粘贴的常驻事件 tap
+        smartPasteCoordinator?.stop()
         // 恢复系统快捷键
         restoreAllSystemHotKeys()
     }
@@ -1800,11 +1810,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             let layoutItem = NSMenuItem(title: L10n.text("窗口布局"), action: nil, keyEquivalent: "")
             layoutItem.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: L10n.text("窗口布局"))
             layoutItem.submenu = makeWindowLayoutMenu(target: frozenStatusMenuWindow)
+            let smartPasteItem = NSMenuItem(title: L10n.text("智能目录粘贴"),
+                                            action: #selector(toggleSmartPasteFromMenu),
+                                            keyEquivalent: "")
+            smartPasteItem.target = self
+            smartPasteItem.state = configManager.config.smartPaste.enabled ? .on : .off
+            smartPasteItem.image = NSImage(systemSymbolName: "folder.badge.gearshape",
+                                           accessibilityDescription: L10n.text("智能目录粘贴"))
             let settingsItem = NSMenuItem(title: L10n.text("设置"), action: #selector(openSettings), keyEquivalent: ",")
             settingsItem.target = self
             let quitItem = NSMenuItem(title: L10n.text("退出"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             menu.addItem(showItem)
             menu.addItem(layoutItem)
+            menu.addItem(smartPasteItem)
             menu.addItem(NSMenuItem.separator())
             menu.addItem(settingsItem)
             menu.addItem(NSMenuItem.separator())
@@ -1913,6 +1931,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
     @objc private func showSwitcherFromMenu() {
         Task { @MainActor in self.showSwitchPanel() }
+    }
+
+    // MARK: - 智能目录粘贴（阶段三）
+
+    /// 装配智能目录粘贴功能。
+    ///
+    /// 业务逻辑全部位于 `Core/SmartPaste`，这里只负责生命周期与配置联动。
+    private func setupSmartPaste() {
+        let coordinator = SmartPasteCoordinator()
+        coordinator.isSelfPanelVisible = { [weak self] in
+            guard let self else { return false }
+            return MainActor.assumeIsolated { self.isPanelVisible }
+        }
+        smartPasteCoordinator = coordinator
+
+        coordinator.start(config: configManager.config.smartPaste)
+
+        smartPasteConfigCancellable = ConfigManager.shared.$config
+            .removeDuplicates(by: { $0.smartPaste == $1.smartPaste })
+            .sink { [weak coordinator] config in
+                coordinator?.updateConfig(config.smartPaste)
+            }
+    }
+
+    /// 从状态栏菜单切换智能目录粘贴。
+    @objc private func toggleSmartPasteFromMenu() {
+        var smartPaste = configManager.config.smartPaste
+        smartPaste.enabled.toggle()
+        configManager.config.smartPaste = smartPaste
+        Logger.operation("智能目录粘贴", detail: "菜单切换", result: smartPaste.enabled ? "开启" : "关闭")
     }
 
     private func requestPermissions() {
@@ -2796,6 +2844,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 
                 let appDelegate = Unmanaged<AppDelegate>.fromOpaque(refcon).takeUnretainedValue()
 
+                // tap 被系统禁用后不再收到任何事件，必须重新启用，
+                // 否则面板显示期间 ESC 会静默失效（开放项 O4）。
+                if EventTapRecovery.action(for: type) == .reenable {
+                    appDelegate.handleEscEventTapDisabled()
+                    return Unmanaged.passUnretained(event)
+                }
+
                 // 只处理 keyDown 事件
                 if type == .keyDown {
                     let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
@@ -2820,16 +2875,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         }
 
         escEventTap = tap
+        escEventTapDisabledCount = 0
 
-        // 创建 run loop source 并添加到当前 run loop
+        // 创建 run loop source 并添加到主 run loop。
+        // 使用主 run loop 而不是 CFRunLoopGetCurrent()：后者依赖调用线程，
+        // 一旦在非主线程重建 tap，事件将没有运行循环来投递。
         let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         escRunLoopSource = runLoopSource
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
 
         // 启用 tap
         CGEvent.tapEnable(tap: tap, enable: true)
 
         Logger.operation("ESC监听器", detail: "CGEvent Tap 创建成功")
+    }
+
+    /// ESC 事件 tap 被系统禁用时的恢复：重新启用并累计次数。
+    private func handleEscEventTapDisabled() {
+        escEventTapDisabledCount += 1
+        let recovered = EventTapRecovery.reenable(escEventTap)
+        Logger.warning("ESC监听器: Event Tap 被系统禁用（累计 \(escEventTapDisabledCount) 次），重新启用=\(recovered)")
     }
 
     // 设置本地 ESC 键监听器
@@ -2838,6 +2903,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // CGEvent Tap 用于捕获组合键（如 Option+ESC）
     private var escEventTap: CFMachPort?
     private var escRunLoopSource: CFRunLoopSource?
+    /// tap 被系统禁用的累计次数，用于诊断
+    private var escEventTapDisabledCount = 0
 
     private func setupLocalEscKeyMonitor() {
         // 移除旧的本地监听器
@@ -2912,9 +2979,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             escEventTap = nil
         }
         if let source = escRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .commonModes)
+            // 必须与添加时使用同一个 run loop
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
             escRunLoopSource = nil
         }
+        escEventTapDisabledCount = 0
     }
 
     @MainActor

@@ -172,4 +172,26 @@ struct ConfigModel: Codable, Equatable {
     var behavior: BehaviorConfig = BehaviorConfig()
     var dockPreview: DockPreviewConfig = DockPreviewConfig()
     var update: UpdateConfig = UpdateConfig()
+    var smartPaste: SmartPasteConfig = SmartPasteConfig()
+
+    private enum CodingKeys: String, CodingKey {
+        case hotKeys, appearance, behavior, dockPreview, update, smartPaste
+    }
+
+    init() {}
+
+    /// 自定义解码：分区缺失或解码失败时回落到默认值。
+    ///
+    /// Swift 合成的 Decodable 要求所有键都必须存在，新版本新增分区后，
+    /// 旧版本保存的配置文件会整体解码失败，ConfigManager 只能回退到默认配置，
+    /// 导致用户设置被重置。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hotKeys = (try? container.decode(HotKeyConfig.self, forKey: .hotKeys)) ?? HotKeyConfig()
+        appearance = (try? container.decode(AppearanceConfig.self, forKey: .appearance)) ?? AppearanceConfig()
+        behavior = (try? container.decode(BehaviorConfig.self, forKey: .behavior)) ?? BehaviorConfig()
+        dockPreview = (try? container.decode(DockPreviewConfig.self, forKey: .dockPreview)) ?? DockPreviewConfig()
+        update = (try? container.decode(UpdateConfig.self, forKey: .update)) ?? UpdateConfig()
+        smartPaste = (try? container.decode(SmartPasteConfig.self, forKey: .smartPaste)) ?? SmartPasteConfig()
+    }
 }
