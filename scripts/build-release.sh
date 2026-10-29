@@ -58,6 +58,17 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 LOG_DIR="$PROJECT_DIR/.release-logs/$RUN_ID"
 CODESIGN_TIMESTAMP_ARGS=(--timestamp=none)
 
+# 源码状态必须在脚本改写 Info.plist 之前采集：脚本自身对 plist 的写入会让
+# git 的 stat 缓存判定为"内容相同却已修改"，在打包结束后再取状态会得到假的 dirty。
+# 这里用内容级比较（diff --quiet）而不是 status 的 stat 比较。
+SOURCE_COMMIT="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+SOURCE_STATE="clean"
+if ! git -C "$PROJECT_DIR" diff --quiet HEAD -- 2>/dev/null \
+    || ! git -C "$PROJECT_DIR" diff --cached --quiet 2>/dev/null \
+    || [ -n "$(git -C "$PROJECT_DIR" ls-files --others --exclude-standard 2>/dev/null)" ]; then
+    SOURCE_STATE="dirty"
+fi
+
 if ! [[ "$FIX_COUNT" =~ ^[0-9]+$ ]]; then
     echo "❌ 修复项目数必须是非负整数：$FIX_COUNT"
     exit 1
@@ -713,12 +724,6 @@ codesign --verify --deep --strict --verbose=2 "$PACKAGE_INSTALL_DIR/WindowsSwitc
 
 DMG_SHA256=$(shasum -a 256 "$DMG_WORK" | awk '{print $1}')
 ZIP_SHA256=$(shasum -a 256 "$ZIP_WORK" | awk '{print $1}')
-SOURCE_COMMIT=$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)
-if [ -n "$(git -C "$PROJECT_DIR" status --porcelain 2>/dev/null || true)" ]; then
-    SOURCE_STATE="dirty"
-else
-    SOURCE_STATE="clean"
-fi
 MANIFEST_FINAL="$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.manifest.txt"
 CHECKSUM_FINAL="$OUTPUT_DIR/WindowsSwitcher-$NEW_VERSION.sha256"
 MANIFEST_WORK="$ARTIFACT_STAGE/WindowsSwitcher-$NEW_VERSION.manifest.txt"
