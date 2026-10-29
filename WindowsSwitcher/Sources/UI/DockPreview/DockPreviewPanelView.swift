@@ -244,6 +244,9 @@ class DockPreviewManager: ObservableObject {
             return item
         }
 
+        // 后台补齐 AX 标题：后台应用的 CG 标题为空，卡片会失去可辨认的标识
+        loadAXTitles(for: sortedWindows, generation: previewGeneration)
+
         // 先同步填充已有缓存，面板显示时立即有图；随后强制异步刷新为最新截图。
         previewImages = Dictionary(uniqueKeysWithValues: windows.compactMap { window in
             guard let cached = previewGenerator.getCachedPreviewSync(for: window) else { return nil }
@@ -268,7 +271,10 @@ class DockPreviewManager: ObservableObject {
                 for window in windows {
                     // 最小化窗口没有可截图内容：沿用缓存中的上一次截图，不做强制刷新，
                     // 避免用空白图覆盖掉缓存里的最后一帧。
-                    guard !window.isMinimized else { return }
+                    // 这里必须 continue 而不是 return：return 会结束整个任务组，
+                    // 排在最小化窗口之后的窗口将永远拿不到刷新后的缩略图，
+                    // 卡片上显示的是旧截图（甚至属于另一个窗口的画面）。
+                    guard !window.isMinimized else { continue }
                     group.addTask {
                         guard !Task.isCancelled,
                               let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size)
@@ -282,6 +288,44 @@ class DockPreviewManager: ObservableObject {
                     }
                 }
             }
+        }
+    }
+
+    /// 后台补齐 AX 窗口标题。
+    ///
+    /// CG 标题只有应用处于前台时才有值，后台应用在程序坞预览里会显示成一排
+    /// 没有标题的卡片——用户只能靠缩略图辨认，点到的窗口经常不是心里那个。
+    /// AX 标题在后台依然可用（TRAE 的两个窗口分别是 "uniapp-model" 和
+    /// "WindowsSwitcher"），补上标题后卡片才是一一对应的。
+    private func loadAXTitles(for windows: [WindowModel], generation: UInt64) {
+        guard !windows.isEmpty else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            guard let manager = self else { return }
+            let titles = WindowIdentity.axTitles(for: windows)
+            await manager.applyAXTitles(titles, generation: generation)
+        }
+    }
+
+    /// 主线程应用 AX 标题：预览项与卡片标题都要跟着更新。
+    @MainActor
+    private func applyAXTitles(_ titles: [CGWindowID: String], generation: UInt64) {
+        guard previewGeneration == generation else { return }
+        previewItems = previewItems.map { item in
+            var updated = item
+            updated.axTitle = titles[item.id]
+            // CG 标题为空时（后台应用）用 AX 标题替换占位的应用名，
+            // 卡片上才有"这是哪个窗口"的标识。
+            updated.windowTitle = DockPreviewItem.displayTitle(
+                cgTitle: item.windowModel.windowTitle,
+                axTitle: titles[item.id],
+                appName: item.appName
+            )
+            return updated
+        }
+        // 大预览跟随悬停项更新，避免标题与卡片不一致
+        if let large = largePreviewItem,
+           let updated = previewItems.first(where: { $0.id == large.id }) {
+            largePreviewItem = updated
         }
     }
 
@@ -321,7 +365,17 @@ class DockPreviewManager: ObservableObject {
     func selectItem(_ item: DockPreviewItem) {
         // 预览项是悬停时的快照：点击前窗口可能已关闭，或 CGWindowID 已被系统回收给其他窗口。
         // 直接激活旧快照会命中另一个窗口，因此先按窗口 ID 重新解析实时窗口再激活。
-        let target = WindowManager.shared.resolveWindowForActivation(item.windowModel)
+        // AX 标题一并传入：后台应用的 CG 标题为空，只有 AX 标题能确认"还是那个窗口"。
+        let target = WindowManager.shared.resolveWindowForActivation(
+            item.windowModel,
+            axTitle: item.axTitle
+        )
+
+        Logger.operation(
+            "程序坞预览点击",
+            detail: "\(item.appName) - \(item.windowTitle) (ID: \(item.windowModel.id), AX: \(item.axTitle ?? "-"))",
+            result: target.map { "解析到 ID \($0.id)" } ?? "解析失败，不激活"
+        )
 
         if let target {
             WindowManager.shared.activateWindow(target)
@@ -995,9 +1049,13 @@ struct DockPreviewItemView: View {
 struct DockPreviewItem: Identifiable {
     let id: CGWindowID
     let windowModel: WindowModel
-    let windowTitle: String
+    /// 卡片上显示的窗口标题：CG 标题为空时用 AX 标题补齐
+    var windowTitle: String
     let appName: String
     let appIcon: NSImage
+
+    /// AX 标题：后台应用的 CG 标题为空，AX 标题才是能区分同一应用多个窗口的身份标识
+    var axTitle: String?
 
     // 共享的 PreviewGenerator 引用
     var previewGenerator: PreviewGenerator?
@@ -1005,10 +1063,25 @@ struct DockPreviewItem: Identifiable {
     init(windowModel: WindowModel) {
         self.id = windowModel.id
         self.windowModel = windowModel
-        self.windowTitle = windowModel.windowTitle.isEmpty ? windowModel.appName : windowModel.windowTitle
+        self.windowTitle = Self.displayTitle(
+            cgTitle: windowModel.windowTitle,
+            axTitle: nil,
+            appName: windowModel.appName
+        )
         self.appName = windowModel.appName
         self.appIcon = windowModel.appIcon
+        self.axTitle = nil
         self.previewGenerator = nil
+    }
+
+    /// 卡片上显示的窗口标题。
+    ///
+    /// CG 标题只有应用处于前台时才有值，后台应用在程序坞预览里会退化成一个图标；
+    /// AX 标题在后台依然可用，是区分同一应用多个窗口的唯一可靠标识。
+    static func displayTitle(cgTitle: String, axTitle: String?, appName: String) -> String {
+        if !cgTitle.isEmpty { return cgTitle }
+        if let axTitle, !axTitle.isEmpty { return axTitle }
+        return appName
     }
 }
 

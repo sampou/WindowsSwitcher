@@ -268,6 +268,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var dockPreviewWindow: NSWindow?
     private var dockPreviewCancellable: AnyCancellable?
     private var dockPreviewItemsCancellable: AnyCancellable?
+    /// 已定位过的预览项 ID 序列，用于跳过"只更新标题"引发的重复定位
+    private var dockPreviewLayoutSignature: [CGWindowID] = []
     private var dockPreviewHoverCancellable: AnyCancellable?
     private var largePreviewCancellable: AnyCancellable?
     private var selectedWindowCancellable: AnyCancellable?  // 监听选中窗口变化
@@ -775,9 +777,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // 面板必须跟随新的 Dock 图标重新定位并调整尺寸，否则面板会停留在上一个图标上方。
         dockPreviewItemsCancellable = DockPreviewManager.shared.$previewItems
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] items in
                 Task { @MainActor [weak self] in
                     guard let self, DockPreviewManager.shared.isPreviewVisible else { return }
+                    // 只在预览项本身发生变化时重新定位：
+                    // 补齐 AX 标题也会重发 previewItems，此时窗口 ID 序列没变，
+                    // 重复定位可能因为取不到图标位置而把面板挪到屏幕中央。
+                    let signature = items.map(\.id)
+                    guard signature != self.dockPreviewLayoutSignature else { return }
                     self.showDockPreviewPanel()
                 }
             }
@@ -837,6 +844,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             // 否则面板会停留在上一个图标上方，用户点到的预览项与应用对不上。
             applyDockPreviewPanelLayout()
         }
+        // 记录当前定位对应的预览项：只有预览项本身变化时才需要重新定位
+        dockPreviewLayoutSignature = items.map(\.id)
     }
 
     /// 创建预览面板窗口；尺寸与位置统一由 applyDockPreviewPanelLayout 设置。
@@ -1014,6 +1023,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // 隐藏程序坞预览面板
     @MainActor
     private func hideDockPreviewPanel() {
+        // 面板销毁后重置定位签名：下次悬停必须重新创建并定位面板
+        dockPreviewLayoutSignature = []
         guard let window = dockPreviewWindow else { return }
 
         // 立即置 nil 防止重复创建和动画回调丢失

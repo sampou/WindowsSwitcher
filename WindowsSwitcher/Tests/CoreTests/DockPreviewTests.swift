@@ -751,3 +751,180 @@ final class DockPreviewDesignTokensTests: XCTestCase {
         )
     }
 }
+
+// MARK: - 程序坞预览窗口定位单元测试
+
+final class DockPreviewWindowResolutionTests: XCTestCase {
+
+    // MARK: - AX 标题定位
+
+    func testMatchByAXTitleFindsUniqueWindow() {
+        let windows = [
+            makeWindow(id: 1, title: "", axTitle: "uniapp-model"),
+            makeWindow(id: 2, title: "", axTitle: "WindowsSwitcher")
+        ]
+        let liveAXTitles: [CGWindowID: String] = [1: "uniapp-model", 2: "WindowsSwitcher"]
+
+        let matched = WindowActivationResolver.matchByAXTitle(
+            candidates: windows,
+            liveAXTitles: liveAXTitles,
+            expectedAXTitle: "WindowsSwitcher"
+        )
+        XCTAssertEqual(matched?.id, 2)
+    }
+
+    func testMatchByAXTitleRefusesWhenMultipleWindowsShareTitle() {
+        // 同一应用两个同名窗口：命中多个时必须放弃，不能猜
+        let windows = [
+            makeWindow(id: 1, title: "", axTitle: "同名"),
+            makeWindow(id: 2, title: "", axTitle: "同名")
+        ]
+        let liveAXTitles: [CGWindowID: String] = [1: "同名", 2: "同名"]
+
+        XCTAssertNil(
+            WindowActivationResolver.matchByAXTitle(
+                candidates: windows,
+                liveAXTitles: liveAXTitles,
+                expectedAXTitle: "同名"
+            ),
+            "多个同名窗口时不得随便选一个"
+        )
+    }
+
+    func testMatchByAXTitleReturnsNilWhenNoMatch() {
+        let windows = [makeWindow(id: 1, title: "", axTitle: "A")]
+        let liveAXTitles: [CGWindowID: String] = [1: "A"]
+
+        XCTAssertNil(
+            WindowActivationResolver.matchByAXTitle(
+                candidates: windows,
+                liveAXTitles: liveAXTitles,
+                expectedAXTitle: "已经改掉的标题"
+            )
+        )
+    }
+
+    // MARK: - CG 标题 + 几何定位
+
+    func testMatchByTitleAndGeometryFindsUniqueWindow() {
+        let snapshot = makeWindow(id: 1, title: "文档", frame: CGRect(x: 100, y: 200, width: 800, height: 600))
+        let candidate = makeWindow(id: 9, title: "文档", frame: CGRect(x: 110, y: 205, width: 805, height: 605))
+
+        let matched = WindowActivationResolver.matchByTitleAndGeometry(
+            candidates: [candidate],
+            snapshot: snapshot
+        )
+        XCTAssertEqual(matched?.id, 9)
+    }
+
+    func testMatchByTitleAndGeometryRefusesAmbiguousCandidates() {
+        // 同应用、同标题、位置相同：只能放弃，不能猜错窗口
+        let snapshot = makeWindow(id: 1, title: "文档", frame: CGRect(x: 0, y: 0, width: 1728, height: 999))
+        let a = makeWindow(id: 8, title: "文档", frame: CGRect(x: 0, y: 0, width: 1728, height: 999))
+        let b = makeWindow(id: 9, title: "文档", frame: CGRect(x: 0, y: 0, width: 1728, height: 999))
+
+        XCTAssertNil(
+            WindowActivationResolver.matchByTitleAndGeometry(
+                candidates: [a, b],
+                snapshot: snapshot
+            )
+        )
+    }
+
+    func testMatchByTitleAndGeometryIgnoresEmptyTitle() {
+        // 后台应用 CG 标题为空：空标题不应参与匹配
+        let snapshot = makeWindow(id: 1, title: "", frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+        let candidate = makeWindow(id: 9, title: "", frame: CGRect(x: 0, y: 0, width: 800, height: 600))
+
+        XCTAssertNil(
+            WindowActivationResolver.matchByTitleAndGeometry(
+                candidates: [candidate],
+                snapshot: snapshot
+            )
+        )
+    }
+
+    // MARK: - 卡片标题
+
+    func testDisplayTitlePrefersCGTitle() {
+        XCTAssertEqual(
+            DockPreviewItem.displayTitle(cgTitle: "CG 标题", axTitle: "AX 标题", appName: "App"),
+            "CG 标题"
+        )
+    }
+
+    func testDisplayTitleFallsBackToAXTitleForBackgroundApps() {
+        XCTAssertEqual(
+            DockPreviewItem.displayTitle(cgTitle: "", axTitle: "AX 标题", appName: "App"),
+            "AX 标题",
+            "后台应用 CG 标题为空，必须用 AX 标题区分窗口"
+        )
+    }
+
+    func testDisplayTitleFallsBackToAppNameWhenNoTitleAvailable() {
+        XCTAssertEqual(
+            DockPreviewItem.displayTitle(cgTitle: "", axTitle: nil, appName: "App"),
+            "App"
+        )
+        XCTAssertEqual(
+            DockPreviewItem.displayTitle(cgTitle: "", axTitle: "", appName: "App"),
+            "App"
+        )
+    }
+
+    // MARK: - Helpers
+
+    private func makeWindow(
+        id: CGWindowID,
+        title: String,
+        axTitle: String? = nil,
+        frame: CGRect = CGRect(x: 0, y: 0, width: 800, height: 600),
+        ownerPID: pid_t = 4242
+    ) -> WindowModel {
+        WindowModel(
+            id: id,
+            appName: "TRAE CN",
+            bundleIdentifier: "com.trae.app",
+            windowTitle: title,
+            appIcon: NSImage(),
+            frame: frame,
+            isMinimized: false,
+            isHidden: false,
+            isOnScreen: true,
+            lastActiveTime: Date(),
+            windowLayer: 0,
+            ownerPID: ownerPID,
+            isStandardWindow: true
+        )
+    }
+}
+
+// MARK: - 激活意图裁决单元测试
+
+final class ActivationIntentTests: XCTestCase {
+
+    func testExplicitIntentWinsOverObservation() {
+        // 跨应用激活：系统把应用自己的窗口抬到前面，焦点轮询读到它并想顶掉意图。
+        // 显式意图必须胜出，否则聚焦被取消 → "点的是 A，弹出来的是 B"。
+        XCTAssertTrue(
+            ActivationIntent.isCurrent(pending: 36272, lastActivated: 122140, windowID: 36272),
+            "显式激活意图不能被被动观测顶掉"
+        )
+    }
+
+    func testNewerIntentSupersedesOlderRequest() {
+        XCTAssertFalse(
+            ActivationIntent.isCurrent(pending: 999, lastActivated: 36272, windowID: 36272),
+            "更新的显式激活必须让旧请求失效"
+        )
+    }
+
+    func testFallsBackToLastActivatedWhenNoIntent() {
+        XCTAssertTrue(ActivationIntent.isCurrent(pending: nil, lastActivated: 42, windowID: 42))
+        XCTAssertFalse(ActivationIntent.isCurrent(pending: nil, lastActivated: 42, windowID: 43))
+    }
+
+    func testNilIntentAndNilLastActivatedIsNotCurrent() {
+        XCTAssertFalse(ActivationIntent.isCurrent(pending: nil, lastActivated: nil, windowID: 42))
+    }
+}

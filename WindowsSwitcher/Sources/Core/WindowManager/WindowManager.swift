@@ -363,27 +363,38 @@ enum WindowIdentity {
 
         var result: [CGWindowID: String] = [:]
         for pid in Set(windows.map(\.ownerPID)) {
-            let axApp = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(axApp, 0.05)
+            let ids = Set(windows.filter { $0.ownerPID == pid }.map(\.id))
+            result.merge(axTitles(for: pid, windowIDs: ids)) { _, new in new }
+        }
+        return result
+    }
 
-            var windowList: CFTypeRef?
-            guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
-                  let axWindows = windowList as? [AXUIElement] else { continue }
+    /// 读取单个进程的 AX 标题，只返回指定窗口 ID 的结果。
+    ///
+    /// 点击时按进程查询，避免为全部窗口付出 AX 查询代价。
+    static func axTitles(for pid: pid_t, windowIDs: Set<CGWindowID>) -> [CGWindowID: String] {
+        guard !windowIDs.isEmpty else { return [:] }
 
-            let candidateIDs = Set(windows.filter { $0.ownerPID == pid }.map(\.id))
-            for axWindow in axWindows {
-                AXUIElementSetMessagingTimeout(axWindow, 0.05)
+        var result: [CGWindowID: String] = [:]
+        let axApp = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(axApp, 0.05)
 
-                var cgWindowID: CGWindowID = 0
-                guard _AXUIElementGetWindow(axWindow, &cgWindowID) == .success,
-                      candidateIDs.contains(cgWindowID) else { continue }
+        var windowList: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXWindowsAttribute as CFString, &windowList) == .success,
+              let axWindows = windowList as? [AXUIElement] else { return [:] }
 
-                var titleRef: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
-                      let title = titleRef as? String, !title.isEmpty else { continue }
+        for axWindow in axWindows {
+            AXUIElementSetMessagingTimeout(axWindow, 0.05)
 
-                result[cgWindowID] = title
-            }
+            var cgWindowID: CGWindowID = 0
+            guard _AXUIElementGetWindow(axWindow, &cgWindowID) == .success,
+                  windowIDs.contains(cgWindowID) else { continue }
+
+            var titleRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
+                  let title = titleRef as? String, !title.isEmpty else { continue }
+
+            result[cgWindowID] = title
         }
         return result
     }
@@ -463,6 +474,65 @@ enum WindowOrderPersistence {
             entries[key] = entry
         }
         return entries
+    }
+}
+
+/// 激活意图的裁决（纯逻辑，便于单元测试）。
+///
+/// 显式激活（用户点了某个窗口）与被动观测（焦点轮询、激活通知读到当前焦点）
+/// 必须分开：跨应用激活时系统先把应用自己的窗口抬到前面，焦点轮询会读到它，
+/// 若以观测结果判定"这次聚焦是否仍然有效"，真正的聚焦会被误判为过期而取消，
+/// 表现为"点的是 A，弹出来的是 B"。
+enum ActivationIntent {
+    /// 当前请求是否仍是最新的一次显式激活。
+    ///
+    /// - Parameters:
+    ///   - pending: 显式激活意图（只由 activateWindow 写入）
+    ///   - lastActivated: 最近一次显式激活的窗口
+    ///   - windowID: 待判定的窗口
+    static func isCurrent(
+        pending: CGWindowID?,
+        lastActivated: CGWindowID?,
+        windowID: CGWindowID
+    ) -> Bool {
+        if let pending { return pending == windowID }
+        return lastActivated == windowID
+    }
+}
+
+/// 窗口定位的纯逻辑（便于单元测试，不触碰系统枚举与 AX）。
+enum WindowActivationResolver {
+    /// 按 AX 标题定位窗口：标题唯一命中才算命中。
+    ///
+    /// AX 标题在应用退到后台后依然存在，而 CG 标题此时为空——后台应用在程序坞预览里
+    /// 只能靠 AX 标题区分同一应用的多个窗口。命中多个时返回 nil，宁可不激活，
+    /// 也不激活到另一个窗口。
+    static func matchByAXTitle(
+        candidates: [WindowModel],
+        liveAXTitles: [CGWindowID: String],
+        expectedAXTitle: String
+    ) -> WindowModel? {
+        let matched = candidates.filter { liveAXTitles[$0.id] == expectedAXTitle }
+        guard matched.count == 1 else { return nil }
+        return matched[0]
+    }
+
+    /// 按 CG 标题 + 几何定位窗口：仅在唯一命中时返回。
+    static func matchByTitleAndGeometry(
+        candidates: [WindowModel],
+        snapshot: WindowModel
+    ) -> WindowModel? {
+        let matched = candidates.filter { candidate in
+            candidate.ownerPID == snapshot.ownerPID
+                && !candidate.windowTitle.isEmpty
+                && candidate.windowTitle == snapshot.windowTitle
+                && abs(candidate.frame.origin.x - snapshot.frame.origin.x) < 24
+                && abs(candidate.frame.origin.y - snapshot.frame.origin.y) < 24
+                && abs(candidate.frame.width - snapshot.frame.width) < 24
+                && abs(candidate.frame.height - snapshot.frame.height) < 24
+        }
+        guard matched.count == 1 else { return nil }
+        return matched[0]
     }
 }
 
@@ -860,6 +930,14 @@ class WindowManager: WindowManagerProtocol {
     // 记录刚激活的窗口（防止 didActivateApplicationNotification 错误更新其他窗口）
     private var lastActivatedWindowID: CGWindowID?
     private var lastActivatedTime: Date?
+
+    /// 显式激活意图：只由 `activateWindow` 写入，只有更新的显式激活才会替换它。
+    ///
+    /// 被动观测（焦点轮询、激活通知）不得改写它：跨应用激活时，系统会把应用自己
+    /// 之前置的窗口抬到前面，焦点轮询随即读到那个窗口并记为"最近激活"，
+    /// 正在进行的聚焦就会被判定为"已有更新的激活请求"而取消——
+    /// 结果是"点的是 A，弹出来的却是 B"。
+    private var pendingActivationWindowID: CGWindowID?
     private var axFilterCircuitBreaker = AXWindowFilteringCircuitBreaker()
 
     private init() {}
@@ -1336,6 +1414,10 @@ class WindowManager: WindowManagerProtocol {
     }
 
     /// 调用方必须已持有 stateLock。
+    ///
+    /// 注意：这里只更新"观察到的焦点窗口"，不写 `lastActivatedWindowID`。
+    /// 那两个字段表示"我们显式激活了哪个窗口"，被动观测不能冒充显式意图，
+    /// 否则跨应用激活时会被焦点轮询抢先改写，把真正的聚焦请求判成过期。
     private func updateActivityLocked(for model: WindowModel, at time: Date) {
         windowCache[model.id] = WindowModel(
             id: model.id,
@@ -1354,8 +1436,6 @@ class WindowManager: WindowManagerProtocol {
         )
         recordActivityLocked(windowID: model.id)
         lastFocusedWindowID = model.id
-        lastActivatedWindowID = model.id
-        lastActivatedTime = time
     }
 
     /// 后台推进最小化窗口判定。
@@ -1450,8 +1530,21 @@ class WindowManager: WindowManagerProtocol {
     /// 预览面板持有的是悬停时的快照：点击时窗口可能已经关闭，或 CGWindowID 已被系统
     /// 回收给另一个窗口。直接激活旧快照会命中另一个窗口，因此这里重新枚举并校验归属；
     /// 目标确实消失时返回 nil，宁可不激活，也不激活到别的窗口。
-    func resolveWindowForActivation(_ snapshot: WindowModel) -> WindowModel? {
+    ///
+    /// - Parameter axTitle: 悬停时读到的 AX 标题。CG 标题只在应用处于前台时有值，
+    ///   后台应用在程序坞预览里 CG 标题为空，这时只有 AX 标题能确认"还是那个窗口"。
+    func resolveWindowForActivation(_ snapshot: WindowModel, axTitle: String? = nil) -> WindowModel? {
         let current = getAllWindows(forceRefresh: true)
+
+        // AX 标题只查目标应用所在进程，避免为全部窗口付出 AX 查询代价。
+        let expectedAXTitle = (axTitle?.isEmpty == false) ? axTitle : nil
+        var liveAXTitles: [CGWindowID: String] = [:]
+        if expectedAXTitle != nil {
+            liveAXTitles = WindowIdentity.axTitles(
+                for: snapshot.ownerPID,
+                windowIDs: Set(current.map(\.id))
+            )
+        }
 
         // 首选：ID、归属进程与 bundle 均未变化，且标题或几何仍与快照一致。
         // 只比 ID/进程不够：CGWindowID 会被窗口服务器回收给同应用的新建窗口，
@@ -1462,28 +1555,49 @@ class WindowManager: WindowManagerProtocol {
                 && $0.bundleIdentifier == snapshot.bundleIdentifier
                 && Self.isSameWindow($0, snapshot)
         }) {
+            // AX 标题不一致只记录不拒绝：窗口标题本身会变（文档改名、网页标题更新、
+            // IDE 切换工程），此时 ID 仍然指向同一个窗口，拒绝反而会让点击无响应。
+            if let expectedAXTitle, let liveAXTitle = liveAXTitles[live.id], liveAXTitle != expectedAXTitle {
+                Logger.debug("[DockManager] 窗口标题已变化: \(expectedAXTitle) -> \(liveAXTitle)")
+            }
             return live
         }
 
-        // 兜底：应用重建窗口导致 ID 变化时，用“同进程 + 标题 + 几何”做一次受限匹配；
-        // 命中多个候选时放弃激活，避免猜错窗口。
-        let candidates = current.filter { candidate in
-            candidate.ownerPID == snapshot.ownerPID
-                && !candidate.windowTitle.isEmpty
-                && candidate.windowTitle == snapshot.windowTitle
-                && abs(candidate.frame.origin.x - snapshot.frame.origin.x) < 24
-                && abs(candidate.frame.origin.y - snapshot.frame.origin.y) < 24
-                && abs(candidate.frame.width - snapshot.frame.width) < 24
-                && abs(candidate.frame.height - snapshot.frame.height) < 24
+        // 兜底一：AX 标题唯一命中。窗口重建导致 ID 变化时，
+        // 后台应用（CG 标题为空）只能靠 AX 标题找回同一个窗口。
+        if let expectedAXTitle {
+            if let matched = WindowActivationResolver.matchByAXTitle(
+                candidates: current,
+                liveAXTitles: liveAXTitles,
+                expectedAXTitle: expectedAXTitle
+            ) {
+                Logger.operation(
+                    "窗口重新解析",
+                    detail: "\(snapshot.appName) - \(expectedAXTitle)",
+                    result: "按 AX 标题匹配"
+                )
+                return matched
+            }
+            // AX 标题是更可靠的窗口身份：它匹配不上时不再退回"标题 + 几何"兜底，
+            // 那种兜底在同应用多窗口、位置相同的情况下会激活到另一个窗口。
+            Logger.warning(
+                "[DockManager] AX 标题未唯一命中，放弃激活: \(snapshot.appName) - \(expectedAXTitle)"
+            )
+            return nil
         }
 
-        if candidates.count == 1 {
+        // 兜底二：应用重建窗口导致 ID 变化时，用“同进程 + 标题 + 几何”做一次受限匹配；
+        // 命中多个候选时放弃激活，避免猜错窗口。
+        if let matched = WindowActivationResolver.matchByTitleAndGeometry(
+            candidates: current,
+            snapshot: snapshot
+        ) {
             Logger.operation(
                 "窗口重新解析",
                 detail: "\(snapshot.appName) - \(snapshot.windowTitle)",
                 result: "按标题与几何匹配"
             )
-            return candidates[0]
+            return matched
         }
 
         return nil
@@ -1547,6 +1661,9 @@ class WindowManager: WindowManagerProtocol {
         lastFocusedWindowID = window.id
         lastActivatedWindowID = window.id
         lastActivatedTime = now
+        // 显式激活意图：跨应用激活后，系统会把应用自己前置的窗口抬到前面，
+        // 焦点轮询随即读到那个窗口。聚焦请求必须只认这份意图，不能被观测结果顶掉。
+        pendingActivationWindowID = window.id
         stateLock.unlock()
 
         // 持久化保存窗口活动时间（异步执行，不阻塞激活）
@@ -1626,6 +1743,7 @@ class WindowManager: WindowManagerProtocol {
             let actualWindowID = self.getFocusedWindowID(pid: window.ownerPID)
             if actualWindowID == window.id {
                 Logger.operation("窗口聚焦确认", detail: "\(window.appName) - \(window.windowTitle) (ID: \(window.id))", result: "成功")
+                self.clearActivationIntent(for: window.id)
             } else {
                 self.retryWindowFocusIfNeeded(window, attempt: attempt, actualWindowID: actualWindowID)
             }
@@ -1650,6 +1768,7 @@ class WindowManager: WindowManagerProtocol {
                 detail: "目标 ID: \(window.id), 实际 ID: \(actualWindowID.map(String.init) ?? "未知")",
                 result: "失败 - 已耗尽重试"
             )
+            clearActivationIntent(for: window.id)
             return
         }
         Logger.operation(
@@ -1678,10 +1797,28 @@ class WindowManager: WindowManagerProtocol {
     }
 
     /// 判断异步聚焦任务是否仍对应最新一次窗口激活请求。
+    /// 当前请求是否仍然是最新的一次显式激活。
+    ///
+    /// 以"显式激活意图"为准，而不是"最近观察到的焦点窗口"：
+    /// 跨应用激活时系统会先抬起应用自己的窗口，被动观测会读到它，
+    /// 若以观测结果判定新鲜度，真正的聚焦请求会被误判为过期而取消。
     private func isCurrentActivation(_ windowID: CGWindowID) -> Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
-        return lastActivatedWindowID == windowID
+        return ActivationIntent.isCurrent(
+            pending: pendingActivationWindowID,
+            lastActivated: lastActivatedWindowID,
+            windowID: windowID
+        )
+    }
+
+    /// 结束一次显式激活意图（成功或重试耗尽）。
+    private func clearActivationIntent(for windowID: CGWindowID) {
+        stateLock.lock()
+        if pendingActivationWindowID == windowID {
+            pendingActivationWindowID = nil
+        }
+        stateLock.unlock()
     }
 
     /// 聚焦指定窗口
