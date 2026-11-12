@@ -123,9 +123,11 @@ class DockPreviewManager: ObservableObject {
     private func handleHoveredIndexChange(_ index: Int?) {
         if let index = index, index < previewItems.count {
             let item = previewItems[index]
-            largePreviewItem = item
+            // 必须先更新尺寸再发布 largePreviewItem：发布会被 AppDelegate 同步消费，
+            // showLargePreview 用 largePreviewWidth/Height 计算降级截图的目标尺寸，
+            // 顺序颠倒会让首次悬停拿到旧的默认值（600×400），降级图被画得过小。
             calculateLargePreviewPosition(for: item, at: index)
-            isLargePreviewVisible = true
+            largePreviewItem = item
         } else {
             isLargePreviewVisible = false
             largePreviewItem = nil
@@ -995,9 +997,13 @@ struct DockPreviewItemView: View {
 
             // 优先显示 manager 的最新图片，其次显示当前预加载缓存，最后显示占位图标
             if let image = cachedImage {
+                // 与切换器 WindowItemView 一致使用 fill 裁边：
+                // 截图缓存是 16:9 画布内居中的窗口画面（非 16:9 窗口带透明边），
+                // 用 fit 会在窗口宽高比区域里再次留白，画面被明显缩小
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .aspectRatio(contentMode: .fill)
+                    .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
             } else {
                 Image(nsImage: item.appIcon)
@@ -1233,9 +1239,11 @@ struct LargeDockPreviewView: View {
             if let image = previewImage {
                 let windowFrame = item.windowModel.frame
 
-                // 窗口的尺寸和位置
-                let imgWidth = image.size.width
-                let imgHeight = image.size.height
+                // 与切换器 BackgroundPreviewContainer 一致：按窗口当前 frame 绘制。
+                // 不能用 image.size——全分辨率缓存可能是窗口旧尺寸时的截图，
+                // 降级实时截图的尺寸也不是窗口尺寸，按截图尺寸绘制会出现图片明显小于窗口。
+                let imgWidth = windowFrame.width
+                let imgHeight = windowFrame.height
                 let imgX = windowFrame.origin.x
                 let imgY = windowFrame.origin.y
 
