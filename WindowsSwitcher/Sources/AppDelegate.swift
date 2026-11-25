@@ -329,16 +329,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         showSettingsOnLaunch()
 
         // === 第三阶段：延迟初始化（非必要组件，后台执行）===
-        // 清理过期的窗口活动记录
-        WindowActivityStore.shared.cleanupOldRecords()
+        // 旧版 window_activity_* 逐条记录一次性并入顺序快照（幂等，迁移后删除旧键）
+        LegacyWindowActivityStore.migrateIntoOrderStore()
         // 清理过期的窗口顺序记录（超过保留期未出现的窗口）
         WindowOrderStore.shared.prune(olderThan: Date().addingTimeInterval(-WindowOrderStore.retentionInterval))
+        // 周期性清理：长期不重启也能修剪过期记录
+        scheduleOrderStorePruning()
 
         // 恢复上次保存的窗口顺序：程序重启/重装后切换器顺序保持不变
         WindowManager.shared.restorePersistedOrder()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.performDeferredInitialization()
+        }
+    }
+
+    /// 周期性清理顺序快照的定时器
+    private var orderPruneTimer: Timer?
+
+    /// 每天修剪一次超过保留期的窗口顺序记录（启动时已执行过一轮）
+    private func scheduleOrderStorePruning() {
+        orderPruneTimer?.invalidate()
+        orderPruneTimer = Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { _ in
+            WindowOrderStore.shared.prune(olderThan: Date().addingTimeInterval(-WindowOrderStore.retentionInterval))
         }
     }
 
@@ -2225,6 +2238,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     ) {
         // 面板显示前取消后台预取，避免与交互截图争抢共享队列
         cancelPreviewPrefetch()
+        // 刷新方向键布局 chord 缓存，供 CGEvent Tap 区分"面板导航"与"布局动作"
+        refreshLayoutArrowChords()
         let startTime = CFAbsoluteTimeGetCurrent()
 
         // 在显示面板前先记录当前前台应用（因为显示面板后 frontmostApplication 会变成我们的面板）
@@ -2305,6 +2320,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // 3. 如果是 appSwitchMode，只保留当前 Bundle Identifier 的窗口
         if appSwitchMode, let previousBundleID, !previousBundleID.isEmpty {
             windows = windows.filter { $0.bundleIdentifier == previousBundleID }
+            // 聚焦窗口保留在列表中（全部显示），环绕导航由 VM 自动跳过它
             Logger.info("==> AppSwitchMode: filtered to \(windows.count) windows for \(previousBundleID)")
         }
 
@@ -2820,6 +2836,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                         // 返回 nil 阻止事件继续传递
                         return nil
                     }
+
+                    // 面板可见时拦截方向键：NSEvent 全局监听器只能观察、无法消费，
+                    // 方向键（尤其 Option+←/→）会漏给前台应用，浏览器中触发后退/前进，
+                    // 表现为"切换后浏览器历史被改变"。布局快捷键的箭头 chord 仍放行。
+                    if appDelegate.isPanelVisible,
+                       PanelNavigationKeys.arrowKeyCodes.contains(Int(keyCode)) {
+                        let carbonFlags = appDelegate.carbonModifiers(fromCGEventFlags: event.flags)
+                        let isLayoutChord = appDelegate.layoutArrowChords.contains {
+                            $0.keyCode == UInt32(keyCode) && $0.modifiers == carbonFlags
+                        }
+                        if !isLayoutChord {
+                            Task { @MainActor in
+                                appDelegate.handlePanelArrowNavigation(keyCode: Int(keyCode))
+                            }
+                            return nil
+                        }
+                    }
                 }
 
                 return Unmanaged.passUnretained(event)
@@ -2849,6 +2882,53 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     // CGEvent Tap 用于捕获组合键（如 Option+ESC）
     private var escEventTap: CFMachPort?
     private var escRunLoopSource: CFRunLoopSource?
+
+    /// 切换面板导航使用的方向键码（←/→/↑/↓）。
+    private enum PanelNavigationKeys {
+        static let arrowKeyCodes: Set<Int> = [123, 124, 125, 126]
+    }
+
+    /// 布局快捷键中绑定在方向键上的 chord（面板可见时需放行给监听器路径执行布局动作）。
+    /// 在 showSwitchPanel 时刷新；chord 数量有限，直接用值比较。
+    private var layoutArrowChords: [(keyCode: UInt32, modifiers: UInt32)] = []
+
+    /// 刷新方向键布局 chord 缓存。
+    @MainActor
+    func refreshLayoutArrowChords() {
+        let config = configManager.config.hotKeys.windowLayout
+        guard config.isEnabled else {
+            layoutArrowChords = []
+            return
+        }
+        layoutArrowChords = WindowLayoutActionCatalog.actions.compactMap { action in
+            guard let chord = config.chord(for: action.id),
+                  PanelNavigationKeys.arrowKeyCodes.contains(Int(chord.keyCode)) else { return nil }
+            return (chord.keyCode, chord.normalizedModifiers)
+        }
+    }
+
+    /// CGEventFlags → Carbon 修饰键掩码（与 KeyChord.normalizedModifiers 同一套掩码位）。
+    func carbonModifiers(fromCGEventFlags flags: CGEventFlags) -> UInt32 {
+        var value: UInt32 = 0
+        if flags.contains(.maskCommand) { value |= UInt32(cmdKey) }
+        if flags.contains(.maskShift) { value |= UInt32(shiftKey) }
+        if flags.contains(.maskAlternate) { value |= UInt32(optionKey) }
+        if flags.contains(.maskControl) { value |= UInt32(controlKey) }
+        return value
+    }
+
+    /// CGEvent Tap 拦截面板方向键后的动作分发，与监听器路径保持一致。
+    @MainActor
+    func handlePanelArrowNavigation(keyCode: Int) {
+        guard isPanelVisible, let vm = switchPanelViewModel else { return }
+        switch keyCode {
+        case 123: vm.selectPrevious()
+        case 124: vm.selectNext()
+        case 125: vm.selectDown()   // kVK_DownArrow
+        case 126: vm.selectUp()     // kVK_UpArrow
+        default: break
+        }
+    }
 
     private func setupLocalEscKeyMonitor() {
         // 移除旧的本地监听器

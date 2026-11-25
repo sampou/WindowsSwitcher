@@ -254,6 +254,19 @@ class DockPreviewManager: ObservableObject {
             guard let cached = previewGenerator.getCachedPreviewSync(for: window) else { return nil }
             return (window.id, cached)
         })
+        // #region debug-point dock-thumb-cachestate
+        // 取证：缓存未命中的窗口会先显示占位图标，是"图片很小"的头号嫌疑
+        Logger.operation("Dock 缩略图缓存状态",
+            detail: windows.map { w in
+                "ID \(w.id) 缓存=\(previewImages[w.id] != nil) 最小化=\(w.isMinimized) 隐藏=\(w.isHidden) 在屏=\(w.isOnScreen)"
+            }.joined(separator: "; "),
+            result: "共\(windows.count)窗 命中\(previewImages.count)")
+        // 取证：顺序 = CGWindowID 升序；同一应用两次悬停的"标题(ID)"序列若发生轮转，
+        // 说明窗口被应用内部重建导致 ID 变化
+        Logger.operation("Dock 预览窗口序列",
+            detail: sortedWindows.map { "\($0.windowTitle)(ID \($0.id))" }.joined(separator: " → "),
+            result: "bundle=\(bundleID) 共\(sortedWindows.count)窗")
+        // #endregion
         preloadFirstPreviewAndShow(for: sortedWindows)
     }
 
@@ -278,9 +291,20 @@ class DockPreviewManager: ObservableObject {
                     // 卡片上显示的是旧截图（甚至属于另一个窗口的画面）。
                     guard !window.isMinimized else { continue }
                     group.addTask {
-                        guard !Task.isCancelled,
-                              let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size)
-                        else { return }
+                        guard !Task.isCancelled else { return }
+                        let image = await self.previewGenerator.generateRealtimePreview(for: window, size: size)
+                        // #region debug-point dock-thumb-capture
+                        // 取证：截图失败会让占位图标一直停留在卡片上
+                        if let image {
+                            if let rep = image.representations.first {
+                                Logger.debug("[dbg-thumb] win=\(window.id) 截图成功 pixels=\(rep.pixelsWide)x\(rep.pixelsHigh) logical=\(image.size)")
+                            }
+                        } else {
+                            Logger.operation("Dock 缩略图截图失败", detail: "win=\(window.id) bundle=\(window.bundleIdentifier) size=\(size)",
+                                             result: "nil，卡片保持占位图标")
+                        }
+                        // #endregion
+                        guard !Task.isCancelled, image != nil else { return }
                         await MainActor.run {
                             guard self.previewGeneration == generation,
                                   self.previewItems.contains(where: { $0.id == window.id }),
@@ -997,12 +1021,13 @@ struct DockPreviewItemView: View {
 
             // 优先显示 manager 的最新图片，其次显示当前预加载缓存，最后显示占位图标
             if let image = cachedImage {
-                // 与切换器 WindowItemView 一致使用 fill 裁边：
-                // 截图缓存是 16:9 画布内居中的窗口画面（非 16:9 窗口带透明边），
-                // 用 fit 会在窗口宽高比区域里再次留白，画面被明显缩小
+                // 铺满整个预览框：截图画布是 16:9 且内容 aspect-fit 居中，透明边烘焙在像素里，
+                // 单靠 .fill 无法放大内容。按窗口与画布的宽高比差放大后居中裁切，
+                // 接近 16:9 的窗口几乎不受影响，竖长/方形窗口不再显示成"小图"。
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .scaleEffect(thumbnailZoom)
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.WindowItem.previewCornerRadius))
             } else {
@@ -1031,16 +1056,20 @@ struct DockPreviewItemView: View {
                 }
             }
         }
-        // 使用实际窗口比例
-        .aspectRatio(windowAspectRatio, contentMode: .fit)
+        // 铺满整个预览框：不再按窗口真实宽高比收缩绘制区。
+        // 之前用 .aspectRatio(windowAspectRatio, .fit) 时，非 16:9 窗口的缩略图
+        // 会明显小于卡片框（竖长窗口只占一半宽度），被感知为"图片很小"。
     }
 
-    // 计算实际窗口的宽高比
-    private var windowAspectRatio: CGFloat {
+    /// 缩略图放大倍数：截图画布固定 16:9，内容按窗口宽高比 aspect-fit 居中、透明边烘焙在像素里。
+    /// 按窗口宽高比与画布宽高比的比值放大，居中裁切后内容正好铺满预览框。
+    private var thumbnailZoom: CGFloat {
+        let canvasAspect = previewWidth / previewHeight
         let width = item.windowModel.frame.width
         let height = item.windowModel.frame.height
-        guard width > 0 && height > 0 else { return 16.0 / 9.0 }
-        return width / height
+        guard width > 0 && height > 0 else { return 1 }
+        let windowAspect = width / height
+        return max(canvasAspect / windowAspect, windowAspect / canvasAspect)
     }
 
     private var backgroundColor: Color {
@@ -1232,20 +1261,22 @@ struct LargeDockPreviewView: View {
 
     @State private var previewImage: NSImage?
     @State private var isLoading = true
+    /// 显示瞬间实测的窗口边界。悬停时的 `windowModel.frame` 是快照，可能过时/偏小，
+    /// 导致画面按旧尺寸绘制而整体缩小（0.0.234 回归）；实测边界保证预览 == 窗口实际尺寸。
+    @State private var displayFrame: CGRect?
 
     var body: some View {
         // 完全参考切换器背景预览 BackgroundPreviewContainer 的布局方式
         ZStack {
             if let image = previewImage {
-                let windowFrame = item.windowModel.frame
+                // 优先用显示瞬间实测的窗口边界绘制；实测失败才退回悬停时的快照。
+                let frame = displayFrame ?? item.windowModel.frame
 
-                // 与切换器 BackgroundPreviewContainer 一致：按窗口当前 frame 绘制。
-                // 不能用 image.size——全分辨率缓存可能是窗口旧尺寸时的截图，
-                // 降级实时截图的尺寸也不是窗口尺寸，按截图尺寸绘制会出现图片明显小于窗口。
-                let imgWidth = windowFrame.width
-                let imgHeight = windowFrame.height
-                let imgX = windowFrame.origin.x
-                let imgY = windowFrame.origin.y
+                // 窗口的尺寸和位置
+                let imgWidth = frame.width
+                let imgHeight = frame.height
+                let imgX = frame.origin.x
+                let imgY = frame.origin.y
 
                 ZStack {
                     Color.clear
@@ -1263,15 +1294,30 @@ struct LargeDockPreviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
         .task(id: item.id, priority: .userInitiated) {
+            refreshDisplayFrame()
             await refreshFullResolutionPreview(forceRefresh: false)
 
             // 鼠标停留在大预览上时仍持续刷新，避免只命中旧的全分辨率缓存。
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled else { return }
+                refreshDisplayFrame()
                 await refreshFullResolutionPreview(forceRefresh: true)
             }
         }
+    }
+
+    /// 显示前与每次刷新前实测窗口边界；与快照不一致时打日志取证。
+    private func refreshDisplayFrame() {
+        guard let fresh = WindowManager.currentBounds(of: item.id) else { return }
+        let snapshot = item.windowModel.frame
+        displayFrame = fresh
+        if abs(fresh.width - snapshot.width) > 1 || abs(fresh.height - snapshot.height) > 1 {
+            Logger.operation("大预览frame偏差",
+                detail: "win=\(item.id) 快照=\(snapshot) 实测=\(fresh) 标题=\(item.windowModel.windowTitle)",
+                result: "绘制采用实测边界")
+        }
+        Logger.debug("[dbg-large] win=\(item.id) 快照=\(snapshot) 实测=\(fresh)")
     }
 
     /// 先同步显示共享的全分辨率缓存，再以同一缓存源刷新，避免悬停时长期停留在旧图。
@@ -1284,6 +1330,9 @@ struct LargeDockPreviewView: View {
         if let cached = previewGenerator.getCachedFullResolutionPreviewSync(for: item.windowModel) {
             previewImage = cached
             isLoading = false
+            // #region debug-point large-preview-source
+            Logger.debug("[dbg-large] win=\(item.id) 来源=全分辨率缓存 pixels=\(cached.size) frame=\(item.windowModel.frame)")
+            // #endregion
         }
 
         if let image = await previewGenerator.generateFullResolutionPreview(
@@ -1293,8 +1342,15 @@ struct LargeDockPreviewView: View {
         ) {
             previewImage = image
             isLoading = false
+            // #region debug-point large-preview-source
+            Logger.operation("大预览图像源",
+                detail: "win=\(item.id) 来源=实时截图 pixels=\(image.size) frame=\(item.windowModel.frame) 标题=\(item.windowModel.windowTitle)")
+            // #endregion
         } else if previewImage == nil {
             // 全分辨率截图不可用时才降级到实时缩略图。
+            // #region debug-point large-preview-source
+            Logger.operation("大预览降级", detail: "win=\(item.id) frame=\(item.windowModel.frame)", result: "全分辨率截图失败，降级实时缩略图")
+            // #endregion
             await loadRealTimePreview()
         }
     }
@@ -1308,6 +1364,10 @@ struct LargeDockPreviewView: View {
             await MainActor.run {
                 self.previewImage = image
                 self.isLoading = false
+                // #region debug-point large-preview-source
+                Logger.operation("大预览图像源",
+                    detail: "win=\(item.id) 来源=降级缩略图 pixels=\(image.size) 绘制frame=\(item.windowModel.frame) target=\(targetSize)")
+                // #endregion
             }
         } else {
             await MainActor.run {

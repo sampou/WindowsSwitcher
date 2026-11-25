@@ -352,7 +352,12 @@ enum WindowIdentity {
         } else {
             title = window.windowTitle
         }
-        return "\(window.bundleIdentifier)|\(title)"
+        return key(bundleIdentifier: window.bundleIdentifier, windowTitle: title)
+    }
+
+    /// 生成窗口身份键（无窗口模型时的重载）
+    static func key(bundleIdentifier: String, windowTitle: String) -> String {
+        return "\(bundleIdentifier)|\(windowTitle)"
     }
 
     /// 批量读取 AX 标题：每个进程一次查询，返回 窗口ID -> 标题。
@@ -467,7 +472,11 @@ enum WindowOrderPersistence {
         var rank = base
         for window in orderedWindows {
             guard let key = keys[window.id] else { continue }
-            entries[key] = WindowOrderStore.Entry(rank: rank, lastSeen: now)
+            entries[key] = WindowOrderStore.Entry(
+                rank: rank,
+                lastSeen: now,
+                lastActive: window.lastActiveTime
+            )
             rank &-= 1
         }
         for (key, entry) in previous where entries[key] == nil && entry.lastSeen >= cutoff {
@@ -1065,9 +1074,8 @@ class WindowManager: WindowManagerProtocol {
         let onScreenIDs = Set(onScreenWindows.map(\.id))
         let minimizedWindows = minimizedWindowProvider.cachedWindows(excluding: onScreenIDs).map { model in
             let cachedTime = windowCache[model.id]?.lastActiveTime
-            let time = cachedTime ?? WindowActivityStore.shared.getLastActiveTime(
-                bundleIdentifier: model.bundleIdentifier,
-                windowTitle: model.windowTitle
+            let time = cachedTime ?? WindowOrderStore.shared.lastActiveTime(
+                identityKey: WindowIdentity.key(for: model)
             ) ?? model.lastActiveTime
             return model.withLastActiveTime(time)
         }
@@ -1513,15 +1521,37 @@ class WindowManager: WindowManagerProtocol {
         return windows
     }
 
+    /// 实时查询窗口当前的边界（CG 全局坐标，左上原点）。
+    ///
+    /// 大预览显示时用它代替悬停瞬间缓存的 `windowModel.frame`：快照可能过时/偏小，
+    /// 导致画面按旧尺寸绘制而整体缩小。实测边界在数学上等于窗口当前实际尺寸。
+    static func currentBounds(of windowID: CGWindowID) -> CGRect? {
+        guard windowID != 0,
+              let list = CGWindowListCopyWindowInfo(.optionIncludingWindow, windowID) as? [[String: Any]]
+        else { return nil }
+
+        guard let info = list.first(where: {
+            ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowID
+        }), let bounds = info[kCGWindowBounds as String] as? [String: Any] else {
+            return nil
+        }
+
+        return CGRect(
+            x: (bounds["X"] as? NSNumber)?.doubleValue ?? 0,
+            y: (bounds["Y"] as? NSNumber)?.doubleValue ?? 0,
+            width: (bounds["Width"] as? NSNumber)?.doubleValue ?? 0,
+            height: (bounds["Height"] as? NSNumber)?.doubleValue ?? 0
+        )
+    }
+
     /// 解析窗口的最近使用时间：优先内存缓存，其次持久化记录。
     private func resolvedLastActive(for model: WindowModel) -> Date {
         stateLock.lock()
         let cached = windowCache[model.id]?.lastActiveTime
         stateLock.unlock()
         if let cached { return cached }
-        return WindowActivityStore.shared.getLastActiveTime(
-            bundleIdentifier: model.bundleIdentifier,
-            windowTitle: model.windowTitle
+        return WindowOrderStore.shared.lastActiveTime(
+            identityKey: WindowIdentity.key(for: model)
         ) ?? model.lastActiveTime
     }
 
@@ -1668,9 +1698,8 @@ class WindowManager: WindowManagerProtocol {
 
         // 持久化保存窗口活动时间（异步执行，不阻塞激活）
         DispatchQueue.global(qos: .utility).async {
-            WindowActivityStore.shared.saveLastActiveTime(
-                bundleIdentifier: window.bundleIdentifier,
-                windowTitle: window.windowTitle,
+            WindowOrderStore.shared.updateLastActiveTime(
+                identityKey: WindowIdentity.key(for: window),
                 time: now
             )
         }
@@ -2264,7 +2293,7 @@ class WindowManager: WindowManagerProtocol {
 
         // BUG-011: lastActiveTime 始终为 Date()，无法反映真实 LRU 顺序
         // 优先级：内存缓存 > 持久化存储 > 当前时间
-        // 新窗口（不在缓存中）且在屏幕上：直接用 Date()，避免 WindowActivityStore
+        // 新窗口（不在缓存中）且在屏幕上：直接用 Date()，避免持久化记录
         // 返回旧时间戳导致新窗口排序靠后（如同名浏览器标签）
         let lastActive: Date
         if let cached = windowCache[windowID]?.lastActiveTime {
@@ -2272,9 +2301,11 @@ class WindowManager: WindowManagerProtocol {
         } else if isOnScreen {
             lastActive = Date()
         } else {
-            lastActive = WindowActivityStore.shared.getLastActiveTime(
-                bundleIdentifier: appInfo.bundleIdentifier,
-                windowTitle: windowTitle
+            lastActive = WindowOrderStore.shared.lastActiveTime(
+                identityKey: WindowIdentity.key(
+                    bundleIdentifier: appInfo.bundleIdentifier,
+                    windowTitle: windowTitle
+                )
             ) ?? Date()
         }
 

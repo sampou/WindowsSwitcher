@@ -249,7 +249,7 @@ struct SwitchPanelView: View {
             onDismiss: onDismiss,
             onOpenActions: openLayoutPanel,
             onSelectIndex: { idx in
-                viewModel.selectWindow(at: idx)
+                viewModel.selectWindowByUser(at: idx)
             },
             onMoveUp: { viewModel.selectUp() },
             onMoveDown: { viewModel.selectDown() }

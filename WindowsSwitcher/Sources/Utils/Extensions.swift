@@ -191,70 +191,52 @@ class PermissionManager: ObservableObject {
     }
 }
 
-// MARK: - 窗口活动记录持久化管理器
-/// 用于保存窗口的最后活跃时间，实现程序重启后排序一致性
-class WindowActivityStore {
-    static let shared = WindowActivityStore()
+// MARK: - 旧版窗口活动记录迁移
+/// 旧版 WindowActivityStore 以 `window_activity_<hash>` 为键逐条存储 lastActiveTime，
+/// 现已并入 WindowOrderStore 快照（Entry.lastActive），统一持久化与清理路径。
+///
+/// 旧键是 `bundleID|title` 的 SHA256 前缀哈希，无法反查明文；
+/// 迁移时对顺序快照里的每个身份键重新计算哈希去匹配，能迁移多少迁移多少。
+/// 匹配不到的旧记录（如窗口已关闭）直接丢弃——lastActiveTime 只是排序的次级回退，丢失无碍。
+enum LegacyWindowActivityStore {
+    /// 旧存储的键前缀
+    static let keyPrefix = "window_activity_"
 
-    private let userDefaults = UserDefaults.standard
-    private let keyPrefix = "window_activity_"
-
-    private init() {}
-
-    /// 生成窗口唯一标识（使用 bundleIdentifier + windowTitle 的哈希值）
-    private func windowKey(bundleIdentifier: String, windowTitle: String) -> String {
-        let combined = "\(bundleIdentifier)|\(windowTitle)"
-        let hash = SHA256.hash(data: Data(combined.utf8))
+    /// 旧存储的键生成规则：身份键字符串的 SHA256 前 16 位十六进制
+    static func legacyKey(forIdentityKey identityKey: String) -> String {
+        let hash = SHA256.hash(data: Data(identityKey.utf8))
         let hashString = hash.compactMap { String(format: "%02x", $0) }.joined()
         return keyPrefix + String(hashString.prefix(16))
     }
 
-    /// 获取窗口的最后活跃时间
-    func getLastActiveTime(bundleIdentifier: String, windowTitle: String) -> Date? {
-        let key = windowKey(bundleIdentifier: bundleIdentifier, windowTitle: windowTitle)
-        guard let timestamp = userDefaults.object(forKey: key) as? TimeInterval else {
-            Logger.debug("WindowActivityStore: No stored time for \(bundleIdentifier) - \(windowTitle)")
-            return nil
-        }
-        let date = Date(timeIntervalSince1970: timestamp)
-        Logger.debug("WindowActivityStore: Retrieved time \(date) for \(bundleIdentifier) - \(windowTitle)")
-        return date
-    }
+    /// 将旧记录迁移进 WindowOrderStore（幂等）：迁移后删除全部旧键。
+    /// - Returns: 成功合并进快照的记录数
+    @discardableResult
+    static func migrateIntoOrderStore() -> Int {
+        let defaults = UserDefaults.standard
+        let legacyKeys = defaults.dictionaryRepresentation().keys.filter { $0.hasPrefix(keyPrefix) }
+        guard !legacyKeys.isEmpty else { return 0 }
 
-    /// 保存窗口的最后活跃时间
-    func saveLastActiveTime(bundleIdentifier: String, windowTitle: String, time: Date) {
-        guard !bundleIdentifier.isEmpty else { return }
-        let key = windowKey(bundleIdentifier: bundleIdentifier, windowTitle: windowTitle)
-        userDefaults.set(time.timeIntervalSince1970, forKey: key)
-        Logger.debug("WindowActivityStore: Saved time \(time) for \(bundleIdentifier) - \(windowTitle)")
-    }
-
-    /// 清理过期记录（超过30天未活跃的窗口）
-    func cleanupOldRecords() {
-        let cutoffDate = Date().addingTimeInterval(-30 * 24 * 60 * 60)
-        let allKeys = userDefaults.dictionaryRepresentation().keys
-            .filter { $0.hasPrefix(keyPrefix) }
-
-        var cleanedCount = 0
-        for key in allKeys {
-            guard let timestamp = userDefaults.object(forKey: key) as? TimeInterval else { continue }
-            let date = Date(timeIntervalSince1970: timestamp)
-            if date < cutoffDate {
-                userDefaults.removeObject(forKey: key)
-                cleanedCount += 1
+        let snapshot = WindowOrderStore.shared.load()
+        var entries = snapshot.entries
+        var migratedCount = 0
+        for (identityKey, entry) in snapshot.entries where entry.lastActive == nil {
+            guard let timestamp = defaults.object(forKey: legacyKey(forIdentityKey: identityKey)) as? TimeInterval else {
+                continue
             }
+            entries[identityKey] = WindowOrderStore.Entry(
+                rank: entry.rank,
+                lastSeen: entry.lastSeen,
+                lastActive: Date(timeIntervalSince1970: timestamp)
+            )
+            migratedCount += 1
         }
-
-        if cleanedCount > 0 {
-            Logger.info("Cleaned \(cleanedCount) old window activity records")
+        if migratedCount > 0 {
+            WindowOrderStore.shared.save(WindowOrderStore.Snapshot(entries: entries, counter: snapshot.counter))
+            Logger.info("迁移了 \(migratedCount) 条旧窗口活动记录到顺序快照")
         }
-    }
-
-    /// 获取所有存储的窗口数量（用于调试）
-    func getStoredWindowCount() -> Int {
-        return userDefaults.dictionaryRepresentation().keys
-            .filter { $0.hasPrefix(keyPrefix) }
-            .count
+        legacyKeys.forEach { defaults.removeObject(forKey: $0) }
+        return migratedCount
     }
 }
 
@@ -279,6 +261,8 @@ class WindowOrderStore {
         var rank: UInt64
         /// 最后一次出现该窗口的时间
         var lastSeen: Date
+        /// 最后一次激活的时间（合并自旧版 WindowActivityStore，作为排序的次级回退）
+        var lastActive: Date?
     }
 
     /// 存储快照：记录 + 名次计数器
@@ -333,6 +317,24 @@ class WindowOrderStore {
         guard kept.count != snapshot.entries.count else { return 0 }
         save(Snapshot(entries: kept, counter: snapshot.counter))
         return snapshot.entries.count - kept.count
+    }
+
+    /// 更新某个身份键的最后激活时间（只更新已存在的记录，不创建）。
+    ///
+    /// 激活事件即时写入，保证重启后 lastActiveTime 回退值尽量新鲜；
+    /// 新窗口的名次记录由 persistWindowOrder 落盘时创建，此处不抢这个职责。
+    func updateLastActiveTime(identityKey: String, time: Date) {
+        let snapshot = load()
+        guard var entry = snapshot.entries[identityKey] else { return }
+        entry.lastActive = time
+        var entries = snapshot.entries
+        entries[identityKey] = entry
+        save(Snapshot(entries: entries, counter: snapshot.counter))
+    }
+
+    /// 读取某个身份键的最后激活时间
+    func lastActiveTime(identityKey: String) -> Date? {
+        load().entries[identityKey]?.lastActive
     }
 
     /// 清空全部记录（测试与"重置设置"使用）

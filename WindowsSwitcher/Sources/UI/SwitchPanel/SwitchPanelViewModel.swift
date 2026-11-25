@@ -149,6 +149,24 @@ class SwitchPanelViewModel: ObservableObject {
         return window
     }
 
+    /// 用户显式选择（数字键快速选择等）：与方向键一样同步冻结会话选中。
+    func selectWindowByUser(at index: Int) {
+        selectWindow(at: index)
+        syncSessionSelectionToCurrentWindow()
+    }
+
+    /// 用户显式导航（方向键/数字键）后，把冻结会话的选中同步到当前选中窗口。
+    ///
+    /// 不放在 `selectWindow` 里：初始化与 `applyFilter` 等中间步骤也会调用它，
+    /// 过早写回会污染尚未就绪的会话状态。只同步存在会话且选中窗口仍在会话内的情况。
+    private func syncSessionSelectionToCurrentWindow() {
+        guard var session = sameAppSwitchSession,
+              let windowID = selectedWindowID,
+              let index = session.windowIDs.firstIndex(of: windowID) else { return }
+        session.selectedIndex = index
+        sameAppSwitchSession = session
+    }
+
     func beginSameAppSwitchSession(bundleIdentifier: String, initialIndex: Int) {
         guard !bundleIdentifier.isEmpty else {
             endSameAppSwitchSession()
@@ -290,7 +308,7 @@ class SwitchPanelViewModel: ObservableObject {
 
     func selectNext() {
         guard !filteredWindows.isEmpty else { return }
-        // 直接计算下一个索引，不进行数组重排
+        // 直接计算下一个索引，不进行数组重排（与普通切换模式一致：纯环绕，不跳过）
         let nextIndex = (selectedIndex + 1) % filteredWindows.count
         let nextWindow = filteredWindows[nextIndex]
 
@@ -298,6 +316,7 @@ class SwitchPanelViewModel: ObservableObject {
         Logger.windowSelect("Tab", windowInfo: "\(nextWindow.appName) - \(nextWindow.windowTitle)")
 
         selectWindow(at: nextIndex)
+        syncSessionSelectionToCurrentWindow()
 
         // 刷新选中窗口的预览（实时获取最新内容）
         refreshSelectedWindowPreview()
@@ -305,7 +324,7 @@ class SwitchPanelViewModel: ObservableObject {
 
     func selectPrevious() {
         guard !filteredWindows.isEmpty else { return }
-        // 直接计算上一个索引，不进行数组重排
+        // 直接计算上一个索引，不进行数组重排（与普通切换模式一致：纯环绕，不跳过）
         let prevIndex = (selectedIndex - 1 + filteredWindows.count) % filteredWindows.count
         let prevWindow = filteredWindows[prevIndex]
 
@@ -313,6 +332,7 @@ class SwitchPanelViewModel: ObservableObject {
         Logger.windowSelect("Shift+Tab", windowInfo: "\(prevWindow.appName) - \(prevWindow.windowTitle)")
 
         selectWindow(at: prevIndex)
+        syncSessionSelectionToCurrentWindow()
 
         // 刷新选中窗口的预览（实时获取最新内容）
         refreshSelectedWindowPreview()
@@ -340,6 +360,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
             selectWindow(at: targetIndex)
+            syncSessionSelectionToCurrentWindow()
             // 刷新选中窗口的预览（实时获取最新内容）
             refreshSelectedWindowPreview()
         }
@@ -368,6 +389,7 @@ class SwitchPanelViewModel: ObservableObject {
         // 边界检查：确保目标索引有效
         if targetIndex < filteredWindows.count {
             selectWindow(at: targetIndex)
+            syncSessionSelectionToCurrentWindow()
             // 刷新选中窗口的预览（实时获取最新内容）
             refreshSelectedWindowPreview()
         }

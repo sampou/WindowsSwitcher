@@ -17,8 +17,9 @@ struct PreviewCacheConfig {
     /// 后台刷新间隔（秒）：超过此时间认为缓存"陈旧"，后台需重新截图
     /// 注意：缓存不会被此 TTL 丢弃，仅用于判断是否需要后台刷新
     static let refreshInterval: TimeInterval = 5.0  // 5秒后认为陈旧，后台刷新
-    /// 磁盘缓存有效期（秒）：磁盘文件超过此时间视为过期，清理并重新生成
-    static let diskCacheExpiry: TimeInterval = 30.0  // 30秒
+    /// 磁盘保留期（秒）：磁盘缓存长期保留以支持跨启动复用（即时显示旧图，后台刷新补新图），
+    /// 超过保留期的文件才被清理；容量上限由 maxDiskCacheSize 兜底
+    static let diskRetentionInterval: TimeInterval = 7 * 24 * 60 * 60  // 7天
     /// 最大并发生成数
     static let maxConcurrentGeneration = 4
 }
@@ -138,7 +139,7 @@ actor PreviewCache {
                                                        includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                                                        options: [.skipsHiddenFiles]) else { return }
 
-        let expiry = PreviewCacheConfig.diskCacheExpiry
+        let retention = PreviewCacheConfig.diskRetentionInterval
         let now = Date()
         var totalSize: Int64 = 0
         var fileInfos: [(url: URL, date: Date, size: Int64)] = []
@@ -148,8 +149,8 @@ actor PreviewCache {
             let date = (attrs?[.modificationDate] as? Date) ?? .distantPast
             let size = (attrs?[.size] as? Int64) ?? 0
             totalSize += size
-            // 删除已过期的缓存文件
-            if now.timeIntervalSince(date) > expiry {
+            // 只删除超出保留期的文件；保留期内的文件跨启动复用，陈旧性由后台刷新逻辑处理
+            if now.timeIntervalSince(date) > retention {
                 try? fm.removeItem(at: file)
                 totalSize -= size
             } else {
@@ -190,13 +191,8 @@ actor PreviewCache {
 
     private func loadFromDisk(key: String) -> NSImage? {
         let fileURL = cacheDirectory.appendingPathComponent("\(key).png")
-        // 磁盘文件超过 diskCacheExpiry 才视为过期清理（长期保留，支持跨启动复用）
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
-           let modDate = attrs[.modificationDate] as? Date,
-           Date().timeIntervalSince(modDate) > PreviewCacheConfig.diskCacheExpiry {
-            try? FileManager.default.removeItem(at: fileURL)
-            return nil
-        }
+        // 长期保留，支持跨启动复用；陈旧图先显示再由后台刷新更新，
+        // 超保留期文件的清理由 cleanupDiskCacheIfNeeded 统一处理。
         guard FileManager.default.fileExists(atPath: fileURL.path),
               let image = NSImage(contentsOf: fileURL) else {
             return nil
@@ -618,16 +614,34 @@ final class PreviewGenerator: PreviewCacheInvalidating, @unchecked Sendable {
     // MARK: - 私有方法
 
     private static func captureWindowSync(_ windowID: CGWindowID, size: CGSize) -> NSImage? {
-        guard windowExists(windowID) else { return nil }
-        guard CGPreflightScreenCaptureAccess() else { return nil }
+        guard windowExists(windowID) else {
+            // #region debug-point dock-thumb-capture
+            Logger.operation("Dock 截图失败", detail: "win=\(windowID)", result: "窗口不存在")
+            // #endregion
+            return nil
+        }
+        guard CGPreflightScreenCaptureAccess() else {
+            // #region debug-point dock-thumb-capture
+            Logger.operation("Dock 截图失败", detail: "win=\(windowID)", result: "无屏幕录制权限")
+            // #endregion
+            return nil
+        }
 
         guard let cgImage = CGWindowListCreateImage(
             .null,
             .optionIncludingWindow,
             windowID,
             [.boundsIgnoreFraming, .nominalResolution]
-        ) else { return nil }
+        ) else {
+            // #region debug-point dock-thumb-capture
+            Logger.operation("Dock 截图失败", detail: "win=\(windowID)", result: "CGWindowListCreateImage 返回 nil")
+            // #endregion
+            return nil
+        }
 
+        // #region debug-point dock-thumb-capture
+        Logger.debug("[dbg-capture] win=\(windowID) 源=\(cgImage.width)x\(cgImage.height) 目标=\(size)")
+        // #endregion
         let targetSize = NSSize(width: size.width, height: size.height)
         return resizeCGImage(cgImage, to: targetSize)
     }

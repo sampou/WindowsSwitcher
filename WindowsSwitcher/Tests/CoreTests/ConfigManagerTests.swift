@@ -176,6 +176,63 @@ final class ConfigModelSubstructTests: XCTestCase {
         XCTAssertEqual(decoded.windowLayout, WindowLayoutHotKeyConfig())
     }
 
+    // MARK: - 旧配置向前兼容解码（商业化升级时设置不能丢）
+
+    func testLegacyConfigJSONMissingSectionsDecodesWithDefaults() throws {
+        // 早期版本只保存了部分顶层段落：新版本解码不能整体失败
+        let json = """
+        {
+          "hotKeys": {"switchKeyCode": 48, "switchModifiers": 2048},
+          "appearance": {"panelOpacity": 0.8}
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(ConfigModel.self, from: json)
+
+        XCTAssertEqual(decoded.appearance.panelOpacity, 0.8, accuracy: 0.001, "已有段落要保留")
+        XCTAssertEqual(decoded.behavior.sortOrder, .recent, "缺失段落要回落默认值")
+        XCTAssertEqual(decoded.dockPreview.maxPreviewCount, 4, "缺失段落要回落默认值")
+        XCTAssertEqual(decoded.update.checkInterval, 86400, "缺失段落要回落默认值")
+    }
+
+    func testLegacyDockPreviewConfigJSONMissingFieldsDecodesWithDefaults() throws {
+        let json = """
+        {
+          "enabled": false,
+          "hoverDelay": 0.2
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(DockPreviewConfig.self, from: json)
+
+        XCTAssertFalse(decoded.enabled, "已有字段要保留")
+        XCTAssertEqual(decoded.hoverDelay, 0.2, accuracy: 0.001, "已有字段要保留")
+        XCTAssertTrue(decoded.showAppIcon, "缺失字段要回落默认值")
+        XCTAssertEqual(decoded.maxPreviewCount, 4, "缺失字段要回落默认值")
+    }
+
+    func testLegacyUpdateConfigJSONMissingFieldsDecodesWithDefaults() throws {
+        let json = """
+        {"autoCheckEnabled": true}
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(UpdateConfig.self, from: json)
+
+        XCTAssertTrue(decoded.autoCheckEnabled)
+        XCTAssertEqual(decoded.checkInterval, 86400)
+        XCTAssertFalse(decoded.silentInstallEnabled)
+    }
+
+    func testNewConfigJSONDecodesWithUnknownExtraFieldsIgnored() throws {
+        // 新版本配置被旧版本读取时多出的字段应被忽略而不是报错
+        let json = """
+        {"hotKeys": {}, "appearance": {}, "behavior": {}, "dockPreview": {}, "update": {}, "futureSection": {"x": 1}}
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(ConfigModel.self, from: json)
+        XCTAssertEqual(decoded.hotKeys.switchKeyCode, 48)
+    }
+
     func testClearedLayoutShortcutRemainsClearedAfterRoundTrip() throws {
         var value = WindowLayoutHotKeyConfig()
         value.setChord(nil, for: .leftHalf)

@@ -289,6 +289,73 @@ final class WindowOrderPersistenceTests: XCTestCase {
         XCTAssertEqual(WindowOrderStore.shared.load().entries.count, 1)
     }
 
+    // MARK: - lastActiveTime（合并自旧版活动存储）
+
+    func testUpdateLastActiveTimeOnlyTouchesExistingEntries() {
+        let now = Date()
+        WindowOrderStore.shared.save(WindowOrderStore.Snapshot(
+            entries: ["com.test.a|A": WindowOrderStore.Entry(rank: 7, lastSeen: now)],
+            counter: 7
+        ))
+        let activityTime = now.addingTimeInterval(-60)
+        WindowOrderStore.shared.updateLastActiveTime(identityKey: "com.test.a|A", time: activityTime)
+        WindowOrderStore.shared.updateLastActiveTime(identityKey: "com.test.missing|M", time: activityTime)
+
+        let loaded = WindowOrderStore.shared.load()
+        XCTAssertEqual(loaded.entries["com.test.a|A"]?.lastActive, activityTime, "已存在的记录要更新激活时间")
+        XCTAssertNil(loaded.entries["com.test.missing|M"], "不存在的记录不能被凭空创建")
+        XCTAssertEqual(loaded.entries["com.test.a|A"]?.rank, 7, "更新激活时间不能动名次")
+    }
+
+    func testLegacyActivityRecordsMigrateIntoSnapshotAndAreRemoved() {
+        let now = Date()
+        WindowOrderStore.shared.save(WindowOrderStore.Snapshot(
+            entries: ["com.test.legacy|L": WindowOrderStore.Entry(rank: 9, lastSeen: now)],
+            counter: 9
+        ))
+
+        let defaults = UserDefaults.standard
+        let legacyTime = now.addingTimeInterval(-300)
+        let legacyKey = LegacyWindowActivityStore.legacyKey(forIdentityKey: "com.test.legacy|L")
+        defaults.set(legacyTime.timeIntervalSince1970, forKey: legacyKey)
+        // 不匹配任何身份键的孤儿记录：迁移后应被删除
+        let orphanKey = LegacyWindowActivityStore.legacyKey(forIdentityKey: "com.test.orphan|O")
+        defaults.set(1.0, forKey: orphanKey)
+
+        let migrated = LegacyWindowActivityStore.migrateIntoOrderStore()
+
+        XCTAssertEqual(migrated, 1, "只有能匹配身份键的记录会计入迁移数")
+        let entry = WindowOrderStore.shared.load().entries["com.test.legacy|L"]
+        // 旧记录经 timeIntervalSince1970 存取，纪元换算有亚秒级浮点舍入，用精度比较
+        XCTAssertEqual(
+            entry?.lastActive?.timeIntervalSince1970 ?? 0,
+            legacyTime.timeIntervalSince1970,
+            accuracy: 0.001,
+            "旧激活时间要并入快照记录"
+        )
+        XCTAssertEqual(entry?.rank, 9, "迁移不能改名次")
+        XCTAssertNil(defaults.object(forKey: legacyKey), "迁移后旧键要删除")
+        XCTAssertNil(defaults.object(forKey: orphanKey), "孤儿旧键也要删除")
+
+        // 二次调用应无记录可迁移（幂等）
+        XCTAssertEqual(LegacyWindowActivityStore.migrateIntoOrderStore(), 0)
+    }
+
+    func testEntryLastActiveSurvivesRoundTrip() {
+        let now = Date()
+        let activityTime = now.addingTimeInterval(-120)
+        WindowOrderStore.shared.save(WindowOrderStore.Snapshot(
+            entries: ["com.test.a|A": WindowOrderStore.Entry(rank: 4, lastSeen: now, lastActive: activityTime)],
+            counter: 4
+        ))
+        // 旧版快照 JSON 没有 lastActive 字段，解码后应为 nil
+        WindowOrderStore.shared.save(WindowOrderStore.Snapshot(
+            entries: ["com.test.a|A": WindowOrderStore.Entry(rank: 5, lastSeen: now)],
+            counter: 5
+        ))
+        XCTAssertEqual(WindowOrderStore.shared.load().entries["com.test.a|A"]?.lastActive, nil)
+    }
+
     // MARK: - Helpers
 
     private func makeWindow(

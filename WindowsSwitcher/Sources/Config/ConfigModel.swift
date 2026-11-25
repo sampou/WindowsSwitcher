@@ -154,6 +154,34 @@ struct DockPreviewConfig: Codable, Equatable {
     var verticalSpacing: Double = 0            // 预览窗口与程序坞的垂直间距（像素），0 表示自动计算
     var horizontalSpacing: Double = 0          // 预览窗口与程序坞的水平间距（像素），0 表示自动计算
     var showAppIcon: Bool = true               // 是否显示应用图标
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, hoverDelay, hideDelay, maxPreviewCount
+        case previewWidth, previewHeight, showAnimation
+        case verticalSpacing, horizontalSpacing, showAppIcon
+    }
+}
+
+/// 自定义解码放在扩展里：struct 体内定义 init(from:) 会移除合成的 memberwise 构造器，
+/// 导致现有 `DockPreviewConfig(enabled:...)` 调用编译失败。
+extension DockPreviewConfig {
+    /// 缺失字段回落到默认值。
+    ///
+    /// 合成 Decodable 对非可选字段要求键必须存在；未来新增配置项时，
+    /// 旧版本保存的配置会因此整体解码失败，用户设置被重置。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        hoverDelay = try container.decodeIfPresent(Double.self, forKey: .hoverDelay) ?? 0.05
+        hideDelay = try container.decodeIfPresent(Double.self, forKey: .hideDelay) ?? 0.1
+        maxPreviewCount = try container.decodeIfPresent(Int.self, forKey: .maxPreviewCount) ?? 4
+        previewWidth = try container.decodeIfPresent(Double.self, forKey: .previewWidth) ?? 104
+        previewHeight = try container.decodeIfPresent(Double.self, forKey: .previewHeight) ?? 58
+        showAnimation = try container.decodeIfPresent(Bool.self, forKey: .showAnimation) ?? true
+        verticalSpacing = try container.decodeIfPresent(Double.self, forKey: .verticalSpacing) ?? 0
+        horizontalSpacing = try container.decodeIfPresent(Double.self, forKey: .horizontalSpacing) ?? 0
+        showAppIcon = try container.decodeIfPresent(Bool.self, forKey: .showAppIcon) ?? true
+    }
 }
 
 struct UpdateConfig: Codable, Equatable {
@@ -164,12 +192,55 @@ struct UpdateConfig: Codable, Equatable {
     var apiURL: String = "https://api.github.com/repos/sampou/WindowsSwitcher/releases/latest"  // 版本检查 API 地址
     var releasesPageURL: String = "https://github.com/sampou/WindowsSwitcher/releases"  // 发布页面地址
     var githubToken: String = ""               // GitHub Token（可选，用于提高 API 限制）
+
+    private enum CodingKeys: String, CodingKey {
+        case autoCheckEnabled, autoDownloadEnabled, silentInstallEnabled
+        case checkInterval, apiURL, releasesPageURL, githubToken
+    }
+}
+
+extension UpdateConfig {
+    /// 缺失字段回落到默认值，保证旧配置可继续解码（同 DockPreviewConfig）。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        autoCheckEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoCheckEnabled) ?? false
+        autoDownloadEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoDownloadEnabled) ?? false
+        silentInstallEnabled = try container.decodeIfPresent(Bool.self, forKey: .silentInstallEnabled) ?? false
+        checkInterval = try container.decodeIfPresent(Double.self, forKey: .checkInterval) ?? 86400
+        apiURL = try container.decodeIfPresent(String.self, forKey: .apiURL)
+            ?? "https://api.github.com/repos/sampou/WindowsSwitcher/releases/latest"
+        releasesPageURL = try container.decodeIfPresent(String.self, forKey: .releasesPageURL)
+            ?? "https://github.com/sampou/WindowsSwitcher/releases"
+        githubToken = try container.decodeIfPresent(String.self, forKey: .githubToken) ?? ""
+    }
 }
 
 struct ConfigModel: Codable, Equatable {
+    /// 配置 schema 版本。结构发生不兼容变更时递增，并在 ConfigManager 中做迁移。
+    static let currentVersion = 1
+
     var hotKeys: HotKeyConfig = HotKeyConfig()
     var appearance: AppearanceConfig = AppearanceConfig()
     var behavior: BehaviorConfig = BehaviorConfig()
     var dockPreview: DockPreviewConfig = DockPreviewConfig()
     var update: UpdateConfig = UpdateConfig()
+
+    private enum CodingKeys: String, CodingKey {
+        case hotKeys, appearance, behavior, dockPreview, update
+    }
+}
+
+extension ConfigModel {
+    /// 缺失的顶层段落回落到默认值。
+    ///
+    /// 未来新增顶层段落时，旧版本保存的配置缺少该键，
+    /// 合成 Decodable 会整体解码失败，导致用户全部设置被重置。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        hotKeys = try container.decodeIfPresent(HotKeyConfig.self, forKey: .hotKeys) ?? HotKeyConfig()
+        appearance = try container.decodeIfPresent(AppearanceConfig.self, forKey: .appearance) ?? AppearanceConfig()
+        behavior = try container.decodeIfPresent(BehaviorConfig.self, forKey: .behavior) ?? BehaviorConfig()
+        dockPreview = try container.decodeIfPresent(DockPreviewConfig.self, forKey: .dockPreview) ?? DockPreviewConfig()
+        update = try container.decodeIfPresent(UpdateConfig.self, forKey: .update) ?? UpdateConfig()
+    }
 }

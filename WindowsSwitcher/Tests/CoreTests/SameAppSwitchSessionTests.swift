@@ -8,6 +8,7 @@ final class SameAppSwitchSessionTests: XCTestCase {
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 1, reversed: true, appSwitchMode: true, defaultSelectSecond: true), 0)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: true, appSwitchMode: false, defaultSelectSecond: false), 1)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 5, reversed: true, appSwitchMode: false, defaultSelectSecond: false), 4)
+        // appSwitchMode 列表包含聚焦窗口（首位），初始选中跳过它指向下一个目标窗口
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: false, appSwitchMode: true, defaultSelectSecond: false), 1)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: false, appSwitchMode: false, defaultSelectSecond: true), 1)
         XCTAssertEqual(SwitchPanelViewModel.initialSelectionIndex(windowCount: 2, reversed: false, appSwitchMode: false, defaultSelectSecond: false), 0)
@@ -31,6 +32,7 @@ final class SameAppSwitchSessionTests: XCTestCase {
         manager.sequence = [1: 1, 2: 100]
         viewModel.advanceSameAppSwitchSession(reversed: false)
         XCTAssertEqual(viewModel.sameAppSwitchSession?.windowIDs, [1, 2])
+        // 与普通切换器一致的环绕逻辑：不跳过任何窗口
         XCTAssertEqual(viewModel.selectedWindowID, 1)
         viewModel.advanceSameAppSwitchSession(reversed: true)
         XCTAssertEqual(viewModel.selectedWindowID, 2)
